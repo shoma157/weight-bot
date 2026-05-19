@@ -2,15 +2,20 @@ import telebot
 from telebot import types
 import sqlite3
 import json
-from datetime import datetime
- 
+from datetime import datetime, timezone, timedelta
+
+# Самарское время UTC+4
+SAMARA_TZ = timezone(timedelta(hours=4))
+def now_samara():
+    return datetime.now(SAMARA_TZ)
+
 TOKEN = "8844022654:AAFZt7DXdHWoORHlGrFSi0rMyX7BUYBzUR8"
 bot = telebot.TeleBot(TOKEN)
- 
+
 # ─────────────────────────────────────────
 #  БАЗА КАЛОРИЙНОСТИ
 # ─────────────────────────────────────────
- 
+
 KCAL_PER_100G = {
     "куриная грудка": 110, "куриное бедро": 185, "индейка": 115,
     "говядина": 187, "яйцо": 155,
@@ -20,7 +25,7 @@ KCAL_PER_100G = {
     "миндаль": 576, "грецкий орех": 654, "кешью": 553, "тыквенные семечки": 559,
     "яблоко": 52, "груша": 57, "ягоды": 45,
 }
- 
+
 FOOD_GROUPS = {
     "белок":    ["куриная грудка", "куриное бедро", "индейка", "говядина"],
     "углеводы": ["гречка", "бурый рис", "булгур", "овсянка", "макароны"],
@@ -28,7 +33,7 @@ FOOD_GROUPS = {
     "орехи":    ["миндаль", "грецкий орех", "кешью", "тыквенные семечки"],
     "фрукты":   ["яблоко", "груша", "ягоды"],
 }
- 
+
 # Продукты по приёмам пищи (что можно заменять в каждом)
 MEAL_FOODS = {
     "🍳 Завтрак":  {"белок": ["яйцо"], "углеводы": ["овсянка"], "овощи": ["огурец", "помидор"]},
@@ -41,7 +46,7 @@ MEAL_FOODS = {
     "🌙 Ужин":     {"белок": ["куриная грудка", "куриное бедро", "индейка", "говядина"],
                     "овощи": ["болгарский перец", "морковь", "шпинат", "стручковая фасоль", "брокколи"]},
 }
- 
+
 DEFAULT_PORTIONS = {
     "куриная грудка": 230, "куриное бедро": 230, "индейка": 230, "говядина": 200,
     "яйцо": 186,  # 3 яйца
@@ -51,24 +56,24 @@ DEFAULT_PORTIONS = {
     "миндаль": 20, "грецкий орех": 20, "кешью": 20, "тыквенные семечки": 20,
     "яблоко": 150, "груша": 150, "ягоды": 100,
 }
- 
+
 def calc_equivalent(from_food, to_food, from_grams=None):
     if from_grams is None:
         from_grams = DEFAULT_PORTIONS.get(from_food, 100)
     kcal = KCAL_PER_100G[from_food] * from_grams / 100
     grams_to = round(kcal / KCAL_PER_100G[to_food] * 100)
     return grams_to, round(kcal)
- 
+
 def find_group(food):
     for g, items in FOOD_GROUPS.items():
         if food in items:
             return g
     return None
- 
+
 # ─────────────────────────────────────────
 #  БАЗА ДАННЫХ
 # ─────────────────────────────────────────
- 
+
 def init_db():
     conn = sqlite3.connect("weight_tracker.db")
     c = conn.cursor()
@@ -86,7 +91,7 @@ def init_db():
         gym_days INTEGER, workout_pref TEXT, deadline_weeks INTEGER,
         is_sick INTEGER DEFAULT 0, sick_since TEXT DEFAULT "")''')
     conn.commit(); conn.close()
- 
+
 def get_profile(user_id):
     conn = sqlite3.connect("weight_tracker.db")
     row = conn.execute("SELECT * FROM user_profile WHERE user_id=?", (user_id,)).fetchone()
@@ -96,7 +101,7 @@ def get_profile(user_id):
     keys = ["user_id","current_weight","target_weight","height","age",
             "gym_days","workout_pref","deadline_weeks","is_sick","sick_since"]
     return dict(zip(keys, row))
- 
+
 def save_profile(user_id, **kwargs):
     conn = sqlite3.connect("weight_tracker.db")
     existing = conn.execute("SELECT user_id FROM user_profile WHERE user_id=?", (user_id,)).fetchone()
@@ -110,75 +115,75 @@ def save_profile(user_id, **kwargs):
         vals = ", ".join("?" * len(kwargs))
         conn.execute(f"INSERT INTO user_profile ({cols}) VALUES ({vals})", list(kwargs.values()))
     conn.commit(); conn.close()
- 
+
 def add_weight(user_id, weight):
     conn = sqlite3.connect("weight_tracker.db")
     conn.execute("INSERT INTO weights (user_id, weight_value, date) VALUES (?,?,?)",
-                 (user_id, weight, datetime.now().strftime("%Y-%m-%d %H:%M")))
+                 (user_id, weight, now_samara().strftime("%Y-%m-%d %H:%M")))
     conn.commit(); conn.close()
- 
+
 def get_weights(user_id):
     conn = sqlite3.connect("weight_tracker.db")
     rows = conn.execute("SELECT weight_value, date FROM weights WHERE user_id=? ORDER BY id ASC", (user_id,)).fetchall()
     conn.close()
     return rows
- 
+
 def add_steps(user_id, steps):
     conn = sqlite3.connect("weight_tracker.db")
     conn.execute("INSERT INTO steps (user_id, step_count, date) VALUES (?,?,?)",
-                 (user_id, steps, datetime.now().strftime("%Y-%m-%d %H:%M")))
+                 (user_id, steps, now_samara().strftime("%Y-%m-%d %H:%M")))
     conn.commit(); conn.close()
- 
+
 def get_steps(user_id, limit=14):
     conn = sqlite3.connect("weight_tracker.db")
     rows = conn.execute("SELECT step_count, date FROM steps WHERE user_id=? ORDER BY id DESC LIMIT ?",
                         (user_id, limit)).fetchall()
     conn.close()
     return list(reversed(rows))
- 
+
 def set_state(user_id, state, extra=""):
     conn = sqlite3.connect("weight_tracker.db")
     conn.execute("INSERT INTO user_state (user_id, state, extra) VALUES (?,?,?) "
                  "ON CONFLICT(user_id) DO UPDATE SET state=excluded.state, extra=excluded.extra",
                  (user_id, state, extra))
     conn.commit(); conn.close()
- 
+
 def get_state(user_id):
     conn = sqlite3.connect("weight_tracker.db")
     row = conn.execute("SELECT state, extra FROM user_state WHERE user_id=?", (user_id,)).fetchone()
     conn.close()
     return (row[0], row[1]) if row else ("idle", "")
- 
+
 # ─────────────────────────────────────────
 #  РАСЧЁТ ПЛАНА ПО ПРОФИЛЮ
 # ─────────────────────────────────────────
- 
+
 def calc_plan(profile):
     """Рассчитывает BMR, TDEE, дефицит и темп по данным профиля"""
     w  = profile["current_weight"]
     h  = profile["height"]
     a  = profile["age"] or 24
     gd = profile["gym_days"] or 3
- 
+
     # BMR Миффлин
     bmr = 10 * w + 6.25 * h - 5 * a + 5
- 
+
     # Множитель активности
     multipliers = {1: 1.30, 2: 1.35, 3: 1.45, 4: 1.50, 5: 1.55}
     mult = multipliers.get(gd, 1.45)
     tdee = round(bmr * mult)
- 
+
     # Дефицит ~30% от TDEE но не более 1200 ккал
     deficit = min(round(tdee * 0.30), 1200)
     calories = tdee - deficit
- 
+
     # Темп в неделю
     weekly = round(deficit * 7 / 7700, 2)
- 
+
     # Срок до цели
     to_lose = w - profile["target_weight"]
     weeks_needed = round(to_lose / weekly) if weekly > 0 else 999
- 
+
     return {
         "bmr": round(bmr),
         "tdee": tdee,
@@ -188,7 +193,7 @@ def calc_plan(profile):
         "weekly_loss": weekly,
         "weeks_needed": weeks_needed,
     }
- 
+
 def get_portions(calories, protein):
     """Подбирает порции под калораж"""
     # Масштабируем от базы 1950 ккал
@@ -199,7 +204,7 @@ def get_portions(calories, protein):
         "snack":   round(130 * scale),
         "dinner":  "300г тушёных овощей" if scale >= 1 else "только овощи без гарнира",
     }
- 
+
 def analyze_progress(weights_data):
     if len(weights_data) < 2:
         return None
@@ -227,11 +232,11 @@ def analyze_progress(weights_data):
     else:
         return {"status": "gain",    "rate": weekly_rate, "cal_change": -250,
                 "advice": f"🚨 Вес растёт ({abs(weekly_rate)} кг/нед). *Убери полдник* (−250 ккал)."}
- 
+
 # ─────────────────────────────────────────
 #  ТРЕНИРОВКИ ПО ПРЕДПОЧТЕНИЯМ
 # ─────────────────────────────────────────
- 
+
 WORKOUTS = {
     "силовые": {
         "А": ("Грудь + Спина + Бицепс",
@@ -260,7 +265,7 @@ WORKOUTS = {
               "• НЕ бегать при весе >100 кг"),
     },
 }
- 
+
 def get_week_schedule(profile, gym_days):
     """
     Бот сам подбирает расписание:
@@ -269,7 +274,7 @@ def get_week_schedule(profile, gym_days):
     """
     mode = auto_select_workout(profile) if profile else "кардио_акцент"
     gd   = min(gym_days, 5)
- 
+
     if mode == "кардио_акцент":
         # Приоритет кардио, минимум силовых (1-2 раза)
         schedules = {
@@ -288,22 +293,22 @@ def get_week_schedule(profile, gym_days):
             5: {0: "А", 1: "К", 2: "Б", 3: "К", 4: "В"},  # 2К + 3С
         }
     return schedules.get(gd, schedules.get(3, {}))
- 
+
 # ─────────────────────────────────────────
 #  МЕНЮ
 # ─────────────────────────────────────────
- 
+
 def main_menu(user_id=None):
     m = types.ReplyKeyboardMarkup(resize_keyboard=True, row_width=2)
     profile = get_profile(user_id) if user_id else None
- 
+
     # Кнопка болезни
     if profile and profile.get("is_sick"):
         m.add(types.KeyboardButton("💊 Я болею (активно)"),
               types.KeyboardButton("✅ Я выздоровел"))
     else:
         m.add(types.KeyboardButton("🤒 Я заболел"))
- 
+
     m.add(
         types.KeyboardButton("🟢 Тренировка сегодня"),
         types.KeyboardButton("🍽️ Рацион сегодня"),
@@ -319,23 +324,23 @@ def main_menu(user_id=None):
         types.KeyboardButton("⚙️ Изменить профиль"),
     )
     return m
- 
+
 def cancel_menu():
     m = types.ReplyKeyboardMarkup(resize_keyboard=True)
     m.add(types.KeyboardButton("❌ Отмена"))
     return m
- 
+
 def foods_keyboard(foods_list):
     m = types.ReplyKeyboardMarkup(resize_keyboard=True, row_width=2)
     for f in foods_list:
         m.add(types.KeyboardButton(f))
     m.add(types.KeyboardButton("❌ Отмена"))
     return m
- 
+
 # ─────────────────────────────────────────
 #  ОНБОРДИНГ — НАСТРОЙКА ПРОФИЛЯ
 # ─────────────────────────────────────────
- 
+
 ONBOARDING_STEPS = [
     ("setup_weight",   "⚖️ Введи свой *текущий вес* (кг), например: `107`"),
     ("setup_target",   "🎯 Введи *желаемый вес* (кг), например: `92`"),
@@ -345,14 +350,14 @@ ONBOARDING_STEPS = [
     ("setup_pref",     "💬 Что тебе больше нравится в зале?\n\n1 — Кардио (эллипс, дорожка)\n2 — Силовые (тренажёры, веса)\n3 — Без разницы, пусть бот решает"),
     ("setup_deadline", "📅 За сколько *недель* хочешь достичь цели?\nНапример: `12` (3 месяца)"),
 ]
- 
+
 def auto_select_workout(profile):
     """
     Подбирает баланс с учётом:
     1. Пожелания пользователя (кардио / силовые / авто)
     2. Количества дней в зале
     3. Срочности (нужный темп похудения)
- 
+
     Правило: пожелание учитывается, но не в ущерб здоровью.
     Даже при "только кардио" оставляем 1 силовую — защита мышц обязательна.
     """
@@ -362,11 +367,11 @@ def auto_select_workout(profile):
     user_pref = profile.get("workout_pref") or "авто"
     weekly_needed = to_lose / max(weeks, 1)
     urgent = weekly_needed > 1.5
- 
+
     # Пользователь хочет кардио → даём кардио, но 1 силовая всегда
     if user_pref == "кардио":
         return "кардио_акцент"
- 
+
     # Пользователь хочет силовые → даём силовые, но кардио не убираем
     # (при большом весе кардио обязательно для сердца)
     if user_pref == "силовые":
@@ -374,7 +379,7 @@ def auto_select_workout(profile):
             return "кардио_акцент"   # мало дней — кардио важнее
         else:
             return "баланс"          # силовых больше
- 
+
     # Авто — бот решает по математике
     if gym_days <= 2:
         return "кардио_акцент"
@@ -384,7 +389,7 @@ def auto_select_workout(profile):
         return "кардио_акцент" if urgent else "баланс"
     else:
         return "кардио_акцент" if urgent else "баланс"
- 
+
 def auto_workout_label(profile):
     """Текстовое описание подобранного плана для профиля"""
     if not profile:
@@ -401,58 +406,58 @@ def auto_workout_label(profile):
         elif gym_days == 3: return "1 кардио + 2 силовых"
         elif gym_days == 4: return "2 кардио + 2 силовых"
         else:               return "2 кардио + 3 силовых"
- 
- 
+
+
 def start_onboarding(chat_id, edit=False):
     prefix = "✏️ Обновляем профиль!\n\n" if edit else "👤 *Настройка профиля*\n\nОтвечай на вопросы по очереди.\n\n"
     set_state(chat_id, "setup_weight", extra="edit" if edit else "new")
     bot.send_message(chat_id, prefix + ONBOARDING_STEPS[0][1],
                      parse_mode="Markdown", reply_markup=cancel_menu())
- 
+
 def handle_onboarding(chat_id, state, text, extra):
     """Обрабатывает шаги онбординга. Возвращает True если онбординг завершён."""
     steps = [s[0] for s in ONBOARDING_STEPS]
     idx   = steps.index(state) if state in steps else -1
     if idx == -1:
         return False
- 
+
     # Валидация и сохранение текущего шага
     try:
         if state == "setup_weight":
             val = float(text.replace(",", "."))
             if not (30 < val < 300): raise ValueError
             save_profile(chat_id, current_weight=val)
- 
+
         elif state == "setup_target":
             val = float(text.replace(",", "."))
             if not (30 < val < 300): raise ValueError
             save_profile(chat_id, target_weight=val)
- 
+
         elif state == "setup_height":
             val = int(text)
             if not (100 < val < 250): raise ValueError
             save_profile(chat_id, height=val)
- 
+
         elif state == "setup_age":
             val = int(text)
             if not (10 < val < 100): raise ValueError
             save_profile(chat_id, age=val)
- 
+
         elif state == "setup_gymdays":
             val = int(text)
             if not (1 <= val <= 5): raise ValueError
             save_profile(chat_id, gym_days=val)
- 
+
         elif state == "setup_pref":
             if text not in ("1", "2", "3"): raise ValueError
             pref_map = {"1": "кардио", "2": "силовые", "3": "авто"}
             save_profile(chat_id, workout_pref=pref_map[text])
- 
+
         elif state == "setup_deadline":
             val = int(text)
             if not (1 <= val <= 104): raise ValueError
             save_profile(chat_id, deadline_weeks=val)
- 
+
     except (ValueError, TypeError):
         hints = {
             "setup_weight":   "Введи вес числом, например: 107",
@@ -466,7 +471,7 @@ def handle_onboarding(chat_id, state, text, extra):
         bot.send_message(chat_id, f"⚠️ {hints.get(state, 'Некорректный ввод')}",
                          reply_markup=cancel_menu())
         return False
- 
+
     # Следующий шаг или завершение
     if idx + 1 < len(ONBOARDING_STEPS):
         next_state, next_prompt = ONBOARDING_STEPS[idx + 1]
@@ -501,37 +506,37 @@ def handle_onboarding(chat_id, state, text, extra):
                     f"Разница {gap} нед. Можно добавить +1 день в зале или немного снизить калории.\n\n")
         msg += "Используй кнопки меню для ежедневного плана!"
         bot.send_message(chat_id, msg, parse_mode="Markdown", reply_markup=main_menu(chat_id))
- 
+
         # Сохраняем стартовый вес
         if not get_weights(chat_id):
             add_weight(chat_id, profile["current_weight"])
         return True
- 
+
 # ─────────────────────────────────────────
 #  ГЕНЕРАТОР РАЦИОНА
 # ─────────────────────────────────────────
- 
+
 def build_ration(user_id):
     profile = get_profile(user_id)
     if not profile:
         return "Сначала настрой профиль кнопкой *⚙️ Изменить профиль*", 0
- 
+
     plan    = calc_plan(profile)
     cal     = plan["calories"]
     weights = get_weights(user_id)
     analysis = analyze_progress(weights) if len(weights) >= 2 else None
- 
+
     # Корректировка по динамике
     if analysis:
         cal += analysis["cal_change"]
- 
+
     p = get_portions(cal, plan["protein"])
- 
+
     status = ""
     if analysis:
         icons = {"fast": "📈", "good": "✅", "slow": "📉", "plateau": "🪨", "gain": "🚨"}
         status = f"{icons.get(analysis['status'], '')} {analysis['advice']}\n\n"
- 
+
     ration = (
         f"{status}"
         f"🍳 *Завтрак:* 3 яйца + 60г овсянки на воде + помидор/огурец\n"
@@ -542,7 +547,7 @@ def build_ration(user_id):
         f"🚶 +1 500 шагов сверх нормы (~15 мин прогулки)"
     )
     return ration, cal
- 
+
 def build_sick_ration():
     return (
         "🤒 *РАЦИОН ПРИ БОЛЕЗНИ*\n\n"
@@ -555,16 +560,16 @@ def build_sick_ration():
         "🌡️ *Калории:* ~2 000 ккал (поддерживающие)\n\n"
         "✅ Когда выздоровеешь — нажми «Я выздоровел» и план восстановится."
     )
- 
+
 # ─────────────────────────────────────────
 #  ТРЕНИРОВКА СЕГОДНЯ
 # ─────────────────────────────────────────
- 
+
 def get_today_workout(user_id):
     profile = get_profile(user_id)
     if not profile:
         return "Сначала настрой профиль кнопкой *⚙️ Изменить профиль*"
- 
+
     if profile.get("is_sick"):
         return (
             "🤒 *Ты болеешь — тренировка отменена!*\n\n"
@@ -572,12 +577,12 @@ def get_today_workout(user_id):
             "Сегодня: максимум лёгкая прогулка 15-20 мин на свежем воздухе если самочувствие позволяет.\n\n"
             "✅ Нажми «Я выздоровел» когда восстановишься."
         )
- 
-    weekday  = datetime.now().weekday()  # 0=пн
+
+    weekday  = now_samara().weekday()  # 0=пн
     pref     = profile.get("workout_pref", "чередование")
     gym_days = profile.get("gym_days", 3)
     schedule = get_week_schedule(profile, gym_days)
- 
+
     workout_key = schedule.get(weekday)
     if not workout_key:
         return (
@@ -586,7 +591,7 @@ def get_today_workout(user_id):
             "Если менее 7 000 шагов — выйди на прогулку 30 мин.\n\n"
             "🍽️ Нажми «Рацион сегодня» для актуальных порций."
         )
- 
+
     # Определяем тип тренировки
     if workout_key == "К":
         name, exercises = WORKOUTS["кардио"]["К"]
@@ -604,11 +609,11 @@ def get_today_workout(user_id):
             f"⏰ Рекомендуемое время: 18:40-20:00\n\n"
             f"🍽️ Нажми «Рацион сегодня» для актуальных порций."
         )
- 
+
 # ─────────────────────────────────────────
 #  ХЭНДЛЕРЫ
 # ─────────────────────────────────────────
- 
+
 @bot.message_handler(commands=['start', 'help'])
 def send_welcome(message):
     chat_id = message.chat.id
@@ -633,25 +638,25 @@ def send_welcome(message):
             parse_mode="Markdown",
             reply_markup=main_menu(chat_id)
         )
- 
+
 @bot.message_handler(func=lambda m: True)
 def router(message):
     chat_id = message.chat.id
     text    = message.text.strip()
     state, extra = get_state(chat_id)
- 
+
     # ── Отмена ──
     if text == "❌ Отмена":
         set_state(chat_id, "idle")
         bot.send_message(chat_id, "Отменено.", reply_markup=main_menu(chat_id))
         return
- 
+
     # ── Онбординг ──
     onboarding_states = [s[0] for s in ONBOARDING_STEPS]
     if state in onboarding_states:
         handle_onboarding(chat_id, state, text, extra)
         return
- 
+
     # ── Ожидание веса ──
     if state == "waiting_weight":
         try:
@@ -668,7 +673,7 @@ def router(message):
             remaining = round(w - target, 1)
             pct = round((start_w - w) / (start_w - target) * 100, 1) if start_w != target else 100.0
             resp = (
-                f"✅ Вес *{w} кг* сохранён! ({datetime.now().strftime('%d.%m.%Y')})\n\n"
+                f"✅ Вес *{w} кг* сохранён! ({now_samara().strftime('%d.%m.%Y')})\n\n"
                 f"📉 Сброшено: *{loss} кг* | До цели: *{remaining} кг* | Прогресс: *{pct}%*"
             )
             if len(weights_data) >= 2:
@@ -682,7 +687,7 @@ def router(message):
         except ValueError:
             bot.send_message(chat_id, "Введи число, например: 105.7")
         return
- 
+
     # ── Ожидание шагов ──
     if state == "waiting_steps":
         try:
@@ -700,7 +705,7 @@ def router(message):
         except ValueError:
             bot.send_message(chat_id, "Введи число шагов, например: 8500")
         return
- 
+
     # ── Замена блюда: выбор приёма пищи ──
     if state == "subst_choose_meal":
         meals = list(MEAL_FOODS.keys())
@@ -716,7 +721,7 @@ def router(message):
         else:
             bot.send_message(chat_id, "Выбери приём пищи из кнопок.")
         return
- 
+
     # ── Замена блюда: выбор исходного продукта ──
     if state == "subst_choose_from":
         meal = extra
@@ -739,7 +744,7 @@ def router(message):
         else:
             bot.send_message(chat_id, "Выбери продукт из кнопок.")
         return
- 
+
     # ── Замена блюда: выбор замены ──
     if state == "subst_choose_to":
         parts     = extra.split("|", 1)
@@ -766,14 +771,14 @@ def router(message):
         else:
             bot.send_message(chat_id, "Выбери продукт из кнопок.")
         return
- 
+
     # ════════════════════════════════════════
     #  КНОПКИ ГЛАВНОГО МЕНЮ
     # ════════════════════════════════════════
- 
+
     # ── Болезнь ──
     if text == "🤒 Я заболел":
-        save_profile(chat_id, is_sick=1, sick_since=datetime.now().strftime("%Y-%m-%d"))
+        save_profile(chat_id, is_sick=1, sick_since=now_samara().strftime("%Y-%m-%d"))
         bot.send_message(
             chat_id,
             "🤒 *Режим болезни активирован*\n\n"
@@ -785,7 +790,7 @@ def router(message):
             parse_mode="Markdown",
             reply_markup=main_menu(chat_id)
         )
- 
+
     elif text in ("✅ Я выздоровел", "💊 Я болею (активно)") and text == "✅ Я выздоровел":
         profile = get_profile(chat_id)
         if profile:
@@ -793,7 +798,7 @@ def router(message):
             days_sick = 0
             if sick_since:
                 try:
-                    days_sick = (datetime.now() - datetime.strptime(sick_since, "%Y-%m-%d")).days
+                    days_sick = (now_samara() - datetime.strptime(sick_since, "%Y-%m-%d")).days
                 except Exception:
                     pass
             save_profile(chat_id, is_sick=0, sick_since="")
@@ -810,12 +815,12 @@ def router(message):
                 parse_mode="Markdown",
                 reply_markup=main_menu(chat_id)
             )
- 
+
     # ── Тренировка сегодня ──
     elif text == "🟢 Тренировка сегодня":
         bot.send_message(chat_id, get_today_workout(chat_id),
                          parse_mode="Markdown")
- 
+
     # ── Рацион сегодня ──
     elif text == "🍽️ Рацион сегодня":
         profile = get_profile(chat_id)
@@ -835,7 +840,7 @@ def router(message):
                 f"💡 Для замены продукта нажми «🔄 Заменить блюдо»",
                 parse_mode="Markdown"
             )
- 
+
     # ── Замена блюда ──
     elif text == "🔄 Заменить блюдо":
         set_state(chat_id, "subst_choose_meal")
@@ -850,19 +855,19 @@ def router(message):
             parse_mode="Markdown",
             reply_markup=m
         )
- 
+
     # ── Внести вес ──
     elif text == "⚖️ Внести вес":
         set_state(chat_id, "waiting_weight")
         bot.send_message(chat_id, "⚖️ Введи текущий вес (например: *105.7*)\n\nЛучше утром натощак.",
                          parse_mode="Markdown", reply_markup=cancel_menu())
- 
+
     # ── Внести шаги ──
     elif text == "👟 Внести шаги":
         set_state(chat_id, "waiting_steps")
         bot.send_message(chat_id, "👟 Введи количество шагов за сегодня (например: *8500*)",
                          parse_mode="Markdown", reply_markup=cancel_menu())
- 
+
     # ── Прогресс ──
     elif text == "📈 Мой прогресс":
         weights_data = get_weights(chat_id)
@@ -888,7 +893,7 @@ def router(message):
             if a:
                 msg += f"\n\n─────────────\n🤖 {a['advice']}"
         bot.send_message(chat_id, msg, parse_mode="Markdown")
- 
+
     # ── Мои шаги ──
     elif text == "👣 Мои шаги":
         steps_data = get_steps(chat_id)
@@ -909,10 +914,10 @@ def router(message):
             f"\n\n📊 Среднее: *{avg:,}* шагов/день".replace(",", " ") +
             f"\n🎯 Дней с нормой (≥8 000): *{goal_days}* из {len(steps_data)}",
             parse_mode="Markdown")
- 
+
     # ── Расписание дня ──
     elif text == "🕐 Расписание дня":
-        now  = datetime.now()
+        now  = now_samara()
         hour = now.hour
         weekday = now.weekday()
         profile = get_profile(chat_id)
@@ -920,7 +925,7 @@ def router(message):
         pref = profile["workout_pref"] if profile else "чередование"
         schedule = get_week_schedule(profile, gym_days)
         is_gym_today = weekday in schedule
- 
+
         if is_gym_today:
             wk = schedule[weekday]
             if wk == "К":
@@ -931,7 +936,7 @@ def router(message):
         else:
             gym_block   = "🛌 Сегодня *день отдыха* — зал не нужен"
             dinner_time = "19:30-20:00"
- 
+
         if 6 <= hour < 7:      current = "⏰ Время вставать!"
         elif 7 <= hour < 8:    current = "🍳 Время завтрака!"
         elif 8 <= hour < 12:   current = "💼 Рабочее утро. Следующий приём — обед в 12:00."
@@ -942,7 +947,7 @@ def router(message):
         elif 19 <= hour < 21:  current = "🏋️ Время тренировки или ужина!"
         elif 21 <= hour < 23:  current = "🌙 Время ужина. После — только вода."
         else:                  current = "😴 Пора спать! Цель — 23:00."
- 
+
         bot.send_message(chat_id,
             f"🕐 *РАСПИСАНИЕ ДНЯ*\n\n📍 Сейчас: {current}\n\n"
             f"⏰ *06:45* — Подъём\n"
@@ -957,7 +962,7 @@ def router(message):
             f"💧 *До 23:00* — только вода\n"
             f"😴 *23:00* — Сон ✅",
             parse_mode="Markdown")
- 
+
     # ── Профиль ──
     elif text == "👤 Мой профиль":
         profile = get_profile(chat_id)
@@ -989,14 +994,14 @@ def router(message):
             f"• Темп: *~{plan['weekly_loss']} кг/нед*\n"
             f"• Расчётный срок: *~{plan['weeks_needed']} нед*",
             parse_mode="Markdown")
- 
+
     # ── Изменить профиль ──
     elif text == "⚙️ Изменить профиль":
         start_onboarding(chat_id, edit=True)
- 
+
     # ── Сладкое ──
     elif text == "🍫 Сладкое":
-        hour = datetime.now().hour
+        hour = now_samara().hour
         if 12 <= hour < 17:   timing = "✅ Сейчас хорошее время — после обеда или полдника!"
         elif 17 <= hour < 20: timing = "🟡 Ещё можно — но это последний шанс на сегодня."
         else:                  timing = "🚫 После 20:00 не стоит — потерпи до завтра!"
@@ -1015,7 +1020,7 @@ def router(message):
             f"• Конфеты с начинкой\n\n"
             f"📌 *Правила:* только после еды · не позже 20:00 · 3-4 раза в неделю",
             parse_mode="Markdown")
- 
+
     # ── Жиросжигающие продукты ──
     elif text == "🔥 Жиросжигающие продукты":
         bot.send_message(chat_id,
@@ -1037,10 +1042,10 @@ def router(message):
             "Но зелёный чай + кофе до тренировки + грецкие орехи\n"
             "дадут реальный дополнительный эффект.",
             parse_mode="Markdown")
- 
+
     else:
         bot.send_message(chat_id, "Используй кнопки меню.", reply_markup=main_menu(chat_id))
- 
+
 if __name__ == '__main__':
     init_db()
     print("Бот v6 запущен! Профиль + болезнь + умные замены активированы.")
