@@ -21,14 +21,30 @@ bot = telebot.TeleBot(TOKEN)
 # ─────────────────────────────────────────
 
 KCAL_PER_100G = {
-    # Свежее
+    # Белки
     "куриная грудка": 110, "куриное бедро": 185, "индейка": 115,
     "говядина": 187, "яйцо": 155,
+    # Углеводы
     "гречка": 313, "бурый рис": 337, "булгур": 342, "овсянка": 352, "макароны": 350,
+    # Овощи
     "болгарский перец": 27, "морковь": 35, "шпинат": 23,
     "стручковая фасоль": 31, "брокколи": 34, "огурец": 15, "помидор": 18,
+    # Орехи
     "миндаль": 576, "грецкий орех": 654, "кешью": 553, "тыквенные семечки": 559,
+    # Фрукты — расширенный список
     "яблоко": 52, "груша": 57, "ягоды": 45,
+    "банан": 89, "апельсин": 47, "мандарин": 38, "грейпфрут": 35,
+    "киви": 61, "манго": 65, "персик": 39, "слива": 46,
+    "виноград": 67, "арбуз": 30, "дыня": 33, "ананас": 50,
+    "черника": 57, "клубника": 32, "малина": 53, "вишня": 52,
+    # Спортивное питание
+    "протеиновый батончик": 370,
+    "протеиновое печенье": 390,
+    "протеин сывороточный (порция 30г)": 115,
+    "протеин казеиновый (порция 30г)": 110,
+    "протеиновый йогурт": 75,
+    "протеиновый пудинг": 95,
+    "высокобелковый творог (0%)": 73,
     # Полуфабрикаты
     "куриные котлеты замороженные": 170,
     "куриные фрикадельки замороженные": 155,
@@ -52,7 +68,14 @@ FOOD_GROUPS = {
     "овощи":    ["болгарский перец", "морковь", "шпинат", "стручковая фасоль",
                  "брокколи", "огурец", "помидор", "замороженная овощная смесь"],
     "орехи":    ["миндаль", "грецкий орех", "кешью", "тыквенные семечки"],
-    "фрукты":   ["яблоко", "груша", "ягоды"],
+    "фрукты":   ["яблоко", "груша", "ягоды", "банан", "апельсин", "мандарин",
+                 "грейпфрут", "киви", "манго", "персик", "слива",
+                 "виноград", "арбуз", "дыня", "ананас",
+                 "черника", "клубника", "малина", "вишня"],
+    "спортпит": ["протеиновый батончик", "протеиновое печенье",
+                 "протеин сывороточный (порция 30г)", "протеин казеиновый (порция 30г)",
+                 "протеиновый йогурт", "протеиновый пудинг",
+                 "высокобелковый творог (0%)"],
 }
 
 # Предупреждения о полуфабрикатах
@@ -67,13 +90,33 @@ SEMIFAB_WARNINGS = {
     "замороженная овощная смесь": "✅ Без соусов и масла в составе",
     "гречка в пакете": "✅ Удобно — 1 пакет ≈ 80г сухой крупы",
     "рис в пакете": "✅ Бурый или пропаренный, не белый шлифованный",
+    # Спортпит
+    "протеиновый батончик": "⚠️ Состав: белок >20г/порцию, сахар <10г. Не более 1 шт/день",
+    "протеиновое печенье": "⚠️ Состав: белок >15г/порцию, сахар <8г. Не более 1 шт/день",
+    "протеин сывороточный (порция 30г)": "✅ На воде или миндальном молоке. После тренировки или утром",
+    "протеин казеиновый (порция 30г)": "✅ На ночь — медленное усвоение, защищает мышцы во сне",
+    "протеиновый йогурт": "✅ Без сахара, состав: белок >10г/100г",
+    "протеиновый пудинг": "⚠️ Смотри состав: белок >15г/порцию, калории <200/порцию",
+    "высокобелковый творог (0%)": "✅ Отличный вариант — 18г белка/100г, без лактозных проблем (уточни индивидуально)",
+    # Фрукты
+    "банан": "⚠️ Высокий ГИ — лучше до/после тренировки, не вечером",
+    "виноград": "⚠️ Много сахара — не более 150г, не вечером",
+    "манго": "⚠️ Много сахара — не более 150г, предпочтительно до 16:00",
+    "дыня": "⚠️ Высокий ГИ — есть отдельно от другой еды",
+    "арбуз": "✅ Много воды, низкая калорийность. Отличный перекус летом",
+    "грейпфрут": "✅ Снижает инсулин, хорош утром. Не сочетать с некоторыми лекарствами",
+    "киви": "✅ Много витамина C, низкий ГИ — отличный выбор",
+    "черника": "✅ Антиоксиданты, снижает воспаление — лучший выбор для похудения",
+    "клубника": "✅ Низкий ГИ, витамин C",
 }
 
 MEAL_FOODS = {
     "🍳 Завтрак": {
-        "белок": ["яйцо", "готовая варёная курица", "консервированная курица"],
+        "белок": ["яйцо", "готовая варёная курица", "консервированная курица",
+                  "высокобелковый творог (0%)"],
         "углеводы": ["овсянка", "гречка в пакете"],
         "овощи": ["огурец", "помидор"],
+        "спортпит": ["протеин сывороточный (порция 30г)", "протеиновый йогурт"],
     },
     "🍗 Обед": {
         "белок": ["куриная грудка", "куриное бедро", "индейка", "говядина",
@@ -85,9 +128,13 @@ MEAL_FOODS = {
         "овощи": ["болгарский перец", "морковь", "замороженная овощная смесь", "огурец"],
     },
     "🍎 Полдник": {
-        "белок": ["куриная грудка", "индейка", "консервированная курица"],
+        "белок": ["куриная грудка", "индейка", "консервированная курица",
+                  "высокобелковый творог (0%)"],
         "орехи": ["миндаль", "грецкий орех", "кешью", "тыквенные семечки"],
-        "фрукты": ["яблоко", "груша", "ягоды"],
+        "фрукты": ["яблоко", "груша", "ягоды", "банан", "апельсин", "мандарин",
+                   "грейпфрут", "киви", "персик", "слива", "черника", "клубника", "малина"],
+        "спортпит": ["протеиновый батончик", "протеиновое печенье",
+                     "протеиновый йогурт", "протеиновый пудинг"],
     },
     "🌙 Ужин": {
         "белок": ["куриная грудка", "куриное бедро", "индейка", "говядина",
@@ -111,6 +158,19 @@ DEFAULT_PORTIONS = {
     "гречка в пакете": 80, "рис в пакете": 80,
     "куриские сосиски": 160, "куриные сосиски": 160,
     "куриные наггетсы запечённые": 200,
+    # Фрукты расширенные
+    "банан": 120, "апельсин": 150, "мандарин": 100, "грейпфрут": 200,
+    "киви": 100, "манго": 150, "персик": 130, "слива": 100,
+    "виноград": 150, "арбуз": 300, "дыня": 200, "ананас": 150,
+    "черника": 100, "клубника": 150, "малина": 100, "вишня": 120,
+    # Спортпит
+    "протеиновый батончик": 60,
+    "протеиновое печенье": 60,
+    "протеин сывороточный (порция 30г)": 30,
+    "протеин казеиновый (порция 30г)": 30,
+    "протеиновый йогурт": 150,
+    "протеиновый пудинг": 150,
+    "высокобелковый творог (0%)": 150,
 }
 
 MOTIVATIONAL_QUOTES = [
@@ -164,14 +224,20 @@ def init_db():
         next_workout_override TEXT DEFAULT "",
         reminders_enabled INTEGER DEFAULT 1,
         cheatmeal_used INTEGER DEFAULT 0,
-        cheatmeal_week TEXT DEFAULT "")''')
+        cheatmeal_week TEXT DEFAULT "",
+        is_driver INTEGER DEFAULT 0)''')
     c.execute('''CREATE TABLE IF NOT EXISTS workouts (
         id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER,
         workout_type TEXT, fatigue_after INTEGER DEFAULT 0, date TEXT)''')
+    c.execute('''CREATE TABLE IF NOT EXISTS sleep (
+        id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER,
+        sleep_time TEXT, wake_time TEXT,
+        duration_hours REAL, quality INTEGER, date TEXT)''')
     # Миграция
     for col, dflt in [
         ("fatigue","0"), ("last_workout_date","''"), ("next_workout_override","''"),
         ("reminders_enabled","1"), ("cheatmeal_used","0"), ("cheatmeal_week","''"),
+        ("is_driver","0"),
     ]:
         try:
             c.execute(f"ALTER TABLE user_profile ADD COLUMN {col} TEXT DEFAULT {dflt}")
@@ -187,10 +253,10 @@ def get_profile(uid):
     keys = ["user_id","current_weight","target_weight","height","age",
             "gym_days","workout_pref","deadline_weeks","is_sick","sick_since",
             "fatigue","last_workout_date","next_workout_override",
-            "reminders_enabled","cheatmeal_used","cheatmeal_week"]
+            "reminders_enabled","cheatmeal_used","cheatmeal_week","is_driver"]
     d = dict(zip(keys, row))
     # Приводим типы
-    for k in ("is_sick","fatigue","reminders_enabled","cheatmeal_used"):
+    for k in ("is_sick","fatigue","reminders_enabled","cheatmeal_used","is_driver"):
         d[k] = int(d[k]) if d[k] else 0
     return d
 
@@ -275,6 +341,88 @@ def get_last_workout(uid):
     conn.close()
     return row
 
+# ─────────────────────────────────────────
+#  СОН
+# ─────────────────────────────────────────
+
+def log_sleep(uid, sleep_time, wake_time, duration, quality):
+    conn = sqlite3.connect("weight_tracker.db")
+    conn.execute(
+        "INSERT INTO sleep (user_id,sleep_time,wake_time,duration_hours,quality,date) VALUES (?,?,?,?,?,?)",
+        (uid, sleep_time, wake_time, duration, quality, now_samara().strftime("%Y-%m-%d"))
+    )
+    conn.commit(); conn.close()
+
+def get_sleep_history(uid, limit=7):
+    conn = sqlite3.connect("weight_tracker.db")
+    rows = conn.execute(
+        "SELECT sleep_time,wake_time,duration_hours,quality,date FROM sleep "
+        "WHERE user_id=? ORDER BY id DESC LIMIT ?", (uid, limit)
+    ).fetchall()
+    conn.close()
+    return list(reversed(rows))
+
+def get_last_sleep(uid):
+    conn = sqlite3.connect("weight_tracker.db")
+    row = conn.execute(
+        "SELECT sleep_time,wake_time,duration_hours,quality,date FROM sleep "
+        "WHERE user_id=? ORDER BY id DESC LIMIT 1", (uid,)
+    ).fetchone()
+    conn.close()
+    return row
+
+def analyze_sleep(duration, quality):
+    """Анализирует качество сна и даёт рекомендации"""
+    if duration >= 7.5 and quality >= 4:
+        status = "excellent"
+        note   = "🌟 Отличный сон! Тело восстановилось полностью. Тренировка в полную силу."
+        cal_adj = 0
+        fat_adj = 1
+    elif duration >= 7.0 and quality >= 3:
+        status = "good"
+        note   = "✅ Хороший сон. Восстановление нормальное."
+        cal_adj = 0
+        fat_adj = 2
+    elif duration >= 6.0:
+        status = "moderate"
+        note   = ("🟡 Сон немного короткий ({:.1f} ч). Кортизол чуть повышен — "
+                  "жиросжигание замедляется на ~10%. Добавь 100 ккал и снизь нагрузку на 20%.").format(duration)
+        cal_adj = +100
+        fat_adj = 3
+    elif duration >= 5.0:
+        status = "poor"
+        note   = ("🔴 Плохой сон ({:.1f} ч)! Кортизол высокий — силовую лучше заменить "
+                  "на лёгкое кардио. +150 ккал на восстановление.").format(duration)
+        cal_adj = +150
+        fat_adj = 4
+    else:
+        status = "critical"
+        note   = ("😵 Критически мало сна ({:.1f} ч)! Тренировку пропусти — "
+                  "риск травмы и потери мышц. +200 ккал, много воды.").format(duration)
+        cal_adj = +200
+        fat_adj = 5
+    return {"status": status, "note": note, "cal_adj": cal_adj, "fat_adj": fat_adj}
+
+def build_sleep_stats(uid):
+    history = get_sleep_history(uid, limit=7)
+    if not history:
+        return None
+    durations = [h[2] for h in history if h[2]]
+    qualities  = [h[3] for h in history if h[3]]
+    avg_dur  = round(sum(durations)/len(durations), 1) if durations else 0
+    avg_qual = round(sum(qualities)/len(qualities), 1) if qualities else 0
+    lines = []
+    for st, wt, dur, qual, d in history:
+        bar  = "🌙" * min(int(dur or 0), 10)
+        stars= "⭐" * (qual or 0)
+        lines.append(f"• {d}: *{dur:.1f}ч* {bar} {stars}")
+    verdict = ("🌟 Отличный режим!" if avg_dur >= 7.5 else
+               "✅ Хороший режим" if avg_dur >= 7.0 else
+               "🟡 Немного недосыпаешь" if avg_dur >= 6.0 else
+               "🔴 Серьёзный недосып — влияет на похудение!")
+    return ("\n".join(lines) +
+            f"\n\n📊 Среднее за неделю: *{avg_dur} ч* | Качество: *{avg_qual}/5*\n{verdict}")
+
 def set_state(uid, state, extra=""):
     conn = sqlite3.connect("weight_tracker.db")
     conn.execute("INSERT INTO user_state (user_id,state,extra) VALUES (?,?,?) "
@@ -297,8 +445,10 @@ def calc_plan(profile):
     h  = profile.get("height") or 194
     a  = profile.get("age") or 24
     gd = profile.get("gym_days") or 3
+    is_driver = int(profile.get("is_driver") or 0)
     bmr  = 10*w + 6.25*h - 5*a + 5
-    mult = {1:1.30,2:1.35,3:1.45,4:1.50,5:1.55}.get(min(gd,5), 1.45)
+    base_mult = {1:1.30,2:1.35,3:1.45,4:1.50,5:1.55}.get(min(gd,5), 1.45)
+    mult = base_mult - (0.05 if is_driver else 0)
     tdee = round(bmr * mult)
     deficit  = min(round(tdee*0.30), 1200)
     calories = tdee - deficit
@@ -410,6 +560,11 @@ WORKOUTS = {
     "К": ("Кардио 45 минут",
           "• Эллипс (пульс 120-135 уд/мин)\n"
           "• ИЛИ ходьба на дорожке: наклон 8%, скорость 5.5 км/ч"),
+    "И": ("Интимная близость (замена кардио)",
+          "• Засчитывается как лёгкое кардио: ~200-350 ккал\n"
+          "• Длительность: от 20 мин\n"
+          "• Пульс 90-130 уд/мин — зона жиросжигания\n"
+          "• После: выпей 500мл воды + лёгкий белковый перекус"),
 }
 
 def auto_select_workout(profile):
@@ -658,6 +813,7 @@ ONBOARDING_STEPS = [
                        "2 — Силовые (тренажёры, веса)\n"
                        "3 — Без разницы, пусть бот решает"),
     ("setup_deadline", "📅 За сколько *недель* хочешь достичь цели?\nНапример: `12` (3 месяца)"),
+    ("setup_driver",   "🚗 Ты водитель или работаешь в основном сидя?\n\n1 — Да (водитель, офис)\n2 — Нет, есть физическая активность на работе"),
 ]
 
 def start_onboarding(cid, edit=False):
@@ -685,11 +841,13 @@ def handle_onboarding(cid, state, text, extra):
             save_profile(cid,workout_pref={"1":"кардио","2":"силовые","3":"авто"}[text])
         elif state == "setup_deadline":
             v=int(text); assert 1<=v<=104; save_profile(cid,deadline_weeks=v)
+        elif state == "setup_driver":
+            assert text in ("1","2"); save_profile(cid,is_driver=1 if text=="1" else 0)
     except Exception:
         hints = {"setup_weight":"Вес числом: 107","setup_target":"Цель числом: 92",
                  "setup_height":"Рост в см: 194","setup_age":"Возраст: 24",
                  "setup_gymdays":"Число 1-5","setup_pref":"Введи 1, 2 или 3",
-                 "setup_deadline":"Недель: 12"}
+                 "setup_deadline":"Недели: 12","setup_driver":"Введи 1 или 2"}
         bot.send_message(cid, f"⚠️ {hints.get(state,'Некорректный ввод')}", reply_markup=cancel_menu())
         return False
     if idx+1 < len(ONBOARDING_STEPS):
@@ -700,6 +858,8 @@ def handle_onboarding(cid, state, text, extra):
     set_state(cid, "idle")
     profile = get_profile(cid)
     plan    = calc_plan(profile)
+    is_drv = int(profile.get("is_driver") or 0)
+    driver_note = "\n🚗 *Водитель:* калораж снижен на ~100 ккал (сидячая работа учтена)" if is_drv else ""
     msg = (f"🎉 *Профиль настроен!*\n\n"
            f"⚖️ Вес: *{profile['current_weight']} кг* → *{profile['target_weight']} кг*\n"
            f"📉 Сбросить: *{round(profile['current_weight']-profile['target_weight'],1)} кг*\n\n"
@@ -708,6 +868,7 @@ def handle_onboarding(cid, state, text, extra):
            f"📈 Темп: *~{plan['weekly_loss']} кг/нед*\n"
            f"🏋️ Тренировки: *{auto_workout_label(profile)}*\n"
            f"⏱️ Расчётный срок: *~{plan['weeks_needed']} нед*\n")
+    msg += driver_note
     if plan['weeks_needed'] > (profile.get('deadline_weeks') or 12):
         msg += f"\n⚠️ Разница со сроком: добавь +1 день в зале.\n"
     bot.send_message(cid, msg, parse_mode="Markdown", reply_markup=main_menu(cid))
@@ -744,10 +905,16 @@ def main_menu(uid=None):
         types.KeyboardButton("🕐 Расписание дня"),
         types.KeyboardButton("🍫 Сладкое"),
         types.KeyboardButton("🔥 Жиросжигающие"),
+        types.KeyboardButton("💪 Спортпит"),
+        types.KeyboardButton("🍓 Фрукты"),
         types.KeyboardButton("👤 Мой профиль"),
         types.KeyboardButton("⚙️ Изменить профиль"),
         types.KeyboardButton("📤 Экспорт данных"),
         types.KeyboardButton("🔔 Напоминания"),
+        types.KeyboardButton("❤️ Заменить кардио"),
+        types.KeyboardButton("😴 Лечь спать"),
+        types.KeyboardButton("⏰ Проснулся"),
+        types.KeyboardButton("💤 История сна"),
     )
     return m
 
@@ -784,7 +951,7 @@ REMINDER_SCHEDULE = [
     (19, 30, "💧 Выпей стакан воды! (6/8)"),
     (20, 30, "🌙 *Время ужина!*\n\nКурица + тушёные овощи. После — только вода."),
     (22, 0,  "💧 Выпей стакан воды! (7/8)"),
-    (22, 30, "😴 До сна 30 минут! Ложись в 23:00 — это важно для похудения."),
+    (22, 30, "😴 До сна 30 минут! Нажми «😴 Лечь спать» когда будешь готовиться ко сну."),
 ]
 
 def reminder_worker():
@@ -1336,6 +1503,7 @@ def router(message):
             f"📈 Темп: *~{plan['weekly_loss']} кг/нед*\n\n"
             f"😴 Усталость: *{fat_label}*\n"
             f"🏥 Здоровье: *{'🤒 Болезнь' if profile.get('is_sick') else '✅ Здоров'}*\n"
+            f"🚗 Профиль: *{'Водитель (сидячая работа)' if profile.get('is_driver') else 'Обычная активность'}*\n"
             f"💧 Вода сегодня: *{water}/8* стаканов",
             parse_mode="Markdown")
 
@@ -1381,6 +1549,183 @@ def router(message):
         bio=io.BytesIO(data)
         bio.name="my_data.csv"
         bot.send_document(cid,bio,caption="📊 Твои данные: вес и шаги")
+
+    # ── Лечь спать ──
+    elif text == "😴 Лечь спать":
+        profile = get_profile(cid)
+        now2    = now_samara()
+        hour    = now2.hour
+        # Предупреждение если ложится слишком поздно
+        if hour >= 1 and hour < 6:
+            late_warn = f"\n⚠️ Уже {hour}:00 — это очень поздно! Завтра кортизол будет высоким."
+        elif hour >= 0 and hour < 23:
+            late_warn = f"\n✅ {now2.strftime('%H:%M')} — хорошее время для сна."
+        else:
+            late_warn = ""
+        sleep_time = now2.strftime("%H:%M")
+        set_state(cid, "waiting_wake", extra=sleep_time)
+        bot.send_message(cid,
+            f"😴 *Спокойной ночи!*{late_warn}\n\n"
+            f"Время отбоя: *{sleep_time}* (самарское)\n\n"
+            f"Когда проснёшься — нажми *«⏰ Проснулся»* и бот:\n"
+            f"• Посчитает продолжительность сна\n"
+            f"• Скорректирует рацион и тренировку\n"
+            f"• Покажет прогноз восстановления",
+            parse_mode="Markdown", reply_markup=cancel_menu())
+
+    # ── Проснулся ──
+    elif text == "⏰ Проснулся":
+        state2, sleep_time = get_state(cid)
+        if state2 != "waiting_wake" or not sleep_time:
+            # Не было нажатия "лечь спать" — просим ввести вручную
+            set_state(cid, "manual_sleep_entry")
+            bot.send_message(cid,
+                "⏰ *Доброе утро!*\n\n"
+                "Ты не нажал «😴 Лечь спать» вчера вечером.\n"
+                "Введи время когда лёг (например: *23:00*) и я посчитаю сон:",
+                parse_mode="Markdown", reply_markup=cancel_menu())
+            return
+        set_state(cid, "rate_sleep_quality", extra=sleep_time)
+        now2      = now_samara()
+        wake_time = now2.strftime("%H:%M")
+        # Считаем продолжительность
+        try:
+            sh, sm = map(int, sleep_time.split(":"))
+            wh, wm = map(int, wake_time.split(":"))
+            sleep_mins = sh * 60 + sm
+            wake_mins  = wh * 60 + wm
+            if wake_mins < sleep_mins:
+                wake_mins += 24 * 60  # переход через полночь
+            duration = round((wake_mins - sleep_mins) / 60, 1)
+        except Exception:
+            duration = 7.0
+        analysis = analyze_sleep(duration, 3)
+        set_state(cid, "rate_sleep_quality", extra=f"{sleep_time}|{wake_time}|{duration}")
+        bot.send_message(cid,
+            f"⏰ *Доброе утро!*\n\n"
+            f"😴 Лёг: *{sleep_time}* | ⏰ Встал: *{wake_time}*\n"
+            f"🌙 Продолжительность: *{duration} ч*\n\n"
+            f"{analysis['note']}\n\n"
+            f"Оцени качество сна (1-5):\n"
+            f"1 — Ужасно 😵\n2 — Плохо 😞\n3 — Нормально 😐\n"
+            f"4 — Хорошо 😊\n5 — Отлично 🌟",
+            parse_mode="Markdown", reply_markup=fatigue_menu())
+
+    # ── Ручной ввод времени сна ──
+    elif state == "manual_sleep_entry":
+        try:
+            parts = text.strip().replace(".", ":").split(":")
+            assert len(parts) == 2
+            h, m = int(parts[0]), int(parts[1])
+            assert 0 <= h <= 23 and 0 <= m <= 59
+            sleep_time = f"{h:02d}:{m:02d}"
+            now2       = now_samara()
+            wake_time  = now2.strftime("%H:%M")
+            wh, wm     = now2.hour, now2.minute
+            sleep_mins = h * 60 + m
+            wake_mins  = wh * 60 + wm
+            if wake_mins < sleep_mins:
+                wake_mins += 24 * 60
+            duration = round((wake_mins - sleep_mins) / 60, 1)
+            analysis = analyze_sleep(duration, 3)
+            set_state(cid, "rate_sleep_quality", extra=f"{sleep_time}|{wake_time}|{duration}")
+            bot.send_message(cid,
+                f"😴 Лёг: *{sleep_time}* | ⏰ Встал: *{wake_time}*\n"
+                f"🌙 Продолжительность: *{duration} ч*\n\n"
+                f"{analysis['note']}\n\n"
+                f"Оцени качество сна (1-5):\n"
+                f"1 — Ужасно 😵 · 2 — Плохо · 3 — Нормально · 4 — Хорошо · 5 — Отлично 🌟",
+                parse_mode="Markdown", reply_markup=fatigue_menu())
+        except Exception:
+            bot.send_message(cid, "Введи время в формате ЧЧ:ММ, например: *23:00*",
+                             parse_mode="Markdown")
+        return
+
+    # ── Оценка качества сна ──
+    elif state == "rate_sleep_quality":
+        try:
+            quality = int(text); assert 1 <= quality <= 5
+            parts      = extra.split("|")
+            sleep_time = parts[0] if len(parts) > 0 else "23:00"
+            wake_time  = parts[1] if len(parts) > 1 else "07:00"
+            duration   = float(parts[2]) if len(parts) > 2 else 7.0
+            analysis   = analyze_sleep(duration, quality)
+            # Сохраняем сон
+            log_sleep(cid, sleep_time, wake_time, duration, quality)
+            # Корректируем усталость в профиле
+            save_profile(cid, fatigue=analysis["fat_adj"])
+            if analysis["cal_adj"] > 0:
+                save_profile(cid, fatigue=analysis["fat_adj"])
+            set_state(cid, "idle")
+            # Формируем итог
+            stars = "⭐" * quality
+            msg = (
+                f"✅ *Сон записан!*\n\n"
+                f"🌙 *{sleep_time}* → ⏰ *{wake_time}* = *{duration} ч* {stars}\n\n"
+                f"{analysis['note']}\n"
+            )
+            if analysis["cal_adj"] > 0:
+                msg += (f"\n🍽️ *Рацион скорректирован:* +{analysis['cal_adj']} ккал сегодня "
+                        f"(нажми «Рацион сегодня» — порции уже обновлены)")
+            if analysis["fat_adj"] >= 4:
+                msg += "\n🏋️ *Тренировка:* нажми «Тренировка сегодня» — план уже скорректирован"
+            msg += f"\n\n{MOTIVATIONAL_QUOTES[quality-1]}"
+            bot.send_message(cid, msg, parse_mode="Markdown", reply_markup=main_menu(cid))
+        except Exception:
+            bot.send_message(cid, "Введи число от 1 до 5", reply_markup=fatigue_menu())
+        return
+
+    # ── История сна ──
+    elif text == "❤️ Заменить кардио":
+        profile = get_profile(cid)
+        if not profile:
+            bot.send_message(cid, "Сначала настрой профиль."); return
+        if profile.get("is_sick"):
+            bot.send_message(cid,
+                "🤒 При болезни эта замена не рекомендуется — "
+                "любая нагрузка замедляет выздоровление.",
+                reply_markup=main_menu(cid)); return
+        # Засчитываем как кардио и логируем
+        save_profile(cid,
+            last_workout_date=now_samara().strftime("%Y-%m-%d %H:%M"),
+            fatigue=2)
+        log_workout(cid, "Интимная близость (кардио)", 2)
+        wd = get_weights(cid)
+        a  = analyze_progress(wd) if len(wd) >= 2 else None
+        cal_note = ""
+        if a and a["cal_change"] != 0:
+            d = "увеличен" if a["cal_change"] > 0 else "снижен"
+            cal_note = f"\n📋 Рацион {d} на {abs(a['cal_change'])} ккал по динамике веса."
+        bot.send_message(cid,
+            "❤️ *Кардио засчитано!*\n\n"
+            "🏃 *Эквивалент нагрузки:*\n"
+            "• Калории: ~200-350 ккал (как 30-40 мин эллипса)\n"
+            "• Пульс: 90-130 уд/мин — зона жиросжигания ✅\n"
+            "• Гормоны: окситоцин снижает кортизол — бонус для похудения 🎯\n\n"
+            "💧 *Сейчас:* выпей 400-500мл воды\n"
+            "🍗 *Перекус через 30 мин:* 100г куриного филе или 2 яйца\n"
+            f"(белок важен для восстановления){cal_note}\n\n"
+            "📊 Тренировка записана в историю.",
+            parse_mode="Markdown", reply_markup=main_menu(cid))
+
+    elif text == "💤 История сна":
+        stats = build_sleep_stats(cid)
+        if not stats:
+            bot.send_message(cid,
+                "💤 Нет данных о сне.\n\n"
+                "Нажимай *«😴 Лечь спать»* перед сном и *«⏰ Проснулся»* утром — "
+                "бот будет вести статистику.",
+                parse_mode="Markdown")
+            return
+        last = get_last_sleep(cid)
+        last_analysis = ""
+        if last:
+            a = analyze_sleep(last[2] or 7, last[3] or 3)
+            last_analysis = f"\n🤖 *Последний анализ:* {a['note']}"
+        bot.send_message(cid,
+            f"💤 *СТАТИСТИКА СНА (7 дней)*\n\n{stats}{last_analysis}\n\n"
+            f"💡 Цель: *7.5-8 часов* в 23:00 — максимальное жиросжигание.",
+            parse_mode="Markdown")
 
     else:
         bot.send_message(cid,"Используй кнопки меню.",reply_markup=main_menu(cid))
