@@ -1493,6 +1493,28 @@ def router(message):
         markup = foods_keyboard(sportpit_list + ["❌ Отмена"])
         bot.send_message(cid, "💪 *СПИСОК СПОРТПИТА*\nВыбери интересующий:", parse_mode="Markdown", reply_markup=markup)
 
+        # --- НОВЫЙ КОД ДЛЯ ОБРАБОТКИ ВЫБОРА ---
+
+    # Этот блок сработает, если ты нажмешь на кнопку с названием фрукта (например, "Яблоко")
+    elif text in FOOD_GROUPS.get("фрукты", []):
+        grams = DEFAULT_PORTIONS.get(text, 100)
+        kcal = round(KCAL_PER_100G.get(text, 150) * grams / 100)
+        bot.send_message(cid,
+            f"🍎 *{text.capitalize()}*\n"
+            f"📊 Порция: {grams}г\n"
+            f"🔥 Калорийность: {kcal} ккал",
+            parse_mode="Markdown")
+
+    # Этот блок сработает, если ты нажмешь на кнопку с названием продукта спортпита (например, "Протеиновый батончик")
+    elif text in FOOD_GROUPS.get("спортпит", []):
+        grams = DEFAULT_PORTIONS.get(text, 100)
+        kcal = round(KCAL_PER_100G.get(text, 150) * grams / 100)
+        bot.send_message(cid,
+            f"🥤 *{text}*\n"
+            f"📊 Порция: {grams}г\n"
+            f"🔥 Калорийность: {kcal} ккал",
+            parse_mode="Markdown")
+        
     # Профиль
     elif text=="👤 Мой профиль":
         profile=get_profile(cid)
