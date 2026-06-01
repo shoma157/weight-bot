@@ -1478,6 +1478,20 @@ def router(message):
             "• Грецкие орехи — омега-3\n• Черника/голубика — 50г/день\n\n"
             f"💧 *3л воды = +30% к жиросжиганию*{sick_note}",
             parse_mode="Markdown")
+        
+            elif text == "🍓 Фрукты":
+        # Получаем список фруктов из словаря FOOD_GROUPS
+        fruit_list = FOOD_GROUPS.get("фрукты", [])
+        # Добавляем к списку кнопку "Отмена" для удобства
+        markup = foods_keyboard(fruit_list + ["❌ Отмена"])
+        bot.send_message(cid, "🍓 *СПИСОК ФРУКТОВ*\nВыбери интересующий:", parse_mode="Markdown", reply_markup=markup)
+
+    elif text == "💪 Спортпит":
+        # Получаем список спортивного питания из словаря FOOD_GROUPS
+        sportpit_list = FOOD_GROUPS.get("спортпит", [])
+        # Добавляем к списку кнопку "Отмена"
+        markup = foods_keyboard(sportpit_list + ["❌ Отмена"])
+        bot.send_message(cid, "💪 *СПИСОК СПОРТПИТА*\nВыбери интересующий:", parse_mode="Markdown", reply_markup=markup)
 
     # Профиль
     elif text=="👤 Мой профиль":
@@ -1675,8 +1689,7 @@ def router(message):
             bot.send_message(cid, "Введи число от 1 до 5", reply_markup=fatigue_menu())
         return
 
-       # ── История сна ──
-       # ── Замена кардио на интим ──
+    # ── История сна ──
     elif text == "❤️ Заменить кардио":
         profile = get_profile(cid)
         if not profile:
@@ -1686,6 +1699,7 @@ def router(message):
                 "🤒 При болезни эта замена не рекомендуется — "
                 "любая нагрузка замедляет выздоровление.",
                 reply_markup=main_menu(cid)); return
+        # Засчитываем как кардио и логируем
         save_profile(cid,
             last_workout_date=now_samara().strftime("%Y-%m-%d %H:%M"),
             fatigue=2)
@@ -1708,7 +1722,6 @@ def router(message):
             "📊 Тренировка записана в историю.",
             parse_mode="Markdown", reply_markup=main_menu(cid))
 
-    # ── История сна ──
     elif text == "💤 История сна":
         stats = build_sleep_stats(cid)
         if not stats:
@@ -1728,50 +1741,13 @@ def router(message):
             f"💡 Цель: *7.5-8 часов* в 23:00 — максимальное жиросжигание.",
             parse_mode="Markdown")
 
-    # ==================== СПЕЦИАЛЬНЫЕ КНОПКИ ====================
-
-    elif text == "💪 Спортпит":
-        profile = get_profile(cid)
-        is_sick = bool(profile.get("is_sick")) if profile else False
-        bot.send_message(cid,
-            "💪 *СПОРТИВНОЕ ПИТАНИЕ*\n\n"
-            "✅ **Рекомендуется:**\n"
-            "• Протеин сывороточный — 30г (после тренировки)\n"
-            "• Протеин казеиновый — 30г (на ночь)\n"
-            "• Высокобелковый творог 0% — 150-200г\n"
-            "• Протеиновый йогурт / пудинг (без сахара)\n\n"
-            "⚠️ **С ограничением:**\n"
-            "• Протеиновый батончик — max 1 в день\n"
-            "• Протеиновое печенье — max 1 в день\n\n"
-            f"{'🤒 При болезни спортпит можно, но лучше обычная еда.' if is_sick else '📍 Лучше всего после тренировки или утром.'}",
-            parse_mode="Markdown")
-
-    elif text == "🍓 Фрукты":
-        hour = now_samara().hour
-        profile = get_profile(cid)
-        is_sick = bool(profile.get("is_sick")) if profile else False
-        
-        if is_sick:
-            timing = "🤒 При болезни — можно в любое время."
-        elif 12 <= hour <= 16:
-            timing = "✅ Сейчас отличное время!"
-        elif 17 <= hour < 20:
-            timing = "🟡 Ещё можно, но желательно до 19:00"
-        else:
-            timing = "🚫 Лучше не есть после 19:00 (высокий гликемический индекс)"
-            
-        bot.send_message(cid,
-            f"🍓 *ФРУКТЫ В РАЦИОНЕ*\n\n{timing}\n\n"
-            "✅ **Лучшие (низкий/средний ГИ):**\n"
-            "• Яблоко, груша, клубника, черника, малина, киви, грейпфрут\n\n"
-            "⚠️ **С осторожностью:**\n"
-            "• Банан — только до или после тренировки\n"
-            "• Виноград, манго, дыня — не более 150г и только днём\n\n"
-            "📏 Стандартные порции:\n"
-            "• Яблоко / груша — 150г\n"
-            "• Ягоды — 100-150г\n"
-            "• Банан — 120г",
-            parse_mode="Markdown")
-
     else:
-        bot.send_message(cid, "Используй кнопки меню.", reply_markup=main_menu(cid))
+        bot.send_message(cid,"Используй кнопки меню.",reply_markup=main_menu(cid))
+
+if __name__ == '__main__':
+    init_db()
+    # Запуск фонового потока напоминаний
+    t=threading.Thread(target=reminder_worker,daemon=True)
+    t.start()
+    print("Бот v7 запущен! Самара UTC+4 | Напоминания | Полуфабрикаты | Читмил | График | Экспорт")
+    bot.infinity_polling()
