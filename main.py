@@ -1479,7 +1479,7 @@ def router(message):
             f"💧 *3л воды = +30% к жиросжиганию*{sick_note}",
             parse_mode="Markdown")
         
-            elif text == "🍓 Фрукты":
+    elif text == "🍓 Фрукты":
         # Получаем список фруктов из словаря FOOD_GROUPS
         fruit_list = FOOD_GROUPS.get("фрукты", [])
         # Добавляем к списку кнопку "Отмена" для удобства
