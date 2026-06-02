@@ -687,7 +687,6 @@ def build_ration(uid, for_tomorrow=False):
     if fatigue >= 4: cal += 100; fat_note = "\n🔴 *+100 ккал на восстановление* (высокая усталость)"
     elif fatigue == 3: fat_note = "\n🟡 Умеренная усталость — не пропускай приёмы"
     p = get_portions(cal)
-    status = ""
     # --- НАЧАЛО БЛОКА РАСЧЕТА БЖУ ---
 total_protein = plan['protein']  # Используем запланированный белок как основу
 total_fat = 0
@@ -709,6 +708,7 @@ if "гречка" in MACRO_PER_100G and carb_grams > 0:
     total_fat += macro.get("жиры", 0) * carb_grams / 100
     total_carbs += macro.get("углеводы", 0) * carb_grams / 100
 # --- КОНЕЦ БЛОКА РАСЧЕТА БЖУ ---
+    status = ""
     if analysis and not for_tomorrow:
         icons = {"fast":"📈","good":"✅","slow":"📉","plateau":"🪨","gain":"🚨"}
         status = f"{icons.get(analysis['status'],'')} {analysis['advice']}\n\n"
