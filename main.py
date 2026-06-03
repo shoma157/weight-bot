@@ -58,31 +58,6 @@ KCAL_PER_100G = {
     "куриные наггетсы запечённые": 195,
 }
 
-# ... тут ваш KCAL_PER_100G ...
-
-# MACRO_PER_100G: белки, жиры, углеводы на 100г продукта
-MACRO_PER_100G = {
-    # Белковые продукты
-    "куриная грудка": {"белки": 23, "жиры": 1, "углеводы": 0},
-    "куриное бедро": {"белки": 19, "жиры": 12, "углеводы": 0}, 
-    "индейка": {"белки": 22, "жиры": 7, "углеводы": 0},
-    "говядина": {"белки": 26, "жиры": 15, "углеводы": 0},
-    "яйцо": {"белки": 13, "жиры": 11, "углеводы": 1},
-    
-    # Углеводные продукты
-    "гречка": {"белки": 13, "жиры": 3, "углеводы": 68},
-    "бурый рис": {"белки": 7, "жиры": 3, "углеводы": 77},
-    "булгур": {"белики": 12, "жиры": 1, "углеводы": 76},
-    "овсянка": {"белки": 12, "жиры": 7, "углеводы": 66},
-    "макароны": {"белки": 11, "жиры": 1, "углеводы": 75},
-    
-    # Овощи
-    "болгарский перец": {"белки": 1, "жиры": 0, "углеводы": 6},
-    "морковь": {"белки": 1, "жиры": 0, "углеводы": 10},
-    "шпинат": {"белки": 3, "жиры": 0, "углеводы": 2},
-    "брокколи": {"белки": 3, "жиры": 0, "углеводы": 7},
-}
-
 FOOD_GROUPS = {
     "белок":    ["куриная грудка", "куриное бедро", "индейка", "говядина",
                  "готовая варёная курица", "консервированная курица", "консервированная индейка",
@@ -687,27 +662,6 @@ def build_ration(uid, for_tomorrow=False):
     if fatigue >= 4: cal += 100; fat_note = "\n🔴 *+100 ккал на восстановление* (высокая усталость)"
     elif fatigue == 3: fat_note = "\n🟡 Умеренная усталость — не пропускай приёмы"
     p = get_portions(cal)
- # --- НАЧАЛО БЛОКА РАСЧЕТА БЖУ ---
-    total_protein = plan['protein']  # Используем запланированный белок как основу
-    total_fat = 0
-    total_carbs = 0
-
-    # Расчет БЖУ для обеда (Куриная грудка + Гречка)
-    breast_grams = p['breast']
-    carb_grams = p['carb']
-    
-if "куриная грудка" in MACRO_PER_100G and breast_grams > 0:
-    macro = MACRO_PER_100G["куриная грудка"]
-    total_protein += macro.get("белки", 0) * breast_grams / 100
-    total_fat += macro.get("жиры", 0) * breast_grams / 100
-    total_carbs += macro.get("углеводы", 0) * breast_grams / 100
-
-if "гречка" in MACRO_PER_100G and carb_grams > 0:
-    macro = MACRO_PER_100G["гречка"]
-    total_protein += macro.get("белки", 0) * carb_grams / 100
-    total_fat += macro.get("жиры", 0) * carb_grams / 100
-    total_carbs += macro.get("углеводы", 0) * carb_grams / 100
-# --- КОНЕЦ БЛОКА РАСЧЕТА БЖУ ---
     status = ""
     if analysis and not for_tomorrow:
         icons = {"fast":"📈","good":"✅","slow":"📉","plateau":"🪨","gain":"🚨"}
@@ -722,7 +676,7 @@ if "гречка" in MACRO_PER_100G and carb_grams > 0:
         f"  💡 Быстро: консервированная курица + яблоко\n"
         f"🌙 *Ужин:* 180г курицы + {p['dinner']}\n"
         f"  💡 Быстро: замороженные котлеты (без панировки) + замороженные овощи\n\n"
-        f"🎯 *~{cal} ккал* | 💪 *~{round(total_protein)}г белка* | ⚖️ *~{round(total_fat)}г жиров* | 🍞 *~{round(total_carbs)}г углеводов*"
+        f"🎯 *~{cal} ккал* | 💪 *~{plan['protein']}г белка*"
         f"{fat_note}\n"
         f"🚶 +1 500 шагов сверх нормы"
     )
@@ -1524,43 +1478,7 @@ def router(message):
             "• Грецкие орехи — омега-3\n• Черника/голубика — 50г/день\n\n"
             f"💧 *3л воды = +30% к жиросжиганию*{sick_note}",
             parse_mode="Markdown")
-        
-    elif text == "🍓 Фрукты":
-        # Получаем список фруктов из словаря FOOD_GROUPS
-        fruit_list = FOOD_GROUPS.get("фрукты", [])
-        # Добавляем к списку кнопку "Отмена" для удобства
-        markup = foods_keyboard(fruit_list + ["❌ Отмена"])
-        bot.send_message(cid, "🍓 *СПИСОК ФРУКТОВ*\nВыбери интересующий:", parse_mode="Markdown", reply_markup=markup)
 
-    elif text == "💪 Спортпит":
-        # Получаем список спортивного питания из словаря FOOD_GROUPS
-        sportpit_list = FOOD_GROUPS.get("спортпит", [])
-        # Добавляем к списку кнопку "Отмена"
-        markup = foods_keyboard(sportpit_list + ["❌ Отмена"])
-        bot.send_message(cid, "💪 *СПИСОК СПОРТПИТА*\nВыбери интересующий:", parse_mode="Markdown", reply_markup=markup)
-
-        # --- НОВЫЙ КОД ДЛЯ ОБРАБОТКИ ВЫБОРА ---
-
-    # Этот блок сработает, если ты нажмешь на кнопку с названием фрукта (например, "Яблоко")
-    elif text in FOOD_GROUPS.get("фрукты", []):
-        grams = DEFAULT_PORTIONS.get(text, 100)
-        kcal = round(KCAL_PER_100G.get(text, 150) * grams / 100)
-        bot.send_message(cid,
-            f"🍎 *{text.capitalize()}*\n"
-            f"📊 Порция: {grams}г\n"
-            f"🔥 Калорийность: {kcal} ккал",
-            parse_mode="Markdown")
-
-    # Этот блок сработает, если ты нажмешь на кнопку с названием продукта спортпита (например, "Протеиновый батончик")
-    elif text in FOOD_GROUPS.get("спортпит", []):
-        grams = DEFAULT_PORTIONS.get(text, 100)
-        kcal = round(KCAL_PER_100G.get(text, 150) * grams / 100)
-        bot.send_message(cid,
-            f"🥤 *{text}*\n"
-            f"📊 Порция: {grams}г\n"
-            f"🔥 Калорийность: {kcal} ккал",
-            parse_mode="Markdown")
-        
     # Профиль
     elif text=="👤 Мой профиль":
         profile=get_profile(cid)
