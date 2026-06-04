@@ -56,6 +56,16 @@ KCAL_PER_100G = {
     "рис в пакете": 330,
     "куриные сосиски": 190,
     "куриные наггетсы запечённые": 195,
+    # Новые блюда
+    "куриный фарш": 143,
+    "говяжий фарш": 254,
+    "тефтели куриные домашние": 130,
+    "тефтели говяжьи домашние": 175,
+    "омлет (2 яйца)": 150,
+    "запечённая говядина": 177,
+    "запечённая куриная грудка": 115,
+    "макароны с куриным фаршем": 145,
+    "макароны с котлетой": 160,
 }
 
 FOOD_GROUPS = {
@@ -112,8 +122,8 @@ SEMIFAB_WARNINGS = {
 
 MEAL_FOODS = {
     "🍳 Завтрак": {
-        "белок": ["яйцо", "готовая варёная курица", "консервированная курица",
-                  "высокобелковый творог (0%)"],
+        "белок": ["яйцо","омлет (2 яйца)","готовая варёная курица",
+                  "консервированная курица","высокобелковый творог (0%)"],
         "углеводы": ["овсянка", "гречка в пакете"],
         "овощи": ["огурец", "помидор"],
         "спортпит": ["протеин сывороточный (порция 30г)", "протеиновый йогурт"],
@@ -123,8 +133,10 @@ MEAL_FOODS = {
                   "готовая варёная курица", "консервированная курица", "консервированная индейка",
                   "куриные котлеты замороженные", "куриные фрикадельки замороженные",
                   "куриские сосиски"],
-        "углеводы": ["гречка", "бурый рис", "булгур", "макароны",
-                     "гречка в пакете", "рис в пакете"],
+        "углеводы": ["гречка","бурый рис","булгур","макароны","гречка в пакете","рис в пакете"],
+        "готовые блюда": ["макароны с куриным фаршем","макароны с котлетой",
+                          "тефтели куриные домашние","тефтели говяжьи домашние",
+                          "запечённая говядина","запечённая куриная грудка"],
         "овощи": ["болгарский перец", "морковь", "замороженная овощная смесь", "огурец"],
     },
     "🍎 Полдник": {
@@ -137,9 +149,10 @@ MEAL_FOODS = {
                      "протеиновый йогурт", "протеиновый пудинг"],
     },
     "🌙 Ужин": {
-        "белок": ["куриная грудка", "куриное бедро", "индейка", "говядина",
-                  "готовая варёная курица", "куриные котлеты замороженные",
-                  "куриные наггетсы запечённые"],
+        "белок": ["куриная грудка","куриное бедро","индейка","говядина",
+                  "готовая варёная курица","куриные котлеты замороженные",
+                  "куриные наггетсы запечённые","тефтели куриные домашние",
+                  "тефтели говяжьи домашние","запечённая говядина","запечённая куриная грудка"],
         "овощи": ["болгарский перец", "морковь", "шпинат", "стручковая фасоль",
                   "брокколи", "замороженная овощная смесь"],
     },
@@ -225,7 +238,8 @@ def init_db():
         reminders_enabled INTEGER DEFAULT 1,
         cheatmeal_used INTEGER DEFAULT 0,
         cheatmeal_week TEXT DEFAULT "",
-        is_driver INTEGER DEFAULT 0)''')
+        is_driver INTEGER DEFAULT 0,
+        home_workouts INTEGER DEFAULT 0)''')
     c.execute('''CREATE TABLE IF NOT EXISTS workouts (
         id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER,
         workout_type TEXT, fatigue_after INTEGER DEFAULT 0, date TEXT)''')
@@ -238,6 +252,7 @@ def init_db():
         ("fatigue","0"), ("last_workout_date","''"), ("next_workout_override","''"),
         ("reminders_enabled","1"), ("cheatmeal_used","0"), ("cheatmeal_week","''"),
         ("is_driver","0"),
+        ("home_workouts","0"),
     ]:
         try:
             c.execute(f"ALTER TABLE user_profile ADD COLUMN {col} TEXT DEFAULT {dflt}")
@@ -253,10 +268,10 @@ def get_profile(uid):
     keys = ["user_id","current_weight","target_weight","height","age",
             "gym_days","workout_pref","deadline_weeks","is_sick","sick_since",
             "fatigue","last_workout_date","next_workout_override",
-            "reminders_enabled","cheatmeal_used","cheatmeal_week","is_driver"]
+            "reminders_enabled","cheatmeal_used","cheatmeal_week","is_driver","home_workouts"]
     d = dict(zip(keys, row))
     # Приводим типы
-    for k in ("is_sick","fatigue","reminders_enabled","cheatmeal_used","is_driver"):
+    for k in ("is_sick","fatigue","reminders_enabled","cheatmeal_used","is_driver","home_workouts"):
         d[k] = int(d[k]) if d[k] else 0
     return d
 
@@ -589,15 +604,34 @@ def auto_workout_label(profile):
             4:"2 кардио + 2 силовых"}.get(gd, "2 кардио + 3 силовых")
 
 def get_week_schedule(profile, gym_days):
-    mode = auto_select_workout(profile)
-    gd   = min(gym_days, 5)
+    """
+    Возвращает расписание тренировок.
+    Если включены домашние тренировки — в дни отдыха от зала подставляем домашние.
+    """
+    mode      = auto_select_workout(profile)
+    gd        = min(gym_days, 5)
+    home_mode = int((profile or {}).get("home_workouts") or 0)
+
     if mode == "кардио_акцент":
         s = {1:{2:"К"},2:{1:"К",4:"К"},3:{1:"К",3:"К",5:"А"},
              4:{0:"К",2:"К",4:"К",5:"А"},5:{0:"К",1:"К",2:"А",3:"К",4:"К"}}
     else:
         s = {1:{2:"А"},2:{1:"К",3:"А"},3:{0:"А",2:"К",4:"Б"},
              4:{0:"А",1:"К",3:"Б",4:"К"},5:{0:"А",1:"К",2:"Б",3:"К",4:"В"}}
-    return s.get(gd, s.get(3, {}))
+
+    schedule = dict(s.get(gd, s.get(3, {})))
+
+    # Если домашние тренировки включены — добавляем их в свободные дни
+    if home_mode:
+        home_rotation = ["ДА","ДБ","ДВ","ДК"]
+        home_idx = 0
+        for day in range(7):
+            if day not in schedule:
+                # Добавляем домашнюю тренировку через день (не каждый свободный день)
+                if home_idx % 2 == 0:
+                    schedule[day] = home_rotation[(home_idx // 2) % len(home_rotation)]
+                home_idx += 1
+    return schedule
 
 def hours_since_last_workout(profile):
     last = profile.get("last_workout_date") or ""
@@ -799,6 +833,84 @@ def build_weekly_report(uid):
     )
 
 # ─────────────────────────────────────────
+#  РЕЦЕПТЫ НОВЫХ БЛЮД
+# ─────────────────────────────────────────
+
+RECIPES = {
+    "макароны с куриным фаршем": {
+        "emoji": "🍝",
+        "ingredients": "• 200г куриного фарша\n• 80г макарон (твёрдые сорта)\n• 1 луковица\n• 1 помидор или 1 ст.л. томатной пасты\n• Соль, перец, оливковое масло 1 ч.л.",
+        "steps": "1. Отвари макароны до готовности.\n2. Обжарь лук на сухой сковороде 3 мин.\n3. Добавь фарш, разбей вилкой, жарь 7-10 мин.\n4. Добавь помидор/пасту, соль, перец.\n5. Смешай с макаронами.",
+        "time": "20 мин",
+        "kcal_portion": "~510 ккал (350г)",
+        "tip": "💡 Без соусов! Томатная паста — только для вкуса, минимальное количество.",
+    },
+    "макароны с котлетой": {
+        "emoji": "🍝",
+        "ingredients": "• 1 котлета куриная запечённая (100г)\n• 80г макарон (твёрдые сорта)\n• Соль, зелень",
+        "steps": "1. Отвари макароны.\n2. Подай рядом с запечённой котлетой.\n3. Можно добавить свежие овощи.",
+        "time": "15 мин (+ время на котлету)",
+        "kcal_portion": "~560 ккал (350г)",
+        "tip": "💡 Котлета — только запечённая в духовке, без панировки и масла.",
+    },
+    "тефтели куриные домашние": {
+        "emoji": "🍖",
+        "ingredients": "• 500г куриного фарша\n• 1 яйцо\n• 1 луковица (тёртая)\n• Соль, перец, зелень",
+        "steps": "1. Смешай фарш, яйцо, лук, специи.\n2. Слепи шарики ~40г.\n3. Выложи на противень с пергаментом.\n4. Запекай 25-30 мин при 190°C.\n5. Можно тушить в небольшом количестве воды 20 мин.",
+        "time": "35 мин",
+        "kcal_portion": "~260 ккал (200г = 5 тефтелей)",
+        "tip": "💡 Делай сразу на 3-4 дня — хранить в холодильнике 3 дня. Удобно для рациона!",
+    },
+    "тефтели говяжьи домашние": {
+        "emoji": "🍖",
+        "ingredients": "• 500г говяжьего фарша (нежирный)\n• 1 яйцо\n• 1 луковица (тёртая)\n• Соль, перец",
+        "steps": "1. Смешай фарш, яйцо, лук, специи.\n2. Слепи шарики ~40г.\n3. Запекай 30-35 мин при 190°C.\n4. Или тушить в воде 25 мин.",
+        "time": "40 мин",
+        "kcal_portion": "~350 ккал (200г = 5 тефтелей)",
+        "tip": "💡 Говяжий фарш — нежирный (не более 15% жира). Смотри состав на упаковке.",
+    },
+    "омлет (2 яйца)": {
+        "emoji": "🍳",
+        "ingredients": "• 2 яйца\n• 30мл воды или миндального молока\n• Соль, зелень\n• Помидор, шпинат (по желанию)",
+        "steps": "1. Взбей яйца с водой и солью.\n2. Вылей на разогретую сковороду (без масла или 0.5 ч.л.).\n3. Накрой крышкой, жарь 3-4 мин на среднем огне.\n4. Добавь овощи перед складыванием.",
+        "time": "7 мин",
+        "kcal_portion": "~195 ккал (130г)",
+        "tip": "💡 Отличная замена яичнице — меньше холестерина. Добавляй шпинат — +железо и магний.",
+    },
+    "запечённая говядина": {
+        "emoji": "🥩",
+        "ingredients": "• 500г говядины (цельный кусок)\n• Соль, перец, чеснок, розмарин\n• 1 ч.л. оливкового масла",
+        "steps": "1. Натри мясо специями и маслом.\n2. Дай постоять 30 мин.\n3. Запекай при 180°C: 500г — 40-45 мин.\n4. Дай отдохнуть 10 мин перед нарезкой.",
+        "time": "55 мин",
+        "kcal_portion": "~320 ккал (180г)",
+        "tip": "💡 Готовь сразу 500-700г — хватит на 3-4 приёма. Нарезай порциями и храни в холодильнике.",
+    },
+    "запечённая куриная грудка": {
+        "emoji": "🍗",
+        "ingredients": "• 1-2 куриных грудки\n• Соль, перец, паприка, чеснок\n• 0.5 ч.л. оливкового масла",
+        "steps": "1. Отбей грудку до одинаковой толщины.\n2. Натри специями.\n3. Запекай при 180°C 25-30 мин.\n4. Или в фольге — сочнее, 35 мин.",
+        "time": "35 мин",
+        "kcal_portion": "~253 ккал (220г)",
+        "tip": "💡 В фольге с луком — намного сочнее! Запекай сразу 3-4 грудки на неделю.",
+    },
+}
+
+def build_recipe_card(dish_name):
+    """Строит карточку рецепта блюда"""
+    r = RECIPES.get(dish_name)
+    if not r:
+        return None
+    grams = DEFAULT_PORTIONS.get(dish_name, 200)
+    return (
+        f"{r['emoji']} *{dish_name.upper()}*\n{'─'*22}\n\n"
+        f"⏱️ Время приготовления: *{r['time']}*\n"
+        f"🔥 Калорийность порции: *{r['kcal_portion']}*\n\n"
+        f"🛒 *Ингредиенты:*\n{r['ingredients']}\n\n"
+        f"👨‍🍳 *Приготовление:*\n{r['steps']}\n\n"
+        f"{r['tip']}"
+    )
+
+# ─────────────────────────────────────────
 #  ОНБОРДИНГ
 # ─────────────────────────────────────────
 
@@ -813,6 +925,9 @@ ONBOARDING_STEPS = [
                        "2 — Силовые (тренажёры, веса)\n"
                        "3 — Без разницы, пусть бот решает"),
     ("setup_deadline", "📅 За сколько *недель* хочешь достичь цели?\nНапример: `12` (3 месяца)"),
+    ("setup_home",     "🏠 Готов ли ты иногда тренироваться *дома* (без похода в зал)?\n\n"
+                       "1 — Да, иногда хочу тренироваться дома\n"
+                       "2 — Нет, только зал"),
     ("setup_driver",   "🚗 Ты водитель или работаешь в основном сидя?\n\n1 — Да (водитель, офис)\n2 — Нет, есть физическая активность на работе"),
 ]
 
@@ -841,13 +956,15 @@ def handle_onboarding(cid, state, text, extra):
             save_profile(cid,workout_pref={"1":"кардио","2":"силовые","3":"авто"}[text])
         elif state == "setup_deadline":
             v=int(text); assert 1<=v<=104; save_profile(cid,deadline_weeks=v)
+        elif state == "setup_home":
+            assert text in ("1","2"); save_profile(cid,home_workouts=1 if text=="1" else 0)
         elif state == "setup_driver":
             assert text in ("1","2"); save_profile(cid,is_driver=1 if text=="1" else 0)
     except Exception:
         hints = {"setup_weight":"Вес числом: 107","setup_target":"Цель числом: 92",
                  "setup_height":"Рост в см: 194","setup_age":"Возраст: 24",
                  "setup_gymdays":"Число 1-5","setup_pref":"Введи 1, 2 или 3",
-                 "setup_deadline":"Недели: 12","setup_driver":"Введи 1 или 2"}
+                 "setup_deadline":"Недели: 12","setup_home":"Введи 1 или 2","setup_driver":"Введи 1 или 2"}
         bot.send_message(cid, f"⚠️ {hints.get(state,'Некорректный ввод')}", reply_markup=cancel_menu())
         return False
     if idx+1 < len(ONBOARDING_STEPS):
@@ -911,6 +1028,8 @@ def main_menu(uid=None):
         types.KeyboardButton("⚙️ Изменить профиль"),
         types.KeyboardButton("📤 Экспорт данных"),
         types.KeyboardButton("🔔 Напоминания"),
+        types.KeyboardButton("🏠 Тренировка дома"),
+        types.KeyboardButton("🍝 Рецепты блюд"),
         types.KeyboardButton("❤️ Заменить кардио"),
         types.KeyboardButton("😴 Лечь спать"),
         types.KeyboardButton("⏰ Проснулся"),
@@ -1726,6 +1845,71 @@ def router(message):
             f"💤 *СТАТИСТИКА СНА (7 дней)*\n\n{stats}{last_analysis}\n\n"
             f"💡 Цель: *7.5-8 часов* в 23:00 — максимальное жиросжигание.",
             parse_mode="Markdown")
+
+    # ── Тренировка дома ──
+    elif text == "🏠 Тренировка дома":
+        profile = get_profile(cid)
+        if not profile:
+            bot.send_message(cid,"Сначала настрой профиль.",reply_markup=main_menu(cid)); return
+        if profile.get("is_sick"):
+            bot.send_message(cid,"🤒 При болезни тренировки не рекомендуются.",reply_markup=main_menu(cid)); return
+        weekday  = now_samara().weekday()
+        gym_days = profile.get("gym_days") or 3
+        schedule = get_week_schedule(profile, gym_days)
+        wkey     = schedule.get(weekday)
+        # Определяем какая домашняя тренировка
+        if wkey and wkey.startswith("Д"):
+            name, exercises = WORKOUTS.get(wkey, WORKOUTS["ДА"])
+            fatigue = int(profile.get("fatigue") or 0)
+            adj_key, fnote = adjust_workout_for_fatigue(wkey, fatigue)
+            # Для домашних тренировок при высокой усталости — лёгкий вариант дома
+            if adj_key == "К": adj_key = "ДК"
+            name, exercises = WORKOUTS.get(adj_key, WORKOUTS["ДА"])
+            msg = (f"🏠 *ДОМАШНЯЯ ТРЕНИРОВКА СЕГОДНЯ*\n*{name}*\n\n"
+                   f"{fnote}\n\n🏋️ *Упражнения:*\n{exercises}\n\n"
+                   f"💡 Нужно: коврик, стул или диван.\n"
+                   f"После нажми *«✅ Тренировка завершена»*.")
+        else:
+            # Сегодня не домашний день по расписанию — предлагаем на выбор
+            m2 = types.ReplyKeyboardMarkup(resize_keyboard=True, row_width=2)
+            m2.add(types.KeyboardButton("🏠 ДА — Грудь+Кор"),
+                   types.KeyboardButton("🏠 ДБ — Ноги+Спина"),
+                   types.KeyboardButton("🏠 ДВ — Всё тело"),
+                   types.KeyboardButton("🏠 ДК — Кардио дома"),
+                   types.KeyboardButton("❌ Отмена"))
+            bot.send_message(cid,
+                "🏠 *Сегодня не запланирована домашняя тренировка.*\n\n"
+                "Но если хочешь потренироваться дома — выбери комплекс:",
+                parse_mode="Markdown", reply_markup=m2)
+            return
+        bot.send_message(cid, msg, parse_mode="Markdown")
+
+    elif text in ("🏠 ДА — Грудь+Кор","🏠 ДБ — Ноги+Спина","🏠 ДВ — Всё тело","🏠 ДК — Кардио дома"):
+        key_map = {"🏠 ДА — Грудь+Кор":"ДА","🏠 ДБ — Ноги+Спина":"ДБ",
+                   "🏠 ДВ — Всё тело":"ДВ","🏠 ДК — Кардио дома":"ДК"}
+        wkey = key_map[text]
+        name, exercises = WORKOUTS.get(wkey, WORKOUTS["ДА"])
+        bot.send_message(cid,
+            f"🏠 *ДОМАШНЯЯ ТРЕНИРОВКА*\n*{name}*\n\n"
+            f"🏋️ *Упражнения:*\n{exercises}\n\n"
+            f"💡 Нужно: коврик, стул или диван.\n"
+            f"После нажми *«✅ Тренировка завершена»*.",
+            parse_mode="Markdown", reply_markup=main_menu(cid))
+
+    # ── Рецепты блюд ──
+    elif text == "🍝 Рецепты блюд":
+        dishes = list(RECIPES.keys())
+        m2 = types.ReplyKeyboardMarkup(resize_keyboard=True, row_width=2)
+        for d in dishes: m2.add(types.KeyboardButton(f"📖 {d}"))
+        m2.add(types.KeyboardButton("❌ Отмена"))
+        bot.send_message(cid,
+            "🍝 *РЕЦЕПТЫ БЛЮД*\n\nВыбери блюдо — получишь пошаговый рецепт с калорийностью:",
+            parse_mode="Markdown", reply_markup=m2)
+
+    elif text.startswith("📖 ") and text[3:] in RECIPES:
+        dish = text[3:]
+        card = build_recipe_card(dish)
+        bot.send_message(cid, card, parse_mode="Markdown", reply_markup=main_menu(cid))
 
     else:
         bot.send_message(cid,"Используй кнопки меню.",reply_markup=main_menu(cid))
