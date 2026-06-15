@@ -1776,6 +1776,14 @@ def router(message):
         handle_onboarding(cid, state, text, extra)
         return
 
+    # Если пользователь что-то пишет пока "спит" — напомнить
+    if state == "waiting_wake" and text not in ("⏰ Проснулся", "❌ Отмена"):
+        bot.send_message(cid,
+            "😴 Ты в режиме сна.\n\nКогда проснёшься — нажми *«⏰ Проснулся»*.\n"
+            "Или нажми *«❌ Отмена»* чтобы выйти из режима сна.",
+            parse_mode="Markdown", reply_markup=cancel_menu())
+        return
+
     # Ввод веса
     if state == "waiting_weight":
         try:
