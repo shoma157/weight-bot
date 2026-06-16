@@ -186,6 +186,28 @@ DEFAULT_PORTIONS = {
     "высокобелковый творог (0%)": 150,
 }
 
+# --- ДОБАВЛЕНИЕ РАЗНООБРАЗИЯ ---
+COOKING_METHODS = [
+    "на гриле со специями", "запечённое в фольге с лимоном", 
+    "тушёное с прованскими травами", "на пару с чесноком", 
+    "на сухой сковороде с паприкой", "отварное с куркумой"
+]
+
+def get_cooking_tip():
+    return random.choice(COOKING_METHODS)
+
+def get_meal_suggestion(meal_name):
+    components = MEAL_FOODS.get(meal_name, {})
+    suggestion = f"💡 *Вариант на {meal_name}:*\n"
+    for cat, items in components.items():
+        item = random.choice(items)
+        tip = f" ({get_cooking_tip()})" if cat == "белок" else ""
+        suggestion += f"• {cat.capitalize()}: {item}{tip}\n"
+    return suggestion
+
+# --- Конец блока ---
+
+MOTIVATIONAL_QUOTES = [
 MOTIVATIONAL_QUOTES = [
     "💪 Каждый день без срыва — это победа!",
     "🔥 Дефицит калорий сегодня — это твоё тело завтра.",
@@ -2937,6 +2959,15 @@ def router(message):
 
     else:
         bot.send_message(cid,"Используй кнопки меню.",reply_markup=main_menu(cid))
+
+@bot.message_handler(commands=['menu'])
+def show_daily_menu(message):
+    msg = "🍽 *Твой случайный план питания на сегодня:*\n"
+    for meal in MEAL_FOODS.keys():
+        msg += "\n" + get_meal_suggestion(meal) + "\n"
+    bot.send_message(message.chat.id, msg, parse_mode="Markdown")
+
+# Теперь можно запускать бота:
 
 if __name__ == '__main__':
     init_db()
