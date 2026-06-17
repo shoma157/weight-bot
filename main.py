@@ -1841,6 +1841,65 @@ def router(message):
             parse_mode="Markdown", reply_markup=cancel_menu())
         return
 
+    # ── Ручной ввод времени сна ──
+    if state == "manual_sleep_entry":
+        try:
+            parts = text.strip().replace(".", ":").split(":")
+            assert len(parts) == 2
+            h, m = int(parts[0]), int(parts[1])
+            assert 0 <= h <= 23 and 0 <= m <= 59
+            sleep_time = f"{h:02d}:{m:02d}"
+            now2       = now_samara()
+            wake_time  = now2.strftime("%H:%M")
+            wh, wm     = now2.hour, now2.minute
+            sleep_mins = h * 60 + m
+            wake_mins  = wh * 60 + wm
+            if wake_mins < sleep_mins:
+                wake_mins += 24 * 60
+            duration = round((wake_mins - sleep_mins) / 60, 1)
+            analysis = analyze_sleep(duration, 3)
+            set_state(cid, "rate_sleep_quality", extra=f"{sleep_time}|{wake_time}|{duration}")
+            bot.send_message(cid,
+                f"😴 Лёг: *{sleep_time}* | ⏰ Встал: *{wake_time}*\n"
+                f"🌙 Продолжительность: *{duration} ч*\n\n"
+                f"{analysis['note']}\n\n"
+                f"Оцени качество сна (1-5):\n"
+                f"1 — Ужасно 😵 · 2 — Плохо · 3 — Нормально · 4 — Хорошо · 5 — Отлично 🌟",
+                parse_mode="Markdown", reply_markup=fatigue_menu())
+        except Exception:
+            bot.send_message(cid, "Введи время в формате ЧЧ:ММ, например: *23:00*",
+                             parse_mode="Markdown")
+        return
+
+    # ── Оценка качества сна ──
+    if state == "rate_sleep_quality":
+        try:
+            quality = int(text); assert 1 <= quality <= 5
+            parts      = extra.split("|")
+            sleep_time = parts[0] if len(parts) > 0 else "23:00"
+            wake_time  = parts[1] if len(parts) > 1 else "07:00"
+            duration   = float(parts[2]) if len(parts) > 2 else 7.0
+            analysis   = analyze_sleep(duration, quality)
+            log_sleep(cid, sleep_time, wake_time, duration, quality)
+            save_profile(cid, fatigue=analysis["fat_adj"])
+            set_state(cid, "idle")
+            stars = "⭐" * quality
+            msg = (
+                f"✅ *Сон записан!*\n\n"
+                f"🌙 *{sleep_time}* → ⏰ *{wake_time}* = *{duration} ч* {stars}\n\n"
+                f"{analysis['note']}\n"
+            )
+            if analysis["cal_adj"] > 0:
+                msg += (f"\n🍽️ *Рацион скорректирован:* +{analysis['cal_adj']} ккал сегодня "
+                        f"(нажми «Рацион сегодня» — порции уже обновлены)")
+            if analysis["fat_adj"] >= 4:
+                msg += "\n🏋️ *Тренировка:* нажми «Тренировка сегодня» — план уже скорректирован"
+            msg += f"\n\n{MOTIVATIONAL_QUOTES[quality-1]}"
+            bot.send_message(cid, msg, parse_mode="Markdown", reply_markup=main_menu(cid))
+        except Exception:
+            bot.send_message(cid, "Введи число от 1 до 5", reply_markup=fatigue_menu())
+        return
+
     # Ввод веса
     if state == "waiting_weight":
         try:
@@ -1981,7 +2040,6 @@ def router(message):
 
     # ── Дневник: выбор приёма пищи ──
     if state == "diary_choose_meal":
-        meals = ["\U0001f373 Завтрак","\U0001f357 Обед","\U0001f34e Полдник","\U0001f319 Ужин","\U0001f375 Перекус"]
         meals_text = ["🍳 Завтрак","🍗 Обед","🍎 Полдник","🌙 Ужин","🍵 Перекус"]
         if text in meals_text:
             set_state(cid, "diary_enter_food", extra=text)
@@ -2478,27 +2536,6 @@ def router(message):
         card_text = build_product_card(text)
         bot.send_message(cid, card_text, parse_mode="Markdown", reply_markup=main_menu(cid))
 
-    # ── Фрукты — список ──
-    elif text == "🍓 Фрукты":
-        fruit_list = FOOD_GROUPS.get("фрукты", [])
-        bot.send_message(cid,
-            "🍓 *ФРУКТЫ В РАЦИОНЕ*\n\nВыбери фрукт — получишь подробную карточку:\n"
-            "ГИ, лучшее время приёма, польза для похудения.",
-            parse_mode="Markdown", reply_markup=foods_keyboard(fruit_list))
-
-    # ── Спортпит — список ──
-    elif text == "💪 Спортпит":
-        sportpit_list = FOOD_GROUPS.get("спортпит", [])
-        bot.send_message(cid,
-            "💪 *СПОРТИВНОЕ ПИТАНИЕ*\n\nВыбери продукт — получишь подробную карточку:\n"
-            "состав, когда принимать, на что обратить внимание.",
-            parse_mode="Markdown", reply_markup=foods_keyboard(sportpit_list))
-
-    # ── Карточка продукта (фрукт или спортпит) ──
-    elif text in ALL_CARD_PRODUCTS:
-        card_text = build_product_card(text)
-        bot.send_message(cid, card_text, parse_mode="Markdown", reply_markup=main_menu(cid))
-
     # Профиль
     elif text=="👤 Мой профиль":
         profile=get_profile(cid)
@@ -2631,71 +2668,6 @@ def router(message):
             f"4 — Хорошо 😊\n5 — Отлично 🌟",
             parse_mode="Markdown", reply_markup=fatigue_menu())
 
-    # ── Ручной ввод времени сна ──
-    elif state == "manual_sleep_entry":
-        try:
-            parts = text.strip().replace(".", ":").split(":")
-            assert len(parts) == 2
-            h, m = int(parts[0]), int(parts[1])
-            assert 0 <= h <= 23 and 0 <= m <= 59
-            sleep_time = f"{h:02d}:{m:02d}"
-            now2       = now_samara()
-            wake_time  = now2.strftime("%H:%M")
-            wh, wm     = now2.hour, now2.minute
-            sleep_mins = h * 60 + m
-            wake_mins  = wh * 60 + wm
-            if wake_mins < sleep_mins:
-                wake_mins += 24 * 60
-            duration = round((wake_mins - sleep_mins) / 60, 1)
-            analysis = analyze_sleep(duration, 3)
-            set_state(cid, "rate_sleep_quality", extra=f"{sleep_time}|{wake_time}|{duration}")
-            bot.send_message(cid,
-                f"😴 Лёг: *{sleep_time}* | ⏰ Встал: *{wake_time}*\n"
-                f"🌙 Продолжительность: *{duration} ч*\n\n"
-                f"{analysis['note']}\n\n"
-                f"Оцени качество сна (1-5):\n"
-                f"1 — Ужасно 😵 · 2 — Плохо · 3 — Нормально · 4 — Хорошо · 5 — Отлично 🌟",
-                parse_mode="Markdown", reply_markup=fatigue_menu())
-        except Exception:
-            bot.send_message(cid, "Введи время в формате ЧЧ:ММ, например: *23:00*",
-                             parse_mode="Markdown")
-        return
-
-    # ── Оценка качества сна ──
-    elif state == "rate_sleep_quality":
-        try:
-            quality = int(text); assert 1 <= quality <= 5
-            parts      = extra.split("|")
-            sleep_time = parts[0] if len(parts) > 0 else "23:00"
-            wake_time  = parts[1] if len(parts) > 1 else "07:00"
-            duration   = float(parts[2]) if len(parts) > 2 else 7.0
-            analysis   = analyze_sleep(duration, quality)
-            # Сохраняем сон
-            log_sleep(cid, sleep_time, wake_time, duration, quality)
-            # Корректируем усталость в профиле
-            save_profile(cid, fatigue=analysis["fat_adj"])
-            if analysis["cal_adj"] > 0:
-                save_profile(cid, fatigue=analysis["fat_adj"])
-            set_state(cid, "idle")
-            # Формируем итог
-            stars = "⭐" * quality
-            msg = (
-                f"✅ *Сон записан!*\n\n"
-                f"🌙 *{sleep_time}* → ⏰ *{wake_time}* = *{duration} ч* {stars}\n\n"
-                f"{analysis['note']}\n"
-            )
-            if analysis["cal_adj"] > 0:
-                msg += (f"\n🍽️ *Рацион скорректирован:* +{analysis['cal_adj']} ккал сегодня "
-                        f"(нажми «Рацион сегодня» — порции уже обновлены)")
-            if analysis["fat_adj"] >= 4:
-                msg += "\n🏋️ *Тренировка:* нажми «Тренировка сегодня» — план уже скорректирован"
-            msg += f"\n\n{MOTIVATIONAL_QUOTES[quality-1]}"
-            bot.send_message(cid, msg, parse_mode="Markdown", reply_markup=main_menu(cid))
-        except Exception:
-            bot.send_message(cid, "Введи число от 1 до 5", reply_markup=fatigue_menu())
-        return
-
-    # ── История сна ──
     # ── Разминка ──
     elif text == "🔥 Разминка":
         bot.send_message(cid, WARMUP, parse_mode="Markdown")
@@ -2798,7 +2770,7 @@ def router(message):
                          parse_mode="Markdown", reply_markup=cancel_menu())
 
     elif text.startswith("📊 ") and state == "idle":
-        exercise = text[3:]
+        exercise = text[2:]
         if exercise in get_all_exercises(cid):
             history = get_exercise_history(cid, exercise)
             lines_ex = [f"• {d[:10]}: *{w}кг* × {r} повт. × {s} подх." for w,r,s,d in history]
@@ -2987,8 +2959,8 @@ def router(message):
             "🍝 *РЕЦЕПТЫ БЛЮД*\n\nВыбери блюдо — получишь пошаговый рецепт с калорийностью:",
             parse_mode="Markdown", reply_markup=m2)
 
-    elif text.startswith("📖 ") and text[3:] in RECIPES:
-        dish = text[3:]
+    elif text.startswith("📖 ") and text[2:] in RECIPES:
+        dish = text[2:]
         card = build_recipe_card(dish)
         bot.send_message(cid, card, parse_mode="Markdown", reply_markup=main_menu(cid))
 
