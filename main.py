@@ -120,6 +120,164 @@ SEMIFAB_WARNINGS = {
     "клубника": "✅ Низкий ГИ, витамин C",
 }
 
+# ─────────────────────────────────────────
+#  СИСТЕМА МЕДИЦИНСКИХ ОГРАНИЧЕНИЙ
+# ─────────────────────────────────────────
+
+HEALTH_CONDITIONS = {
+    "диабет": {
+        "label": "🩸 Сахарный диабет",
+        "banned_foods": [
+            "виноград", "арбуз", "дыня", "ананас", "манго", "банан",
+            "протеиновое печенье", "протеиновый пудинг",
+            "макароны с куриным фаршем", "макароны с котлетой", "макароны",
+        ],
+        "safe_replacements": {
+            "виноград": "черника", "арбуз": "клубника", "дыня": "малина",
+            "ананас": "груша", "манго": "яблоко", "банан": "вишня",
+            "макароны с куриным фаршем": "гречка с куриной грудкой",
+            "макароны с котлетой": "гречка с куриной грудкой",
+            "макароны": "гречка",
+            "протеиновое печенье": "высокобелковый творог",
+            "протеиновый пудинг": "протеиновый йогурт",
+        },
+        "food_note": "🩸 При диабете высокий ГИ опасен скачками сахара. Заменяй высокоуглеводные фрукты и быстрые углеводы на низкогликемические варианты.",
+        "banned_exercises": [],
+        "workout_note": "🩸 Контролируй сахар до и после тренировки. При гипогликемии — короткий перекус перед нагрузкой.",
+    },
+    "аллергия_глютен": {
+        "label": "🌾 Аллергия на глютен",
+        "banned_foods": [
+            "макароны", "макароны с куриным фаршем", "макароны с котлетой",
+            "овсянка", "булгур", "куриные наггетсы запечённые",
+            "куриные котлеты замороженные", "куриные фрикадельки замороженные",
+            "куриные сосиски", "протеиновое печенье", "протеиновый батончик",
+        ],
+        "safe_replacements": {
+            "макароны": "гречка", "макароны с куриным фаршем": "гречка с куриной грудкой",
+            "макароны с котлетой": "рис с куриным бедром",
+            "овсянка": "гречка варёная", "булгур": "бурый рис",
+            "куриные наггетсы запечённые": "запечённая куриная грудка",
+            "куриные котлеты замороженные": "тефтели куриные домашние",
+            "куриные фрикадельки замороженные": "тефтели куриные домашние",
+            "куриные сосиски": "запечённая куриная грудка",
+            "протеиновое печенье": "высокобелковый творог",
+            "протеиновый батончик": "орехи с фруктом",
+        },
+        "food_note": "🌾 Глютен содержится в пшенице (макароны, овсянка, панировка полуфабрикатов). Гречка, рис, мясо и овощи безопасны.",
+        "banned_exercises": [],
+        "workout_note": "",
+    },
+    "аллергия_лактоза": {
+        "label": "🥛 Непереносимость лактозы",
+        "banned_foods": [
+            "высокобелковый творог", "высокобелковый творог (0%)",
+            "протеин казеиновый", "протеин казеиновый (порция 30г)",
+            "протеиновый йогурт", "протеиновый пудинг",
+        ],
+        "safe_replacements": {
+            "высокобелковый творог": "консервированная курица",
+            "высокобелковый творог (0%)": "консервированная курица",
+            "протеин казеиновый": "протеин сывороточный",
+            "протеин казеиновый (порция 30г)": "протеин сывороточный (порция 30г)",
+            "протеиновый йогурт": "орехи с фруктом",
+            "протеиновый пудинг": "протеиновый батончик",
+        },
+        "food_note": "🥛 Молочные продукты (творог, йогурт, казеин) под запретом. Сывороточный протеин-изолят обычно содержит минимум лактозы — проверь состав.",
+        "banned_exercises": [],
+        "workout_note": "",
+    },
+    "аллергия_орехи": {
+        "label": "🥜 Аллергия на орехи",
+        "banned_foods": ["миндаль", "грецкий орех", "кешью", "тыквенные семечки"],
+        "safe_replacements": {
+            "миндаль": "яблоко", "грецкий орех": "консервированная курица",
+            "кешью": "протеиновый батончик", "тыквенные семечки": "яблоко",
+        },
+        "food_note": "🥜 Любые орехи исключены из рациона полностью. В полдниках заменяй их на белковые продукты или фрукты.",
+        "banned_exercises": [],
+        "workout_note": "",
+    },
+    "давление": {
+        "label": "💔 Высокое давление / сердечные",
+        "banned_foods": [
+            "куриные сосиски", "куриные наггетсы запечённые",
+            "консервированная курица", "консервированная индейка",
+        ],
+        "safe_replacements": {
+            "куриные сосиски": "запечённая куриная грудка",
+            "куриные наггетсы запечённые": "запечённая куриная грудка",
+            "консервированная курица": "готовая варёная курица",
+            "консервированная индейка": "индейка отварная",
+        },
+        "food_note": "💔 Ограничь соль — консервы и полуфабрикаты содержат много натрия. Готовь сам с минимумом соли, добавляй специи и травы.",
+        "banned_exercises": ["Берпи", "Приседания с прыжком", "Джампинг джек"],
+        "workout_note": "💔 Высокоинтенсивные интервальные упражнения (берпи, прыжки) исключены — резкие скачки пульса опасны. Кардио в спокойном темпе.",
+    },
+    "суставы": {
+        "label": "🦴 Проблемы с суставами/связками",
+        "banned_foods": [],
+        "safe_replacements": {},
+        "food_note": "",
+        "banned_exercises": [
+            "Приседания с прыжком", "Берпи", "Выпады поочерёдно", "Боковые выпады",
+            "Жим ногами в тренажёре", "Разгибание ног в тренажёре", "Приседания",
+        ],
+        "workout_note": "🦴 Ударная нагрузка на суставы (прыжки, глубокие приседания, выпады) исключена. Замени на упражнения с малой амплитудой: ягодичный мост, планку, работу в блоках.",
+    },
+}
+
+def get_user_conditions(profile):
+    if not profile: return []
+    raw = profile.get("health_conditions") or ""
+    return [c for c in raw.split(",") if c and c in HEALTH_CONDITIONS]
+
+def get_banned_foods(profile):
+    banned = set()
+    for cond in get_user_conditions(profile):
+        banned.update(HEALTH_CONDITIONS[cond]["banned_foods"])
+    return banned
+
+def get_safe_replacement(profile, food):
+    for cond in get_user_conditions(profile):
+        rules = HEALTH_CONDITIONS[cond]
+        if food in rules["banned_foods"]:
+            return rules["safe_replacements"].get(food, food)
+    return food
+
+def get_banned_exercises(profile):
+    banned = set()
+    for cond in get_user_conditions(profile):
+        banned.update(HEALTH_CONDITIONS[cond]["banned_exercises"])
+    return banned
+
+def get_health_food_notes(profile):
+    notes = []
+    for cond in get_user_conditions(profile):
+        note = HEALTH_CONDITIONS[cond]["food_note"]
+        if note: notes.append(note)
+    return notes
+
+def get_health_workout_notes(profile):
+    notes = []
+    for cond in get_user_conditions(profile):
+        note = HEALTH_CONDITIONS[cond]["workout_note"]
+        if note: notes.append(note)
+    return notes
+
+def apply_health_filter(profile, dish_text):
+    """Заменяет упоминания запрещённых продуктов в тексте блюда на безопасные"""
+    banned = get_banned_foods(profile)
+    if not banned: return dish_text, False
+    replaced = False
+    result = dish_text
+    for food in banned:
+        if food in result:
+            replacement = get_safe_replacement(profile, food)
+            result = result.replace(food, replacement)
+            replaced = True
+    return result, replaced
+
 MEAL_FOODS = {
     "🍳 Завтрак": {
         "белок": ["яйцо","омлет (2 яйца)","готовая варёная курица",
@@ -244,7 +402,7 @@ PRODUCT_CARDS = {
     "высокобелковый творог (0%)":        {"emoji":"🧀","gi":"низкий","protein":"~18г/100г","best_time":"Завтрак, перед сном","tip":"Казеиновый белок — медленное усвоение.","warn":"⚠️ Уточни переносимость лактозы."},
 }
 
-def build_product_card(name):
+def build_product_card(name, profile=None):
     card  = PRODUCT_CARDS.get(name)
     grams = DEFAULT_PORTIONS.get(name, 100)
     kcal  = round(KCAL_PER_100G.get(name, 150) * grams / 100)
@@ -252,6 +410,15 @@ def build_product_card(name):
     group_ru = {"белок":"🥩 Белок","углеводы":"🍚 Углеводы","овощи":"🥦 Овощи",
                 "орехи":"🌰 Орехи","фрукты":"🍎 Фрукты","спортпит":"💪 Спортпит",
                 "готовые блюда":"🍽️ Готовые блюда"}.get(group, "")
+
+    health_warn = ""
+    if profile and name in get_banned_foods(profile):
+        replacement = get_safe_replacement(profile, name)
+        active = [HEALTH_CONDITIONS[c]["label"] for c in get_user_conditions(profile)
+                  if name in HEALTH_CONDITIONS[c]["banned_foods"]]
+        cond_text = ", ".join(active)
+        health_warn = f"\n\n🚫 *Не рекомендуется при: {cond_text}*\n✅ Безопасная замена: *{replacement}*"
+
     if card:
         warn_text = f"\n\n{card['warn']}" if card["warn"] else ""
         return (
@@ -261,7 +428,7 @@ def build_product_card(name):
             f"💪 Белок: *{card['protein']}*\n"
             f"📈 Гликемический индекс: *{card['gi']}*\n"
             f"⏰ Лучшее время: *{card['best_time']}*\n{'─'*20}\n"
-            f"💡 {card['tip']}{warn_text}"
+            f"💡 {card['tip']}{warn_text}{health_warn}"
         )
     else:
         warn = SEMIFAB_WARNINGS.get(name, "")
@@ -270,7 +437,7 @@ def build_product_card(name):
             f"📊 Порция: *{grams}г = {kcal} ккал*\n"
             f"🔥 Калорийность: *{KCAL_PER_100G.get(name, 150)} ккал/100г*\n"
             f"📌 Группа: {group_ru}"
-            + (f"\n\n{warn}" if warn else "")
+            + (f"\n\n{warn}" if warn else "") + health_warn
         )
 
 # ─────────────────────────────────────────
@@ -302,7 +469,8 @@ def init_db():
         cheatmeal_used INTEGER DEFAULT 0,
         cheatmeal_week TEXT DEFAULT "",
         is_driver INTEGER DEFAULT 0,
-        home_workouts INTEGER DEFAULT 0)''')
+        home_workouts INTEGER DEFAULT 0,
+        health_conditions TEXT DEFAULT "")''')
     c.execute('''CREATE TABLE IF NOT EXISTS workouts (
         id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER,
         workout_type TEXT, fatigue_after INTEGER DEFAULT 0, date TEXT)''')
@@ -329,6 +497,7 @@ def init_db():
         ("reminders_enabled","1"), ("cheatmeal_used","0"), ("cheatmeal_week","''"),
         ("is_driver","0"),
         ("home_workouts","0"),
+        ("health_conditions","''"),
     ]:
         try:
             c.execute(f"ALTER TABLE user_profile ADD COLUMN {col} TEXT DEFAULT {dflt}")
@@ -344,11 +513,13 @@ def get_profile(uid):
     keys = ["user_id","current_weight","target_weight","height","age",
             "gym_days","workout_pref","deadline_weeks","is_sick","sick_since",
             "fatigue","last_workout_date","next_workout_override",
-            "reminders_enabled","cheatmeal_used","cheatmeal_week","is_driver","home_workouts"]
+            "reminders_enabled","cheatmeal_used","cheatmeal_week","is_driver","home_workouts",
+            "health_conditions"]
     d = dict(zip(keys, row))
     # Приводим типы
     for k in ("is_sick","fatigue","reminders_enabled","cheatmeal_used","is_driver","home_workouts"):
         d[k] = int(d[k]) if d[k] else 0
+    d["health_conditions"] = d.get("health_conditions") or ""
     return d
 
 def save_profile(uid, **kw):
@@ -1050,6 +1221,21 @@ def adjust_workout_for_fatigue(wkey, fatigue):
             return "К", "🔴 Высокая усталость — заменяю силовую на *лёгкое кардио 30 мин*!"
         return wkey, "🔴 Высокая усталость — сократи до 20 мин, пульс не выше 120."
 
+def filter_banned_exercises(exercises_text, profile):
+    """Убирает из текста тренировки строки с запрещёнными по здоровью упражнениями"""
+    banned = get_banned_exercises(profile)
+    if not banned:
+        return exercises_text, False
+    lines = exercises_text.split("\n")
+    kept_lines = []
+    removed = False
+    for line in lines:
+        if any(ex.lower() in line.lower() for ex in banned):
+            removed = True
+            continue
+        kept_lines.append(line)
+    return "\n".join(kept_lines), removed
+
 def get_today_workout(uid):
     profile = get_profile(uid)
     if not profile: return "Сначала настрой профиль.", None
@@ -1068,10 +1254,23 @@ def get_today_workout(uid):
     adj_key, fnote = adjust_workout_for_fatigue(wkey, fatigue)
     if override: save_profile(uid, next_workout_override="")
     name, exercises = WORKOUTS.get(adj_key, WORKOUTS["К"])
+
+    # Применяем фильтр по медицинским ограничениям
+    exercises, removed = filter_banned_exercises(exercises, profile)
+    health_workout_notes = get_health_workout_notes(profile)
+    health_note_block = ""
+    if removed or health_workout_notes:
+        health_note_block = "\n\n⚠️ *Учтены твои ограничения по здоровью:*"
+        if removed:
+            health_note_block += "\n• Часть упражнений убрана из тренировки как небезопасная"
+        for note in health_workout_notes:
+            health_note_block += f"\n• {note}"
+
     tag  = "🔵" if adj_key == "К" else "🟢"
     orig = f" *(заменена с {wkey} из-за усталости)*" if adj_key != wkey else ""
     text = (f"{tag} *ТРЕНИРОВКА СЕГОДНЯ{orig}*\n*{name}*\n\n"
-            f"{fnote}\n\n🏋️ *Упражнения:*\n{exercises}\n\n"
+            f"{fnote}\n\n🏋️ *Упражнения:*\n{exercises}"
+            f"{health_note_block}\n\n"
             f"⏰ 18:40-20:00\n\nПосле нажми *«✅ Тренировка завершена»*.")
     return text, adj_key
 
@@ -1110,6 +1309,19 @@ def build_ration(uid, for_tomorrow=False):
     snack, snack_fast         = get_day_meal(SNACK_ROTATION, weekday, snack=p['snack'])
     dinner, dinner_fast       = get_day_meal(DINNER_ROTATION, weekday, dinner=p['dinner'])
 
+    # Применяем медицинские ограничения — заменяем опасные продукты
+    breakfast, _ = apply_health_filter(profile, breakfast)
+    breakfast_fast, _ = apply_health_filter(profile, breakfast_fast)
+    lunch, _ = apply_health_filter(profile, lunch)
+    lunch_fast, _ = apply_health_filter(profile, lunch_fast)
+    snack, _ = apply_health_filter(profile, snack)
+    snack_fast, _ = apply_health_filter(profile, snack_fast)
+    dinner, _ = apply_health_filter(profile, dinner)
+    dinner_fast, _ = apply_health_filter(profile, dinner_fast)
+
+    health_notes = get_health_food_notes(profile)
+    health_block = ("\n" + "\n".join(health_notes) + "\n") if health_notes else ""
+
     ration = (
         f"{prefix}{status}"
         f"🍳 *Завтрак:* {breakfast}\n"
@@ -1122,7 +1334,8 @@ def build_ration(uid, for_tomorrow=False):
         f"  💡 Быстро: {dinner_fast}\n\n"
         f"🎯 *~{cal} ккал* | 💪 *~{plan['protein']}г белка*"
         f"{fat_note}\n"
-        f"🚶 +1 500 шагов сверх нормы\n\n"
+        f"🚶 +1 500 шагов сверх нормы"
+        f"{health_block}\n"
         f"📖 Рецепты блюд — кнопка *«🍝 Рецепты блюд»*"
     )
     return ration, cal
@@ -1598,6 +1811,15 @@ ONBOARDING_STEPS = [
                        "1 — Да, иногда хочу тренироваться дома\n"
                        "2 — Нет, только зал"),
     ("setup_driver",   "🚗 Ты водитель или работаешь в основном сидя?\n\n1 — Да (водитель, офис)\n2 — Нет, есть физическая активность на работе"),
+    ("setup_health",   "🏥 Есть ли у тебя ограничения по здоровью? Бот будет автоматически исключать опасные продукты и упражнения.\n\n"
+                       "Выбери цифры через запятую (например: `1,3`) или `0` если ограничений нет:\n\n"
+                       "1 — 🩸 Сахарный диабет\n"
+                       "2 — 🌾 Аллергия на глютен\n"
+                       "3 — 🥛 Непереносимость лактозы\n"
+                       "4 — 🥜 Аллергия на орехи\n"
+                       "5 — 💔 Высокое давление/сердечные\n"
+                       "6 — 🦴 Проблемы с суставами/связками\n"
+                       "0 — Нет ограничений"),
 ]
 
 def start_onboarding(cid, edit=False):
@@ -1629,11 +1851,23 @@ def handle_onboarding(cid, state, text, extra):
             assert text in ("1","2"); save_profile(cid,home_workouts=1 if text=="1" else 0)
         elif state == "setup_driver":
             assert text in ("1","2"); save_profile(cid,is_driver=1 if text=="1" else 0)
+        elif state == "setup_health":
+            condition_map = {"1":"диабет","2":"аллергия_глютен","3":"аллергия_лактоза",
+                             "4":"аллергия_орехи","5":"давление","6":"суставы"}
+            cleaned = text.replace(" ", "")
+            if cleaned == "0":
+                save_profile(cid, health_conditions="")
+            else:
+                nums = cleaned.split(",")
+                assert all(n in condition_map for n in nums)
+                conditions = [condition_map[n] for n in nums]
+                save_profile(cid, health_conditions=",".join(conditions))
     except Exception:
         hints = {"setup_weight":"Вес числом: 107","setup_target":"Цель числом: 92",
                  "setup_height":"Рост в см: 194","setup_age":"Возраст: 24",
                  "setup_gymdays":"Число 1-5","setup_pref":"Введи 1, 2 или 3",
-                 "setup_deadline":"Недели: 12","setup_home":"Введи 1 или 2","setup_driver":"Введи 1 или 2"}
+                 "setup_deadline":"Недели: 12","setup_home":"Введи 1 или 2","setup_driver":"Введи 1 или 2",
+                 "setup_health":"Введи цифры через запятую (1,3) или 0"}
         bot.send_message(cid, f"⚠️ {hints.get(state,'Некорректный ввод')}", reply_markup=cancel_menu())
         return False
     if idx+1 < len(ONBOARDING_STEPS):
@@ -1697,6 +1931,7 @@ def main_menu(uid=None):
         types.KeyboardButton("⚙️ Изменить профиль"),
         types.KeyboardButton("📤 Экспорт данных"),
         types.KeyboardButton("🔔 Напоминания"),
+        types.KeyboardButton("🏥 Мои ограничения"),
         types.KeyboardButton("🏠 Тренировка дома"),
         types.KeyboardButton("🔥 Разминка"),
         types.KeyboardButton("🧘 Заминка"),
@@ -2114,6 +2349,33 @@ def router(message):
             bot.send_message(cid, "Введи название и граммы:\nНапример: *куриная грудка 150*", parse_mode="Markdown")
         return
 
+    # ── Редактирование ограничений по здоровью ──
+    if state == "edit_health":
+        condition_map = {"1":"диабет","2":"аллергия_глютен","3":"аллергия_лактоза",
+                         "4":"аллергия_орехи","5":"давление","6":"суставы"}
+        cleaned = text.replace(" ", "")
+        try:
+            if cleaned == "0":
+                save_profile(cid, health_conditions="")
+                set_state(cid, "idle")
+                bot.send_message(cid, "✅ Все ограничения убраны. Рацион и тренировки без фильтров.",
+                                 parse_mode="Markdown", reply_markup=main_menu(cid))
+            else:
+                nums = cleaned.split(",")
+                assert all(n in condition_map for n in nums)
+                conditions = [condition_map[n] for n in nums]
+                save_profile(cid, health_conditions=",".join(conditions))
+                set_state(cid, "idle")
+                labels = "\n".join(f"• {HEALTH_CONDITIONS[c]['label']}" for c in conditions)
+                bot.send_message(cid,
+                    f"✅ *Ограничения обновлены:*\n{labels}\n\n"
+                    "Рацион, рецепты и тренировки теперь учитывают это автоматически.",
+                    parse_mode="Markdown", reply_markup=main_menu(cid))
+        except Exception:
+            bot.send_message(cid, "Введи цифры через запятую (например: 1,3) или 0",
+                             parse_mode="Markdown")
+        return
+
     if state == "waiting_water":
         try:
             g=int(text); assert 0<g<=20
@@ -2198,15 +2460,24 @@ def router(message):
         if text in all_f:
             if text==from_food:
                 bot.send_message(cid,"Это тот же продукт 😄 Выбери другой."); return
-            to_g,kcal=calc_equivalent(from_food,text)
-            warn=SEMIFAB_WARNINGS.get(text,"")
+            profile = get_profile(cid)
+            chosen = text
+            health_warn = ""
+            if profile and chosen in get_banned_foods(profile):
+                safe_alt = get_safe_replacement(profile, chosen)
+                if safe_alt != chosen:
+                    chosen = safe_alt
+                    health_warn = (f"\n\n⚠️ *{text} не подходит по твоим ограничениям здоровья.*\n"
+                                   f"Автоматически заменил на *{safe_alt}*.")
+            to_g,kcal=calc_equivalent(from_food,chosen)
+            warn=SEMIFAB_WARNINGS.get(chosen,"")
             warn_text=f"\n\n{warn}" if warn else ""
             set_state(cid,"idle")
             bot.send_message(cid,
                 f"✅ *Замена в {meal}:*\n\n"
                 f"❌ {DEFAULT_PORTIONS.get(from_food,100)}г *{from_food}*\n"
-                f"✅ {to_g}г *{text}*\n\n"
-                f"🔁 Калорийность сохранена: *{kcal} ккал*{warn_text}",
+                f"✅ {to_g}г *{chosen}*\n\n"
+                f"🔁 Калорийность сохранена: *{kcal} ккал*{warn_text}{health_warn}",
                 parse_mode="Markdown",reply_markup=main_menu(cid))
         else:
             bot.send_message(cid,"Выбери продукт из кнопок.")
@@ -2533,7 +2804,7 @@ def router(message):
 
     # ── Карточка продукта при нажатии из списка ──
     elif text in ALL_CARD_PRODUCTS:
-        card_text = build_product_card(text)
+        card_text = build_product_card(text, get_profile(cid))
         bot.send_message(cid, card_text, parse_mode="Markdown", reply_markup=main_menu(cid))
 
     # Профиль
@@ -2548,6 +2819,12 @@ def router(message):
         fat_label={0:"—",1:"😊 Отлично",2:"✅ Хорошо",3:"🟡 Умеренная",
                    4:"🔴 Высокая",5:"😵 Очень высокая"}.get(fatigue,"—")
         water=get_water_today(cid)
+        active_conditions = get_user_conditions(profile)
+        if active_conditions:
+            cond_labels = ", ".join(HEALTH_CONDITIONS[c]["label"] for c in active_conditions)
+            health_line = f"\n🏥 Ограничения: *{cond_labels}*"
+        else:
+            health_line = "\n🏥 Ограничения: *нет*"
         bot.send_message(cid,
             f"👤 *МОЙ ПРОФИЛЬ*\n\n"
             f"⚖️ Стартовый: *{profile['current_weight']} кг* | Текущий: *{curr_w} кг* (−{loss} кг)\n"
@@ -2559,7 +2836,8 @@ def router(message):
             f"💪 Белок: *{plan['protein']}г/день*\n"
             f"📈 Темп: *~{plan['weekly_loss']} кг/нед*\n\n"
             f"😴 Усталость: *{fat_label}*\n"
-            f"🏥 Здоровье: *{'🤒 Болезнь' if profile.get('is_sick') else '✅ Здоров'}*\n"
+            f"🏥 Здоровье: *{'🤒 Болезнь' if profile.get('is_sick') else '✅ Здоров'}*"
+            f"{health_line}\n"
             f"🚗 Профиль: *{'Водитель (сидячая работа)' if profile.get('is_driver') else 'Обычная активность'}*\n"
             f"💧 Вода сегодня: *{water}/8* стаканов",
             parse_mode="Markdown")
@@ -2592,6 +2870,31 @@ def router(message):
         save_profile(cid,reminders_enabled=new_val)
         status="✅ Включены" if new_val else "❌ Выключены"
         bot.send_message(cid,f"🔔 Напоминания: *{status}*",parse_mode="Markdown",reply_markup=main_menu(cid))
+
+    # ── Мои ограничения по здоровью ──
+    elif text == "🏥 Мои ограничения":
+        profile = get_profile(cid)
+        if not profile:
+            bot.send_message(cid, "Сначала настрой профиль."); return
+        active = get_user_conditions(profile)
+        if active:
+            labels = "\n".join(f"• {HEALTH_CONDITIONS[c]['label']}" for c in active)
+            current_text = f"✅ *Активные ограничения:*\n{labels}"
+        else:
+            current_text = "✅ *Ограничений нет* — рацион и тренировки без фильтров."
+        set_state(cid, "edit_health")
+        bot.send_message(cid,
+            f"🏥 *МОИ ОГРАНИЧЕНИЯ ПО ЗДОРОВЬЮ*\n\n{current_text}\n\n"
+            "Бот автоматически исключает опасные продукты из рациона/рецептов "
+            "и упражнения из тренировок.\n\n"
+            "Введи цифры через запятую чтобы изменить (например: `1,3`) или `0` чтобы убрать все:\n\n"
+            "1 — 🩸 Сахарный диабет\n"
+            "2 — 🌾 Аллергия на глютен\n"
+            "3 — 🥛 Непереносимость лактозы\n"
+            "4 — 🥜 Аллергия на орехи\n"
+            "5 — 💔 Высокое давление/сердечные\n"
+            "6 — 🦴 Проблемы с суставами/связками",
+            parse_mode="Markdown", reply_markup=cancel_menu())
 
     # Экспорт
     elif text=="📤 Экспорт данных":
