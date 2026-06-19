@@ -5,8 +5,15 @@ import threading
 import time
 import csv
 import io
+import re
 from datetime import datetime, timezone, timedelta
 import random
+
+try:
+    import pdfplumber
+    PDF_SUPPORT = True
+except ImportError:
+    PDF_SUPPORT = False
 
 # Самарское время UTC+4
 SAMARA_TZ = timezone(timedelta(hours=4))
@@ -491,6 +498,15 @@ def init_db():
         id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER,
         last_entry_date TEXT, current_streak INTEGER DEFAULT 0,
         best_streak INTEGER DEFAULT 0)''')
+    c.execute('''CREATE TABLE IF NOT EXISTS inbody (
+        id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER,
+        weight REAL, muscle_mass REAL, fat_percent REAL, fat_mass_kg REAL,
+        water REAL, protein REAL, bone REAL, visceral_fat REAL, bmi REAL,
+        lean_mass REAL, bmr INTEGER, tdee INTEGER, optimal_weight REAL,
+        report_date TEXT, date TEXT)''')
+    c.execute('''CREATE TABLE IF NOT EXISTS waist (
+        id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER,
+        waist_cm REAL, date TEXT)''')
     # Миграция
     for col, dflt in [
         ("fatigue","0"), ("last_workout_date","''"), ("next_workout_override","''"),
@@ -684,6 +700,209 @@ def build_sleep_stats(uid):
                "🔴 Серьёзный недосып — влияет на похудение!")
     return ("\n".join(lines) +
             f"\n\n📊 Среднее за неделю: *{avg_dur} ч* | Качество: *{avg_qual}/5*\n{verdict}")
+
+# ─────────────────────────────────────────
+#  ОБХВАТ ТАЛИИ
+# ─────────────────────────────────────────
+
+def add_waist(uid, cm):
+    conn = sqlite3.connect("weight_tracker.db")
+    conn.execute("INSERT INTO waist (user_id,waist_cm,date) VALUES (?,?,?)",
+                 (uid, cm, now_samara().strftime("%Y-%m-%d %H:%M")))
+    conn.commit(); conn.close()
+
+def get_waist_history(uid, limit=14):
+    conn = sqlite3.connect("weight_tracker.db")
+    rows = conn.execute("SELECT waist_cm,date FROM waist WHERE user_id=? ORDER BY id DESC LIMIT ?",
+                        (uid, limit)).fetchall()
+    conn.close()
+    return list(reversed(rows))
+
+def get_last_waist(uid):
+    conn = sqlite3.connect("weight_tracker.db")
+    row = conn.execute("SELECT waist_cm,date FROM waist WHERE user_id=? ORDER BY id DESC LIMIT 1",
+                       (uid,)).fetchone()
+    conn.close()
+    return row
+
+def analyze_waist(profile, waist_cm):
+    """Оценка риска по обхвату талии (стандарт ВОЗ для мужчин/женщин)"""
+    # Упрощённо: для мужчин риск начинается с 94см (повышенный) и 102см (высокий)
+    # Для женщин — 80см и 88см. Профиль не хранит пол явно, используем мужские нормы по умолчанию
+    if waist_cm < 94:
+        return "✅ Низкий риск — талия в норме."
+    elif waist_cm < 102:
+        return "🟡 Повышенный риск — стоит обратить внимание на висцеральный жир."
+    else:
+        return "🔴 Высокий риск — рекомендуется проконсультироваться с врачом по поводу здоровья сердца."
+
+def build_waist_chart(uid):
+    history = get_waist_history(uid, limit=10)
+    if len(history) < 2: return None
+    values = [w for w,_ in history]
+    dates  = [d[:10] for _,d in history]
+    mn, mx = min(values), max(values)
+    rng    = mx - mn if mx != mn else 1
+    lines  = []
+    for row in range(5, -1, -1):
+        thr  = mn + rng*row/5
+        line = f"{thr:5.1f} |" + "".join(" ●" if v >= thr-rng/10 else "  " for v in values)
+        lines.append(line)
+    lines.append("       " + "──"*len(values))
+    lines.append("       " + " ".join(d[8:] for d in dates))
+    return "\n".join(lines)
+
+# ─────────────────────────────────────────
+#  INBODY — ПАРСИНГ PDF ОТЧЁТОВ DDX FITNESS
+# ─────────────────────────────────────────
+
+def add_inbody_record(uid, data):
+    """Сохраняет результаты замера InBody в БД"""
+    conn = sqlite3.connect("weight_tracker.db")
+    conn.execute(
+        "INSERT INTO inbody (user_id,weight,muscle_mass,fat_percent,fat_mass_kg,water,protein,"
+        "bone,visceral_fat,bmi,lean_mass,bmr,tdee,optimal_weight,report_date,date) "
+        "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+        (uid, data.get("weight"), data.get("muscle"), data.get("fat_percent"), data.get("fat_mass_kg"),
+         data.get("water"), data.get("protein"), data.get("bone"), data.get("visceral_fat"),
+         data.get("bmi"), data.get("lean_mass"), data.get("bmr"), data.get("tdee"),
+         data.get("optimal_weight"), data.get("report_date"), now_samara().strftime("%Y-%m-%d %H:%M"))
+    )
+    conn.commit(); conn.close()
+
+def get_inbody_history(uid, limit=10):
+    conn = sqlite3.connect("weight_tracker.db")
+    rows = conn.execute(
+        "SELECT weight,muscle_mass,fat_percent,fat_mass_kg,water,protein,bone,visceral_fat,"
+        "bmi,lean_mass,bmr,tdee,optimal_weight,report_date,date FROM inbody "
+        "WHERE user_id=? ORDER BY id DESC LIMIT ?", (uid, limit)
+    ).fetchall()
+    conn.close()
+    return list(reversed(rows))
+
+def get_last_inbody(uid):
+    conn = sqlite3.connect("weight_tracker.db")
+    row = conn.execute(
+        "SELECT weight,muscle_mass,fat_percent,fat_mass_kg,water,protein,bone,visceral_fat,"
+        "bmi,lean_mass,bmr,tdee,optimal_weight,report_date,date FROM inbody "
+        "WHERE user_id=? ORDER BY id DESC LIMIT 1", (uid,)
+    ).fetchone()
+    conn.close()
+    return row
+
+def parse_inbody_pdf(file_path):
+    """
+    Парсит PDF-отчёт InBody (формат DDX Fitness) и извлекает показатели.
+    Возвращает словарь с данными или None если не удалось распознать.
+    """
+    if not PDF_SUPPORT:
+        return None, "Парсинг PDF недоступен — на сервере не установлена библиотека pdfplumber."
+
+    try:
+        with pdfplumber.open(file_path) as pdf:
+            text = pdf.pages[0].extract_text()
+    except Exception as e:
+        return None, f"Не удалось открыть PDF: {e}"
+
+    if not text or "Мышцы" not in text or "Жир" not in text:
+        return None, "Это не похоже на отчёт InBody — нужные поля не найдены."
+
+    patterns = {
+        "weight":         r"Вес\s*(?:Выше нормы|Ниже нормы|Норма)?\s*(\d+[.,]\d+)\s*кг",
+        "muscle":         r"Мышцы\s*(?:Выше нормы|Ниже нормы|Норма)?\s*(\d+[.,]\d+)\s*кг",
+        "fat_percent":    r"Жир\s*(?:Выше нормы|Ниже нормы|Норма)?\s*(\d+[.,]\d+)\s*%",
+        "water":          r"Вода\s*(\d+[.,]\d+)\s*л",
+        "protein":        r"Белок\s*(\d+[.,]\d+)\s*кг",
+        "bone":           r"Кости\s*(\d+[.,]\d+)\s*кг",
+        "visceral_fat":   r"Висцеральный жир\s*(?:Выше нормы|Ниже нормы|Норма)?\s*(\d+)",
+        "bmi":            r"Индекс массы тела\s*(?:Выше нормы|Ниже нормы|Норма)?\s*(\d+[.,]\d+)",
+        "lean_mass":      r"Безжировая масса\s*(\d+[.,]\d+)\s*кг",
+        "bmr":            r"Обмен веществ\s*(\d+)",
+        "tdee":           r"Суточная норма калорий\s*(\d+)\s*ккал",
+        "optimal_weight": r"Оптимальный вес\s*(\d+[.,]\d+)\s*кг",
+        "report_date":    r"Дата\s*(\d{2}\.\d{2}\.\d{2})",
+    }
+
+    result = {}
+    for key, pat in patterns.items():
+        m = re.search(pat, text)
+        if m:
+            val = m.group(1).replace(",", ".")
+            result[key] = val
+        else:
+            result[key] = None
+
+    # Обязательные поля — без них отчёт нечитаем
+    if not result["weight"] or not result["muscle"] or not result["fat_percent"]:
+        return None, "Не удалось распознать основные показатели (вес/мышцы/жир) в отчёте."
+
+    # Приводим типы
+    for k in ("weight","muscle","fat_percent","water","protein","bone","bmi","lean_mass","optimal_weight"):
+        if result.get(k):
+            result[k] = float(result[k])
+    for k in ("visceral_fat","bmr","tdee"):
+        if result.get(k):
+            result[k] = int(float(result[k]))
+
+    # Вычисляем массу жира в кг (вес × % жира / 100)
+    if result.get("weight") and result.get("fat_percent"):
+        result["fat_mass_kg"] = round(result["weight"] * result["fat_percent"] / 100, 1)
+
+    # Переименовываем для совместимости с add_inbody_record
+    result["muscle"] = result.get("muscle")
+
+    return result, None
+
+def build_inbody_report(uid, data):
+    """Формирует читаемый отчёт после успешного парсинга PDF"""
+    last = get_last_inbody(uid)
+    diff_block = ""
+    if last:
+        w_diff = round(data["weight"] - last[0], 1)
+        m_diff = round(data["muscle"] - last[1], 1)
+        f_diff = round(data["fat_percent"] - last[2], 1)
+        diff_block = (
+            f"\n📊 *Изменения с прошлого замера:*\n"
+            f"⚖️ Вес: {w_diff:+.1f} кг\n"
+            f"💪 Мышцы: {m_diff:+.1f} кг {'📈' if m_diff>=0 else '📉'}\n"
+            f"🔥 Жир: {f_diff:+.1f} % {'📉' if f_diff<=0 else '📈'}\n"
+        )
+
+    visceral_note = ""
+    if data.get("visceral_fat"):
+        if data["visceral_fat"] > 10:
+            visceral_note = "\n⚠️ *Висцеральный жир выше нормы* — это жир вокруг органов, повышает риск для сердца. Кардио и дефицит калорий снижают его быстрее всего."
+        else:
+            visceral_note = "\n✅ Висцеральный жир в норме."
+
+    return (
+        f"📋 *INBODY — РЕЗУЛЬТАТЫ ЗАМЕРА*\n{'─'*24}\n"
+        f"📅 Дата отчёта: *{data.get('report_date') or '—'}*\n\n"
+        f"⚖️ Вес: *{data['weight']} кг*\n"
+        f"💪 Мышечная масса: *{data['muscle']} кг*\n"
+        f"🔥 Жир: *{data['fat_percent']}%* (~{data.get('fat_mass_kg','—')} кг)\n"
+        + (f"💧 Вода: *{data['water']} л*\n" if data.get('water') else "")
+        + (f"🥩 Белок: *{data['protein']} кг*\n" if data.get('protein') else "")
+        + (f"🦴 Кости: *{data['bone']} кг*\n" if data.get('bone') else "")
+        + (f"🎯 Висцеральный жир: *{data['visceral_fat']}*\n" if data.get('visceral_fat') else "")
+        + (f"📐 ИМТ: *{data['bmi']}*\n" if data.get('bmi') else "")
+        + (f"💪 Безжировая масса: *{data['lean_mass']} кг*\n" if data.get('lean_mass') else "")
+        + (f"\n🔥 Обмен веществ (BMR): *{data['bmr']} ккал*\n" if data.get('bmr') else "")
+        + (f"🎯 Суточная норма: *{data['tdee']} ккал*\n" if data.get('tdee') else "")
+        + (f"🏁 Оптимальный вес: *{data['optimal_weight']} кг*\n" if data.get('optimal_weight') else "")
+        + diff_block + visceral_note +
+        f"\n\n💡 Данные сохранены. Калораж в боте можно сверить с замером InBody — "
+        f"если они сильно расходятся, обнови профиль через *«⚙️ Изменить профиль»*."
+    )
+
+def build_inbody_history_text(uid):
+    history = get_inbody_history(uid, limit=10)
+    if not history:
+        return None
+    lines = []
+    for w, m, f, fm, water, prot, bone, visc, bmi, lean, bmr, tdee, opt, rdate, date in history:
+        lines.append(f"• {rdate or date[:10]}: вес *{w}кг* | мышцы *{m}кг* | жир *{f}%*")
+    return "\n".join(lines)
 
 def set_state(uid, state, extra=""):
     conn = sqlite3.connect("weight_tracker.db")
@@ -1932,6 +2151,9 @@ def main_menu(uid=None):
         types.KeyboardButton("📤 Экспорт данных"),
         types.KeyboardButton("🔔 Напоминания"),
         types.KeyboardButton("🏥 Мои ограничения"),
+        types.KeyboardButton("📏 Обхват талии"),
+        types.KeyboardButton("📋 Загрузить InBody"),
+        types.KeyboardButton("📊 История InBody"),
         types.KeyboardButton("🏠 Тренировка дома"),
         types.KeyboardButton("🔥 Разминка"),
         types.KeyboardButton("🧘 Заминка"),
@@ -2051,6 +2273,68 @@ def send_welcome(message):
             f"🔥 Калории: *{plan['calories']} ккал/день*\n"
             f"📈 Темп: *~{plan['weekly_loss']} кг/нед*{sick}",
             parse_mode="Markdown", reply_markup=main_menu(cid))
+
+@bot.message_handler(content_types=['document'])
+def handle_document(message):
+    cid = message.chat.id
+    state, extra = get_state(cid)
+
+    if state != "waiting_inbody_pdf":
+        bot.send_message(cid,
+            "📎 Файл получен, но я не ожидаю документ сейчас.\n\n"
+            "Если это отчёт InBody — нажми сначала *«📋 Загрузить InBody»*.",
+            parse_mode="Markdown", reply_markup=main_menu(cid))
+        return
+
+    doc = message.document
+    if not doc.file_name.lower().endswith(".pdf"):
+        bot.send_message(cid, "⚠️ Нужен файл в формате PDF. Попробуй ещё раз.",
+                         reply_markup=cancel_menu())
+        return
+
+    bot.send_message(cid, "⏳ Читаю отчёт...", reply_markup=cancel_menu())
+
+    try:
+        file_info = bot.get_file(doc.file_id)
+        downloaded = bot.download_file(file_info.file_path)
+        tmp_path = f"/tmp/inbody_{cid}.pdf"
+        with open(tmp_path, "wb") as f:
+            f.write(downloaded)
+    except Exception as e:
+        bot.send_message(cid, f"❌ Не удалось скачать файл: {e}", reply_markup=main_menu(cid))
+        set_state(cid, "idle")
+        return
+
+    data, error = parse_inbody_pdf(tmp_path)
+
+    try:
+        import os as _os
+        _os.remove(tmp_path)
+    except Exception:
+        pass
+
+    set_state(cid, "idle")
+
+    if error or not data:
+        bot.send_message(cid,
+            f"❌ *Не удалось распознать отчёт.*\n\n{error or 'Неизвестная ошибка.'}\n\n"
+            f"Убедись что это PDF-отчёт именно из приложения DDX Fitness с InBody.",
+            parse_mode="Markdown", reply_markup=main_menu(cid))
+        return
+
+    # Строим отчёт ДО сохранения — чтобы сравнение с прошлым замером было корректным
+    report = build_inbody_report(cid, data)
+
+    add_inbody_record(cid, data)
+    update_streak(cid)
+
+    # Синхронизируем текущий вес в профиле с данными InBody (более точные весы)
+    profile = get_profile(cid)
+    if profile and data.get("weight"):
+        add_weight(cid, data["weight"])
+        save_profile(cid, current_weight=data["weight"])
+
+    bot.send_message(cid, report, parse_mode="Markdown", reply_markup=main_menu(cid))
 
 @bot.message_handler(func=lambda m: True)
 def router(message):
@@ -2390,6 +2674,28 @@ def router(message):
                 parse_mode="Markdown",reply_markup=main_menu(cid))
         except Exception:
             bot.send_message(cid,"Введи число стаканов (1-8)")
+        return
+
+    # ── Ввод обхвата талии ──
+    if state == "waiting_waist":
+        try:
+            cm = float(text.replace(",", ".")); assert 40 < cm < 200
+            add_waist(cid, cm)
+            update_streak(cid)
+            set_state(cid, "idle")
+            history = get_waist_history(cid)
+            diff_note = ""
+            if len(history) >= 2:
+                diff = round(cm - history[-2][0], 1)
+                if diff < 0:   diff_note = f"\n📉 *{abs(diff)} см меньше* чем в прошлый раз! 🎉"
+                elif diff > 0: diff_note = f"\n📈 На {diff} см больше чем в прошлый раз."
+                else:          diff_note = "\n➡️ Без изменений."
+            risk = analyze_waist(get_profile(cid), cm)
+            bot.send_message(cid,
+                f"📏 *Обхват талии: {cm} см* сохранён!\n\n{risk}{diff_note}",
+                parse_mode="Markdown", reply_markup=main_menu(cid))
+        except Exception:
+            bot.send_message(cid, "Введи число в см, например: 95")
         return
 
     # Оценка усталости
@@ -2895,6 +3201,59 @@ def router(message):
             "5 — 💔 Высокое давление/сердечные\n"
             "6 — 🦴 Проблемы с суставами/связками",
             parse_mode="Markdown", reply_markup=cancel_menu())
+
+    # ── Обхват талии ──
+    elif text == "📏 Обхват талии":
+        last = get_last_waist(cid)
+        hint = f"\n\nПоследний замер: *{last[0]} см* ({last[1][:10]})" if last else ""
+        set_state(cid, "waiting_waist")
+        bot.send_message(cid,
+            f"📏 *ОБХВАТ ТАЛИИ*\n\nИзмерь сантиметровой лентой на уровне пупка, "
+            f"утром натощак, без втягивания живота.{hint}\n\n"
+            f"Введи значение в см (например: *95*):",
+            parse_mode="Markdown", reply_markup=cancel_menu())
+
+    # ── Загрузить InBody PDF ──
+    elif text == "📋 Загрузить InBody":
+        if not PDF_SUPPORT:
+            bot.send_message(cid,
+                "⚠️ *Парсинг PDF временно недоступен.*\n\n"
+                "На сервере не установлена библиотека для чтения PDF. "
+                "Попроси администратора добавить `pdfplumber` в requirements.txt.",
+                parse_mode="Markdown"); return
+        set_state(cid, "waiting_inbody_pdf")
+        bot.send_message(cid,
+            "📋 *ЗАГРУЗКА ОТЧЁТА INBODY*\n\n"
+            "Пришли PDF-файл отчёта с тренажёра InBody (через приложение DDX Fitness).\n\n"
+            "Бот автоматически распознает:\n"
+            "• Вес, мышечную массу, % жира\n"
+            "• Воду, белок, кости в организме\n"
+            "• Висцеральный жир, ИМТ\n"
+            "• Обмен веществ и суточную норму калорий\n\n"
+            "Просто прикрепи файл как документ 📎",
+            parse_mode="Markdown", reply_markup=cancel_menu())
+
+    # ── История InBody ──
+    elif text == "📊 История InBody":
+        history_text = build_inbody_history_text(cid)
+        if not history_text:
+            bot.send_message(cid,
+                "📊 *История замеров InBody пуста.*\n\n"
+                "Загрузи PDF-отчёт кнопкой *«📋 Загрузить InBody»*.",
+                parse_mode="Markdown"); return
+        last = get_last_inbody(cid)
+        last_detail = ""
+        if last:
+            w, m, f, fm, water, prot, bone, visc, bmi, lean, bmr, tdee, opt, rdate, date = last
+            last_detail = (
+                f"\n\n📋 *Последний замер ({rdate or date[:10]}):*\n"
+                f"⚖️ Вес: *{w} кг* | 💪 Мышцы: *{m} кг* | 🔥 Жир: *{f}%*\n"
+            )
+            if visc: last_detail += f"🎯 Висцеральный жир: *{visc}*\n"
+            if bmi:  last_detail += f"📐 ИМТ: *{bmi}*\n"
+        bot.send_message(cid,
+            f"📊 *ИСТОРИЯ INBODY*\n{'─'*20}\n\n{history_text}{last_detail}",
+            parse_mode="Markdown")
 
     # Экспорт
     elif text=="📤 Экспорт данных":
