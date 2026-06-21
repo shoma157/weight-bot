@@ -790,6 +790,26 @@ def get_last_inbody(uid):
     conn.close()
     return row
 
+def get_last_inbody_dict(uid):
+    """То же самое, но в виде словаря для удобной передачи в calc_plan()"""
+    row = get_last_inbody(uid)
+    if not row: return None
+    keys = ["weight","muscle","fat_percent","fat_mass_kg","water","protein","bone",
+            "visceral_fat","bmi","lean_mass","bmr","tdee","optimal_weight","report_date","date"]
+    return dict(zip(keys, row))
+
+def get_user_plan(uid, profile=None):
+    """
+    Универсальная обёртка: считает план питания с учётом последнего замера InBody,
+    если он есть. Использовать вместо прямого вызова calc_plan(profile) везде в боте.
+    """
+    if profile is None:
+        profile = get_profile(uid)
+    if not profile:
+        return None
+    inbody = get_last_inbody_dict(uid)
+    return calc_plan(profile, inbody=inbody)
+
 def parse_inbody_pdf(file_path):
     """
     Парсит PDF-отчёт InBody (формат DDX Fitness) и извлекает показатели.
@@ -921,13 +941,25 @@ def get_state(uid):
 #  РАСЧЁТ ПЛАНА
 # ─────────────────────────────────────────
 
-def calc_plan(profile):
+def calc_plan(profile, inbody=None):
+    """
+    inbody: последняя запись из таблицы inbody (если есть), используется чтобы:
+    - подставить реальный замеренный BMR прибора вместо формулы (точнее)
+    - скорректировать белок по факту мышечной массы, а не общему весу
+    """
     w  = profile.get("current_weight") or 107
     h  = profile.get("height") or 194
     a  = profile.get("age") or 24
     gd = profile.get("gym_days") or 3
     is_driver = int(profile.get("is_driver") or 0)
-    bmr  = 10*w + 6.25*h - 5*a + 5
+
+    if inbody and inbody.get("bmr"):
+        bmr = inbody["bmr"]  # реальный замер InBody точнее формулы
+        bmr_source = "InBody"
+    else:
+        bmr = 10*w + 6.25*h - 5*a + 5
+        bmr_source = "формула"
+
     base_mult = {1:1.30,2:1.35,3:1.45,4:1.50,5:1.55}.get(min(gd,5), 1.45)
     mult = base_mult - (0.05 if is_driver else 0)
     tdee = round(bmr * mult)
@@ -936,9 +968,20 @@ def calc_plan(profile):
     weekly   = round(deficit*7/7700, 2)
     to_lose  = w - (profile.get("target_weight") or 92)
     weeks_needed = round(to_lose/weekly) if weekly > 0 else 999
+
+    # Белок: если есть данные о мышечной массе — считаем от неё точнее (2.2г/кг сухой массы)
+    # вместо общего веса тела (который включает жир)
+    if inbody and inbody.get("muscle"):
+        protein = round(inbody["muscle"] * 2.2 + (w - inbody["muscle"]) * 0.5)
+        protein_source = "по мышечной массе InBody"
+    else:
+        protein = round(w * 1.8)
+        protein_source = "по общему весу"
+
     return {"bmr":round(bmr),"tdee":tdee,"calories":calories,
-            "deficit":deficit,"protein":round(w*1.8),
-            "weekly_loss":weekly,"weeks_needed":weeks_needed}
+            "deficit":deficit,"protein":protein,
+            "weekly_loss":weekly,"weeks_needed":weeks_needed,
+            "bmr_source":bmr_source,"protein_source":protein_source}
 
 def get_portions(calories):
     s = calories / 1950
@@ -1209,7 +1252,7 @@ def build_shopping_list(uid):
     """Генерирует список покупок на неделю по рациону"""
     profile = get_profile(uid)
     if not profile: return None
-    plan = calc_plan(profile)
+    plan = get_user_plan(uid, profile)
     p    = get_portions(plan["calories"])
     breast_week = round(p["breast"] * 7 / 100) * 100
     carb_week   = round(p["carb"] * 7 / 50) * 50
@@ -1487,9 +1530,18 @@ def get_today_workout(uid):
 
     tag  = "🔵" if adj_key == "К" else "🟢"
     orig = f" *(заменена с {wkey} из-за усталости)*" if adj_key != wkey else ""
+
+    # Подсказка по последнему замеру InBody — если висцеральный жир высокий,
+    # напоминаем что кардио снижает его быстрее силовых
+    inbody_note = ""
+    inbody_data = get_last_inbody_dict(uid)
+    if inbody_data and inbody_data.get("visceral_fat") and inbody_data["visceral_fat"] > 10 and adj_key in ("А","Б","В","ДА","ДБ","ДВ"):
+        inbody_note = (f"\n\n📋 *По данным InBody:* висцеральный жир *{inbody_data['visceral_fat']}* "
+                       f"(выше нормы). Кардио снижает его быстрее силовых — не пропускай кардио-дни.")
+
     text = (f"{tag} *ТРЕНИРОВКА СЕГОДНЯ{orig}*\n*{name}*\n\n"
             f"{fnote}\n\n🏋️ *Упражнения:*\n{exercises}"
-            f"{health_note_block}\n\n"
+            f"{health_note_block}{inbody_note}\n\n"
             f"⏰ 18:40-20:00\n\nПосле нажми *«✅ Тренировка завершена»*.")
     return text, adj_key
 
@@ -1502,7 +1554,7 @@ def build_ration(uid, for_tomorrow=False):
     if not profile: return "Сначала настрой профиль.", 0
     if profile.get("is_sick") and not for_tomorrow:
         return build_sick_ration(), 0
-    plan    = calc_plan(profile)
+    plan    = get_user_plan(uid, profile)
     cal     = plan["calories"]
     weights = get_weights(uid)
     analysis = analyze_progress(weights) if len(weights) >= 2 else None
@@ -1602,7 +1654,7 @@ def build_sick_ration():
 def build_cheatmeal_plan(uid):
     profile = get_profile(uid)
     if not profile: return "Сначала настрой профиль."
-    plan    = calc_plan(profile)
+    plan    = get_user_plan(uid, profile)
     # После читмила компенсируем лишние калории на оставшиеся дни
     extra_kcal = 800  # примерный читмил
     compensate = round(extra_kcal / 6)  # на 6 оставшихся дней
@@ -1631,7 +1683,7 @@ def build_weekly_report(uid):
     wd = get_weights(uid)
     sd = get_steps(uid, limit=7)
     if not wd: return None
-    plan     = calc_plan(profile)
+    plan     = get_user_plan(uid, profile)
     curr_w   = wd[-1][0]
     start_w  = wd[0][0]
     target   = profile.get("target_weight") or 92
@@ -2096,7 +2148,7 @@ def handle_onboarding(cid, state, text, extra):
         return False
     set_state(cid, "idle")
     profile = get_profile(cid)
-    plan    = calc_plan(profile)
+    plan    = get_user_plan(cid, profile)
     is_drv = int(profile.get("is_driver") or 0)
     driver_note = "\n🚗 *Водитель:* калораж снижен на ~100 ккал (сидячая работа учтена)" if is_drv else ""
     msg = (f"🎉 *Профиль настроен!*\n\n"
@@ -2174,6 +2226,18 @@ def main_menu(uid=None):
 
 def cancel_menu():
     m = types.ReplyKeyboardMarkup(resize_keyboard=True)
+    m.add(types.KeyboardButton("❌ Отмена"))
+    return m
+
+def inbody_choice_menu():
+    m = types.ReplyKeyboardMarkup(resize_keyboard=True)
+    m.add(types.KeyboardButton("✏️ Ввести вручную"))
+    m.add(types.KeyboardButton("❌ Отмена"))
+    return m
+
+def skip_or_cancel_menu():
+    m = types.ReplyKeyboardMarkup(resize_keyboard=True)
+    m.add(types.KeyboardButton("⏭️ Пропустить"))
     m.add(types.KeyboardButton("❌ Отмена"))
     return m
 
@@ -2265,7 +2329,7 @@ def send_welcome(message):
             parse_mode="Markdown")
         start_onboarding(cid)
     else:
-        plan = calc_plan(profile)
+        plan = get_user_plan(cid, profile)
         sick = "\n\n🤒 *Режим болезни активен*" if profile.get("is_sick") else ""
         bot.send_message(cid,
             f"👋 С возвращением!\n\n"
@@ -2591,7 +2655,7 @@ def router(message):
             set_state(cid, "idle")
             total   = get_kcal_today(cid)
             profile = get_profile(cid)
-            target_kcal = calc_plan(profile)["calories"] if profile else 2000
+            target_kcal = get_user_plan(cid, profile)["calories"] if profile else 2000
             remain  = target_kcal - total
             status  = "\u2705 Норма!" if abs(remain)<100 else (f"\u2b07\ufe0f Ещё {remain} ккал" if remain>0 else f"\u26a0\ufe0f Превышение на {abs(remain)} ккал")
             bot.send_message(cid,
@@ -2696,6 +2760,78 @@ def router(message):
                 parse_mode="Markdown", reply_markup=main_menu(cid))
         except Exception:
             bot.send_message(cid, "Введи число в см, например: 95")
+        return
+
+    # ── Ручной ввод InBody: шаг 1 — вес ──
+    if state == "inbody_manual_weight":
+        try:
+            w = float(text.replace(",", ".")); assert 30 < w < 300
+            set_state(cid, "inbody_manual_muscle", extra=str(w))
+            bot.send_message(cid,
+                f"✅ Вес: *{w} кг*\n\n2️⃣ Введи *мышечную массу* в кг (например: `41.3`):",
+                parse_mode="Markdown", reply_markup=cancel_menu())
+        except Exception:
+            bot.send_message(cid, "Введи вес числом, например: 108.4")
+        return
+
+    # ── Ручной ввод InBody: шаг 2 — мышечная масса ──
+    if state == "inbody_manual_muscle":
+        try:
+            m_kg = float(text.replace(",", ".")); assert 10 < m_kg < 100
+            set_state(cid, "inbody_manual_fat", extra=f"{extra}|{m_kg}")
+            bot.send_message(cid,
+                f"✅ Мышцы: *{m_kg} кг*\n\n3️⃣ Введи *% жира* (например: `33.1`):",
+                parse_mode="Markdown", reply_markup=cancel_menu())
+        except Exception:
+            bot.send_message(cid, "Введи мышечную массу числом, например: 41.3")
+        return
+
+    # ── Ручной ввод InBody: шаг 3 — % жира ──
+    if state == "inbody_manual_fat":
+        try:
+            fat = float(text.replace(",", ".")); assert 3 < fat < 60
+            set_state(cid, "inbody_manual_visceral", extra=f"{extra}|{fat}")
+            bot.send_message(cid,
+                f"✅ Жир: *{fat}%*\n\n"
+                "4️⃣ Введи *висцеральный жир* (число из отчёта, например: `16`)\n"
+                "Если не знаешь — нажми «⏭️ Пропустить»:",
+                parse_mode="Markdown", reply_markup=skip_or_cancel_menu())
+        except Exception:
+            bot.send_message(cid, "Введи % жира числом, например: 33.1")
+        return
+
+    # ── Ручной ввод InBody: шаг 4 — висцеральный жир (опционально) ──
+    if state == "inbody_manual_visceral":
+        try:
+            parts = extra.split("|")
+            w_val, m_val, fat_val = float(parts[0]), float(parts[1]), float(parts[2])
+            if text == "⏭️ Пропустить":
+                visceral = None
+            else:
+                visceral = int(float(text.replace(",", ".")))
+                assert 0 < visceral < 50
+
+            data = {
+                "weight": w_val, "muscle": m_val, "fat_percent": fat_val,
+                "fat_mass_kg": round(w_val * fat_val / 100, 1),
+                "water": None, "protein": None, "bone": None,
+                "visceral_fat": visceral, "bmi": None, "lean_mass": None,
+                "bmr": None, "tdee": None, "optimal_weight": None,
+                "report_date": now_samara().strftime("%d.%m.%y"),
+            }
+
+            report = build_inbody_report(cid, data)
+            add_inbody_record(cid, data)
+            update_streak(cid)
+            profile = get_profile(cid)
+            if profile:
+                add_weight(cid, w_val)
+                save_profile(cid, current_weight=w_val)
+            set_state(cid, "idle")
+            bot.send_message(cid, report, parse_mode="Markdown", reply_markup=main_menu(cid))
+        except Exception:
+            bot.send_message(cid, "Введи число или нажми «⏭️ Пропустить»",
+                             reply_markup=skip_or_cancel_menu())
         return
 
     # Оценка усталости
@@ -3118,7 +3254,7 @@ def router(message):
         profile=get_profile(cid)
         if not profile:
             bot.send_message(cid,"Профиль не настроен. Нажми *⚙️ Изменить профиль*",parse_mode="Markdown"); return
-        plan=calc_plan(profile); wd=get_weights(cid)
+        plan=get_user_plan(cid, profile); wd=get_weights(cid)
         curr_w=wd[-1][0] if wd else profile["current_weight"]
         loss=round(profile["current_weight"]-curr_w,1)
         fatigue=int(profile.get("fatigue") or 0)
@@ -3131,6 +3267,9 @@ def router(message):
             health_line = f"\n🏥 Ограничения: *{cond_labels}*"
         else:
             health_line = "\n🏥 Ограничения: *нет*"
+        source_note = ""
+        if plan.get("bmr_source") == "InBody":
+            source_note = "\n📋 _Калораж и белок рассчитаны по данным InBody (точнее формулы)_"
         bot.send_message(cid,
             f"👤 *МОЙ ПРОФИЛЬ*\n\n"
             f"⚖️ Стартовый: *{profile['current_weight']} кг* | Текущий: *{curr_w} кг* (−{loss} кг)\n"
@@ -3140,7 +3279,8 @@ def router(message):
             f"📅 Срок: *{profile['deadline_weeks']} нед*\n\n"
             f"🔥 Калории: *{plan['calories']} ккал/день*\n"
             f"💪 Белок: *{plan['protein']}г/день*\n"
-            f"📈 Темп: *~{plan['weekly_loss']} кг/нед*\n\n"
+            f"📈 Темп: *~{plan['weekly_loss']} кг/нед*"
+            f"{source_note}\n\n"
             f"😴 Усталость: *{fat_label}*\n"
             f"🏥 Здоровье: *{'🤒 Болезнь' if profile.get('is_sick') else '✅ Здоров'}*"
             f"{health_line}\n"
@@ -3215,22 +3355,31 @@ def router(message):
 
     # ── Загрузить InBody PDF ──
     elif text == "📋 Загрузить InBody":
-        if not PDF_SUPPORT:
+        if PDF_SUPPORT:
+            set_state(cid, "waiting_inbody_pdf")
             bot.send_message(cid,
-                "⚠️ *Парсинг PDF временно недоступен.*\n\n"
-                "На сервере не установлена библиотека для чтения PDF. "
-                "Попроси администратора добавить `pdfplumber` в requirements.txt.",
-                parse_mode="Markdown"); return
-        set_state(cid, "waiting_inbody_pdf")
+                "📋 *ЗАГРУЗКА ОТЧЁТА INBODY*\n\n"
+                "Пришли PDF-файл отчёта с тренажёра InBody (через приложение DDX Fitness).\n\n"
+                "Бот автоматически распознает:\n"
+                "• Вес, мышечную массу, % жира\n"
+                "• Воду, белок, кости в организме\n"
+                "• Висцеральный жир, ИМТ\n"
+                "• Обмен веществ и суточную норму калорий\n\n"
+                "Просто прикрепи файл как документ 📎\n\n"
+                "_Не получается? Нажми «✏️ Ввести вручную» ниже._",
+                parse_mode="Markdown", reply_markup=inbody_choice_menu())
+        else:
+            bot.send_message(cid,
+                "⚠️ *Автоматическое чтение PDF сейчас недоступно* на этом сервере.\n\n"
+                "Но можно ввести результаты InBody вручную — нажми кнопку ниже.",
+                parse_mode="Markdown", reply_markup=inbody_choice_menu())
+
+    elif text == "✏️ Ввести вручную":
+        set_state(cid, "inbody_manual_weight")
         bot.send_message(cid,
-            "📋 *ЗАГРУЗКА ОТЧЁТА INBODY*\n\n"
-            "Пришли PDF-файл отчёта с тренажёра InBody (через приложение DDX Fitness).\n\n"
-            "Бот автоматически распознает:\n"
-            "• Вес, мышечную массу, % жира\n"
-            "• Воду, белок, кости в организме\n"
-            "• Висцеральный жир, ИМТ\n"
-            "• Обмен веществ и суточную норму калорий\n\n"
-            "Просто прикрепи файл как документ 📎",
+            "✏️ *РУЧНОЙ ВВОД INBODY*\n\n"
+            "Введи данные по очереди — как они указаны в отчёте.\n\n"
+            "1️⃣ Введи *вес* в кг (например: `108.4`):",
             parse_mode="Markdown", reply_markup=cancel_menu())
 
     # ── История InBody ──
@@ -3464,7 +3613,7 @@ def router(message):
         rows        = get_food_today(cid)
         total_kcal  = get_kcal_today(cid)
         profile     = get_profile(cid)
-        target_kcal = calc_plan(profile)["calories"] if profile else 2000
+        target_kcal = get_user_plan(cid, profile)["calories"] if profile else 2000
         remain      = target_kcal - total_kcal
         if not rows:
             msg = "📓 *ДНЕВНИК ПИТАНИЯ*\n\nСегодня пусто. Начни записывать что ешь!"
