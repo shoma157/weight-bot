@@ -3905,12 +3905,4 @@ if __name__ == '__main__':
     t=threading.Thread(target=reminder_worker,daemon=True)
     t.start()
     print("Бот v7 запущен! Самара UTC+4 | Напоминания | Полуфабрикаты | Читмил | График | Экспорт")
-   print("Начинаю polling...")
-
-bot.infinity_polling(
-    timeout=30,
-    long_polling_timeout=30,
-    skip_pending=True
-)
-
-print("Polling завершился!")
+    bot.infinity_polling()
