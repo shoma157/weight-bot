@@ -20,7 +20,7 @@ SAMARA_TZ = timezone(timedelta(hours=4))
 def now_samara():
     return datetime.now(SAMARA_TZ)
 
-TOKEN = "8844022654:AAFZt7DXdHWoORHlGrFSi0rMyX7BUYBzUR8"
+TOKEN = "8922998002:AAHHTCb-D9FcJXn32g7BRcAUI5Uq2snYUoU"
 bot = telebot.TeleBot(TOKEN)
 
 # ─────────────────────────────────────────
@@ -3905,4 +3905,12 @@ if __name__ == '__main__':
     t=threading.Thread(target=reminder_worker,daemon=True)
     t.start()
     print("Бот v7 запущен! Самара UTC+4 | Напоминания | Полуфабрикаты | Читмил | График | Экспорт")
-    bot.infinity_polling()
+   print("Начинаю polling...")
+
+bot.infinity_polling(
+    timeout=30,
+    long_polling_timeout=30,
+    skip_pending=True
+)
+
+print("Polling завершился!")
