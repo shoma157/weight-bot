@@ -20,7 +20,7 @@ SAMARA_TZ = timezone(timedelta(hours=4))
 def now_samara():
     return datetime.now(SAMARA_TZ)
 
-TOKEN = "8922998002:AAHHTCb-D9FcJXn32g7BRcAUI5Uq2snYUoU"
+TOKEN = "8844022654:AAFZt7DXdHWoORHlGrFSi0rMyX7BUYBzUR8"
 bot = telebot.TeleBot(TOKEN)
 
 # ─────────────────────────────────────────
@@ -487,7 +487,10 @@ def init_db():
         cheatmeal_week TEXT DEFAULT "",
         is_driver INTEGER DEFAULT 0,
         home_workouts INTEGER DEFAULT 0,
-        health_conditions TEXT DEFAULT "")''')
+        health_conditions TEXT DEFAULT "",
+        drying_mode INTEGER DEFAULT 0,
+        drying_weeks INTEGER DEFAULT 0,
+        drying_start TEXT DEFAULT "")''')
     c.execute('''CREATE TABLE IF NOT EXISTS workouts (
         id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER,
         workout_type TEXT, fatigue_after INTEGER DEFAULT 0, date TEXT)''')
@@ -524,6 +527,9 @@ def init_db():
         ("is_driver","0"),
         ("home_workouts","0"),
         ("health_conditions","''"),
+        ("drying_mode","0"),
+        ("drying_weeks","0"),
+        ("drying_start","''"),
     ]:
         try:
             c.execute(f"ALTER TABLE user_profile ADD COLUMN {col} TEXT DEFAULT {dflt}")
@@ -540,10 +546,10 @@ def get_profile(uid):
             "gym_days","workout_pref","deadline_weeks","is_sick","sick_since",
             "fatigue","last_workout_date","next_workout_override",
             "reminders_enabled","cheatmeal_used","cheatmeal_week","is_driver","home_workouts",
-            "health_conditions"]
+            "health_conditions","drying_mode","drying_weeks","drying_start"]
     d = dict(zip(keys, row))
     # Приводим типы
-    for k in ("is_sick","fatigue","reminders_enabled","cheatmeal_used","is_driver","home_workouts"):
+    for k in ("is_sick","fatigue","reminders_enabled","cheatmeal_used","is_driver","home_workouts","drying_mode"):
         d[k] = int(d[k]) if d[k] else 0
     d["health_conditions"] = d.get("health_conditions") or ""
     return d
@@ -992,6 +998,246 @@ def calc_plan(profile, inbody=None):
             "deficit":deficit,"protein":protein,
             "weekly_loss":weekly,"weeks_needed":weeks_needed,
             "bmr_source":bmr_source,"protein_source":protein_source}
+
+# ─────────────────────────────────────────
+#  РЕЖИМ СУШКИ
+# ─────────────────────────────────────────
+
+# Рационы для сушки — 2-3 варианта на каждую позицию с одинаковым калоражом
+DRYING_BREAKFAST = [
+    # (основное, варианты с тем же калоражом)
+    {"main": "3 яйца варёных + 30г овсянки на воде",
+     "alt1": "Омлет 3 яйца + 50г творога 0%",
+     "alt2": "3 яйца + 20г гречки отварной",
+     "kcal": 280},
+    {"main": "4 яйца варёных (без желтка 2 шт) + огурец",
+     "alt1": "Омлет из 3 яиц + шпинат",
+     "alt2": "100г творога 0% + 2 яйца варёных",
+     "kcal": 250},
+    {"main": "3 яйца + 30г овсянки + черника 50г",
+     "alt1": "100г творога 0% + 1 яйцо + зелень",
+     "alt2": "Омлет 3 яйца + помидор + огурец",
+     "kcal": 290},
+]
+
+DRYING_LUNCH = [
+    {"main": "{breast}г куриной грудки варёной + 200г брокколи",
+     "alt1": "{breast}г индейки + 200г стручковой фасоли",
+     "alt2": "{breast}г куриной грудки + 200г шпината тушёного",
+     "kcal_note": "без гарнира"},
+    {"main": "{breast}г куриной грудки + 200г огурцов + зелень",
+     "alt1": "{breast}г индейки варёной + 200г болгарского перца",
+     "alt2": "{breast}г куриного бедра (без кожи) + 200г овощей",
+     "kcal_note": "без гарнира"},
+    {"main": "{breast}г куриной грудки запечённой + 150г брокколи",
+     "alt1": "{breast}г говядины варёной + 200г стручковой фасоли",
+     "alt2": "{breast}г индейки + 200г тушёного шпината",
+     "kcal_note": "без гарнира"},
+]
+
+DRYING_SNACK = [
+    {"main": "150г творога 0% + 1 огурец",
+     "alt1": "100г куриного филе варёного + зелень",
+     "alt2": "3 яйца варёных (без 1 желтка)",
+     "kcal": 180},
+    {"main": "150г творога 0% + зелень",
+     "alt1": "120г куриной грудки + огурец",
+     "alt2": "4 белка варёных + помидор",
+     "kcal": 175},
+    {"main": "100г куриного филе + 150г огурцов",
+     "alt1": "150г творога 0% + зелёный чай",
+     "alt2": "3 яйца варёных + сельдерей",
+     "kcal": 185},
+]
+
+DRYING_DINNER = [
+    {"main": "200г куриной грудки запечённой + 300г овощей на пару",
+     "alt1": "200г индейки варёной + 300г брокколи",
+     "alt2": "200г куриной грудки + 300г стручковой фасоли",
+     "kcal_note": "~300 ккал"},
+    {"main": "200г куриной грудки + 300г шпината тушёного",
+     "alt1": "200г индейки + 300г смеси овощей на пару",
+     "alt2": "180г говядины варёной + 300г брокколи",
+     "kcal_note": "~310 ккал"},
+    {"main": "200г куриной грудки варёной + огурцы/помидоры",
+     "alt1": "200г индейки запечённой + 300г овощей",
+     "alt2": "200г куриной грудки + 300г стручковой фасоли",
+     "kcal_note": "~295 ккал"},
+]
+
+# Умный опрос для определения типа сушки
+DRYING_SURVEY = [
+    ("drying_q1", "🏆 *ОПРОС ДЛЯ РЕЖИМА СУШКИ*\n\n"
+                  "Шаг 1/5 — Какой сейчас % жира?\n\n"
+                  "Если не знаешь точно — оцени по фото:\n"
+                  "1 — До 15% (видны кубики пресса)\n"
+                  "2 — 15-20% (немного округлости)\n"
+                  "3 — 20-25% (жир заметен, пресс не виден)\n"
+                  "4 — Выше 25% (значительный жировой слой)"),
+    ("drying_q2", "Шаг 2/5 — Сколько недель готов придерживаться строгого рациона?\n\n"
+                  "1 — 4-6 недель (агрессивная сушка)\n"
+                  "2 — 8-10 недель (стандартная)\n"
+                  "3 — 12+ недель (мягкая, сохраняем мышцы)"),
+    ("drying_q3", "Шаг 3/5 — Как переносишь низкоуглеводное питание?\n\n"
+                  "1 — Хорошо, без проблем\n"
+                  "2 — Бывает слабость и раздражительность\n"
+                  "3 — Плохо, сильные голодные срывы"),
+    ("drying_q4", "Шаг 4/5 — Цель сушки?\n\n"
+                  "1 — Максимальный рельеф (соревнования/фото)\n"
+                  "2 — Убрать лишний жир, сохранить мышцы\n"
+                  "3 — Просто подсушиться к лету/событию"),
+    ("drying_q5", "Шаг 5/5 — Сколько тренировок в неделю сможешь поддерживать на сушке?\n\n"
+                  "1 — 5+ дней\n"
+                  "2 — 3-4 дня\n"
+                  "3 — 1-2 дня"),
+]
+
+def analyze_drying_survey(answers):
+    """
+    Анализирует ответы опроса и определяет:
+    - тип сушки (классическая/мягкая/агрессивная)
+    - рекомендуемый срок в неделях
+    - дефицит калорий
+    """
+    fat_level   = int(answers.get("q1", 3))
+    duration    = int(answers.get("q2", 2))
+    tolerance   = int(answers.get("q3", 2))
+    goal        = int(answers.get("q4", 2))
+    training    = int(answers.get("q5", 2))
+
+    # Определяем тип и срок
+    if fat_level <= 2 and tolerance == 1 and goal == 1:
+        drying_type = "агрессивная"
+        weeks = 6
+        deficit_pct = 40
+        carbs_limit = "до 50г/день"
+        desc = ("🔥 *Агрессивная сушка* — максимальный рельеф за короткий срок.\n"
+                "Углеводы минимальны, белок максимальный. Требует опыта и дисциплины.")
+    elif fat_level >= 4 or tolerance == 3:
+        drying_type = "мягкая"
+        weeks = 14
+        deficit_pct = 20
+        carbs_limit = "100-150г/день"
+        desc = ("💚 *Мягкая сушка* — постепенное снижение жира с сохранением мышц.\n"
+                "Комфортный дефицит, углеводы умеренные.")
+    else:
+        drying_type = "стандартная"
+        weeks = 10
+        deficit_pct = 30
+        carbs_limit = "50-100г/день"
+        desc = ("⚡ *Стандартная сушка* — оптимальный баланс скорости и комфорта.\n"
+                "Умеренный дефицит, значительное снижение углеводов.")
+
+    # Корректировка по тренировкам
+    if training == 3:
+        weeks = min(weeks + 2, 16)
+        desc += "\n\n⚠️ При малом числе тренировок сушка идёт медленнее — увеличили срок."
+
+    return {
+        "type": drying_type,
+        "weeks": weeks,
+        "deficit_pct": deficit_pct,
+        "carbs_limit": carbs_limit,
+        "desc": desc,
+    }
+
+def calc_drying_plan(profile, inbody=None):
+    """Расчёт рациона для режима сушки"""
+    w  = profile.get("current_weight") or 107
+    gd = profile.get("gym_days") or 3
+    is_driver = int(profile.get("is_driver") or 0)
+
+    if inbody and inbody.get("bmr"):
+        bmr = inbody["bmr"]
+    else:
+        h = profile.get("height") or 194
+        a = profile.get("age") or 24
+        bmr = 10*w + 6.25*h - 5*a + 5
+
+    base_mult = {1:1.30,2:1.35,3:1.45,4:1.50,5:1.55}.get(min(gd,5), 1.45)
+    mult = base_mult - (0.05 if is_driver else 0)
+    tdee = round(bmr * mult)
+
+    drying_weeks = int(profile.get("drying_weeks") or 10)
+    # Дефицит зависит от срока: чем агрессивнее — тем больше
+    if drying_weeks <= 6:
+        deficit_pct = 40
+    elif drying_weeks <= 10:
+        deficit_pct = 30
+    else:
+        deficit_pct = 20
+
+    calories = max(round(tdee * (1 - deficit_pct/100)), 1200)
+    # На сушке белок = 2.5г на кг сухой массы (защита мышц)
+    muscle = inbody.get("muscle") if inbody else w * 0.6
+    protein = round(muscle * 2.5) if muscle else round(w * 2.0)
+    # Углеводы — минимум
+    fat_g  = round(w * 0.8)
+    carbs_g = max(round((calories - protein*4 - fat_g*9) / 4), 30)
+
+    return {
+        "calories": calories, "protein": protein,
+        "fat": fat_g, "carbs": carbs_g,
+        "tdee": tdee, "deficit": tdee - calories,
+    }
+
+def build_drying_ration(uid, for_tomorrow=False):
+    """Строит рацион для режима сушки"""
+    profile = get_profile(uid)
+    if not profile: return "Сначала настрой профиль.", 0
+    if profile.get("is_sick"): return build_sick_ration(), 0
+
+    inbody = get_last_inbody_dict(uid)
+    plan   = calc_drying_plan(profile, inbody)
+    weekday = now_samara().weekday()
+    if for_tomorrow: weekday = (weekday + 1) % 7
+
+    idx = weekday % len(DRYING_BREAKFAST)
+    b   = DRYING_BREAKFAST[idx]
+    l   = DRYING_LUNCH[idx]
+    s   = DRYING_SNACK[idx]
+    d   = DRYING_DINNER[idx]
+
+    breast = round(plan["protein"] * 0.35)  # ~35% белка на обед
+
+    prefix = "📅 *РАЦИОН НА ЗАВТРА (СУШКА)*\n" if for_tomorrow else ""
+
+    weights = get_weights(uid)
+    analysis = analyze_progress(weights) if len(weights) >= 2 else None
+    status = ""
+    if analysis and not for_tomorrow:
+        icons = {"fast":"📈","good":"✅","slow":"📉","plateau":"🪨","gain":"🚨"}
+        status = f"{icons.get(analysis['status'],'')} {analysis['advice']}\n\n"
+
+    ration = (
+        f"{prefix}{'🏆 РЕЖИМ СУШКИ — РАЦИОН НА СЕГОДНЯ' if not for_tomorrow else ''}\n"
+        f"{status}"
+        f"{'─'*24}\n\n"
+        f"🍳 *Завтрак* (~{b['kcal']} ккал):\n"
+        f"  • {b['main']}\n"
+        f"  • {b['alt1']}\n"
+        f"  • {b['alt2']}\n\n"
+        f"🍗 *Обед* ({l['kcal_note']}):\n"
+        f"  • {l['main'].format(breast=breast)}\n"
+        f"  • {l['alt1'].format(breast=breast)}\n"
+        f"  • {l['alt2'].format(breast=breast)}\n\n"
+        f"🍎 *Полдник* (~{s['kcal']} ккал):\n"
+        f"  • {s['main']}\n"
+        f"  • {s['alt1']}\n"
+        f"  • {s['alt2']}\n\n"
+        f"🌙 *Ужин* ({d['kcal_note']}):\n"
+        f"  • {d['main']}\n"
+        f"  • {d['alt1']}\n"
+        f"  • {d['alt2']}\n\n"
+        f"{'─'*24}\n"
+        f"🎯 *~{plan['calories']} ккал* | 💪 Белок: *{plan['protein']}г*\n"
+        f"🍚 Углеводы: *{plan['carbs']}г* | 🥑 Жиры: *{plan['fat']}г*\n\n"
+        f"💧 Вода: *минимум 3.5л* — на сушке критично!\n"
+        f"⚠️ Выбирай *любой из 3 вариантов* в каждом приёме — все равнозначны по калоражу."
+    )
+    return ration, plan["calories"]
+
+
 
 def get_portions(calories):
     s = calories / 1950
@@ -2214,6 +2460,7 @@ def main_menu(uid=None):
         types.KeyboardButton("📤 Экспорт данных"),
         types.KeyboardButton("🔔 Напоминания"),
         types.KeyboardButton("🏥 Мои ограничения"),
+        types.KeyboardButton("🏆 Режим сушки"),
         types.KeyboardButton("📏 Обхват талии"),
         types.KeyboardButton("📋 Загрузить InBody"),
         types.KeyboardButton("📊 История InBody"),
@@ -2269,7 +2516,7 @@ def foods_keyboard(flist):
 # ─────────────────────────────────────────
 
 REMINDER_SCHEDULE = [
-    (7,  0,  "🍳 *Доброе утро!* Время завтрака!\n\n3 яйца + 60г овсянки + помидор\n\n{quote}"),
+    (7,  0,  "🍳 *Доброе утро!* Время завтрака!\n\n3 яйца + 60г овсянки + помидор\n\n{quote}\n\n{drying_note}"),
     (9,  0,  "💧 Выпей стакан воды! (1/8)"),
     (11, 0,  "💧 Выпей стакан воды! (2/8)"),
     (12, 0,  "🍗 *Время обеда!*\n\nКурица + гречка + салат"),
@@ -2724,6 +2971,54 @@ def router(message):
         return
 
     # ── Редактирование ограничений по здоровью ──
+    # ── Опрос для сушки ──
+    if state in ("drying_q1","drying_q2","drying_q3","drying_q4","drying_q5"):
+        if text not in ("1","2","3","4"):
+            bot.send_message(cid, "Введи цифру 1, 2, 3 или 4"); return
+        # Сохраняем ответ в extra как JSON-подобную строку
+        answers = {}
+        if extra:
+            for pair in extra.split("|"):
+                if ":" in pair:
+                    k, v = pair.split(":", 1)
+                    answers[k] = v
+        q_num = state[-1]
+        answers[f"q{q_num}"] = text
+        extra_str = "|".join(f"{k}:{v}" for k,v in answers.items())
+
+        survey_states = [s[0] for s in DRYING_SURVEY]
+        idx = survey_states.index(state)
+
+        if idx + 1 < len(DRYING_SURVEY):
+            next_state, next_prompt = DRYING_SURVEY[idx + 1]
+            set_state(cid, next_state, extra=extra_str)
+            bot.send_message(cid, next_prompt, parse_mode="Markdown", reply_markup=cancel_menu())
+        else:
+            # Опрос завершён — анализируем
+            set_state(cid, "idle")
+            result = analyze_drying_survey(answers)
+            save_profile(cid,
+                drying_mode=1,
+                drying_weeks=result["weeks"],
+                drying_start=now_samara().strftime("%d.%m.%Y"))
+            bot.send_message(cid,
+                f"🏆 *РЕЖИМ СУШКИ АКТИВИРОВАН!*\n\n"
+                f"{result['desc']}\n\n"
+                f"⏱️ Рекомендуемый срок: *{result['weeks']} недель*\n"
+                f"🍚 Углеводы: *{result['carbs_limit']}*\n\n"
+                f"✅ Что изменилось:\n"
+                f"• Рацион перестроен под сушку\n"
+                f"• Каждый приём пищи — 3 равнозначных варианта\n"
+                f"• В утреннем напоминании — напоминание о режиме сушки\n"
+                f"• Кнопка «🏆 Режим сушки» покажет текущий план\n\n"
+                f"⚠️ Помни: сушка — это стресс для организма. "
+                f"При плохом самочувствии — снизь дефицит или выключи режим.",
+                parse_mode="Markdown", reply_markup=main_menu(cid))
+            # Показываем первый рацион сразу
+            ration, _ = build_drying_ration(cid)
+            bot.send_message(cid, ration, parse_mode="Markdown")
+        return
+
     if state == "edit_health":
         condition_map = {"1":"диабет","2":"аллергия_глютен","3":"аллергия_лактоза",
                          "4":"аллергия_орехи","5":"давление","6":"суставы","7":"астма"}
@@ -3344,6 +3639,72 @@ def router(message):
         bot.send_message(cid,f"🔔 Напоминания: *{status}*",parse_mode="Markdown",reply_markup=main_menu(cid))
 
     # ── Мои ограничения по здоровью ──
+    # ── Режим сушки ──
+    elif text == "🏆 Режим сушки":
+        profile = get_profile(cid)
+        if not profile:
+            bot.send_message(cid, "Сначала настрой профиль."); return
+        drying_on = int(profile.get("drying_mode") or 0)
+        if drying_on:
+            plan  = calc_drying_plan(profile, get_last_inbody_dict(cid))
+            start = profile.get("drying_start") or "—"
+            weeks = int(profile.get("drying_weeks") or 0)
+            m2    = types.ReplyKeyboardMarkup(resize_keyboard=True, row_width=2)
+            m2.add(types.KeyboardButton("🍽️ Рацион сушки сегодня"),
+                   types.KeyboardButton("📅 Рацион сушки завтра"))
+            m2.add(types.KeyboardButton("❌ Выключить сушку"),
+                   types.KeyboardButton("❌ Отмена"))
+            bot.send_message(cid,
+                f"🏆 *РЕЖИМ СУШКИ АКТИВЕН*\n\n"
+                f"📅 Начало: *{start}*\n"
+                f"⏱️ Срок: *{weeks} нед.*\n\n"
+                f"🎯 Калории: *{plan['calories']} ккал/день*\n"
+                f"💪 Белок: *{plan['protein']}г* | "
+                f"🍚 Углеводы: *{plan['carbs']}г* | "
+                f"🥑 Жиры: *{plan['fat']}г*\n\n"
+                "⚠️ *Правила сушки:*\n"
+                "• Убираем крупы, хлеб, фрукты (кроме ягод)\n"
+                "• Белок каждые 3-4 часа\n"
+                "• Вода минимум 3.5л в день\n"
+                "• Кардио каждый день 30-45 мин\n"
+                "• Соль минимум — задерживает воду",
+                parse_mode="Markdown", reply_markup=m2)
+        else:
+            m2 = types.ReplyKeyboardMarkup(resize_keyboard=True)
+            m2.add(types.KeyboardButton("✅ Пройти опрос для сушки"))
+            m2.add(types.KeyboardButton("❌ Отмена"))
+            bot.send_message(cid,
+                "🏆 *РЕЖИМ СУШКИ*\n\n"
+                "Сушка — специальный режим для снижения % жира при сохранении мышц.\n\n"
+                "⚠️ При % жира выше 25% лучше сначала похудеть в обычном режиме.\n\n"
+                "Бот проведёт умный опрос (5 вопросов) и подберёт:\n"
+                "• Тип сушки (мягкая/стандартная/агрессивная)\n"
+                "• Срок и дефицит калорий\n"
+                "• Рацион с 3 вариантами каждого приёма пищи\n\n"
+                "💡 *Помни:* перед сушкой проконсультируйся с врачом.",
+                parse_mode="Markdown", reply_markup=m2)
+
+    elif text == "✅ Пройти опрос для сушки":
+        set_state(cid, "drying_q1")
+        bot.send_message(cid, DRYING_SURVEY[0][1], parse_mode="Markdown",
+                         reply_markup=cancel_menu())
+
+    elif text in ("🍽️ Рацион сушки сегодня", "📅 Рацион сушки завтра"):
+        profile = get_profile(cid)
+        if not profile or not int(profile.get("drying_mode") or 0):
+            bot.send_message(cid, "Режим сушки не активен. Нажми «🏆 Режим сушки»."); return
+        for_tomorrow = (text == "📅 Рацион сушки завтра")
+        ration, cal = build_drying_ration(cid, for_tomorrow=for_tomorrow)
+        bot.send_message(cid, ration, parse_mode="Markdown", reply_markup=main_menu(cid))
+
+    elif text == "❌ Выключить сушку":
+        save_profile(cid, drying_mode=0, drying_weeks=0, drying_start="")
+        bot.send_message(cid,
+            "✅ *Режим сушки выключен.*\n\n"
+            "Рацион вернулся к стандартному плану похудения.\n"
+            "Отличная работа — сушка требует большой дисциплины! 💪",
+            parse_mode="Markdown", reply_markup=main_menu(cid))
+
     elif text == "🏥 Мои ограничения":
         profile = get_profile(cid)
         if not profile:
