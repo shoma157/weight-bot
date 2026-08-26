@@ -4265,21 +4265,13 @@ if __name__ == '__main__':
     init_db()
     print("=== DB OK ===")
 
-    try:
-        bot.remove_webhook()
-        print("=== WEBHOOK REMOVED ===")
-    except Exception as e:
-        print("WEBHOOK ERROR:", repr(e))
-
-    @bot.message_handler(commands=['test'])
-    def test_command(message):
-        print("=== TEST COMMAND RECEIVED ===", message.chat.id)
-        bot.send_message(message.chat.id, "ТЕСТ РАБОТАЕТ")
+    bot.remove_webhook()
+    print("=== WEBHOOK REMOVED ===")
 
     print("=== STARTING POLLING ===")
 
     bot.infinity_polling(
-        skip_pending=False,
+        skip_pending=True,
         timeout=60,
         long_polling_timeout=60
     )
