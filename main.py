@@ -22,6 +22,8 @@ def now_samara():
 
 TOKEN = "8767139035:AAHxyoOwhWeEZoQqDCOQeXZxjQO3_tPXxpQ"
 bot = telebot.TeleBot(TOKEN)
+
+print("=== MAIN.PY LOADED ===")
 # ─────────────────────────────────────────
 #  КАЛОРИЙНОСТЬ И ПРОДУКТЫ
 # ─────────────────────────────────────────
