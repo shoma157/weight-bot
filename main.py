@@ -4265,15 +4265,13 @@ if __name__ == '__main__':
     print("=== BOT START ===")
 
     init_db()
-    print("=== DB OK ===")
 
-    bot.remove_webhook()
     print("=== WEBHOOK REMOVED ===")
+    bot.remove_webhook()
 
     print("=== STARTING POLLING ===")
 
     bot.infinity_polling(
-        skip_pending=True,
         timeout=60,
         long_polling_timeout=60
     )
