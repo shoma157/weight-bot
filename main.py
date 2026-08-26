@@ -4262,26 +4262,25 @@ def router(message):
 
 if __name__ == '__main__':
     init_db()
-    # Запуск фонового потока напоминаний
-    t=threading.Thread(target=reminder_worker,daemon=True)
-    t.start()
-    print("Бот v7 запущен! Самара UTC+4 | Напоминания | Полуфабрикаты | Читмил | График | Экспорт")
-    if __name__ == '__main__':
-    init_db()
 
+    # Удаляем старый webhook, если он был установлен
     bot.remove_webhook()
 
+    # Запускаем поток напоминаний
     t = threading.Thread(
         target=reminder_worker,
         daemon=True
     )
     t.start()
 
-    print("Бот запущен")
+    print("Бот успешно запущен!")
 
-    bot.infinity_polling(
-        skip_pending=True,
-        timeout=60,
-        long_polling_timeout=60
-    )
-    bot.infinity_polling()
+    try:
+        bot.infinity_polling(
+            skip_pending=True,
+            timeout=60,
+            long_polling_timeout=60
+        )
+    except Exception as e:
+        print(f"BOT ERROR: {repr(e)}")
+        raise
