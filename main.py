@@ -4261,19 +4261,21 @@ def router(message):
         bot.send_message(cid,"Используй кнопки меню.",reply_markup=main_menu(cid))
 
 if __name__ == '__main__':
+    print("1. Инициализация БД...")
     init_db()
 
-    # Удаляем старый webhook, если он был установлен
+    print("2. Удаляем webhook...")
     bot.remove_webhook()
+    time.sleep(1)
 
-    # Запускаем поток напоминаний
+    print("3. Запускаем напоминания...")
     t = threading.Thread(
         target=reminder_worker,
         daemon=True
     )
     t.start()
 
-    print("Бот успешно запущен!")
+    print("4. BOT IS READY. Starting polling...")
 
     try:
         bot.infinity_polling(
@@ -4282,5 +4284,5 @@ if __name__ == '__main__':
             long_polling_timeout=60
         )
     except Exception as e:
-        print(f"BOT ERROR: {repr(e)}")
+        print("POLLING ERROR:", repr(e))
         raise
