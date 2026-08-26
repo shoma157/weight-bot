@@ -21,7 +21,7 @@ def now_samara():
     return datetime.now(SAMARA_TZ)
 
 TOKEN = "8767139035:AAHxyoOwhWeEZoQqDCOQeXZxjQO3_tPXxpQ"
-bot = telebot.TeleBot("8767139035:AAHxyoOwhWeEZoQqDCOQeXZxjQO3_tPXxpQ")
+bot = telebot.TeleBot(TOKEN)
 # ─────────────────────────────────────────
 #  КАЛОРИЙНОСТЬ И ПРОДУКТЫ
 # ─────────────────────────────────────────
