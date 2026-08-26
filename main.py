@@ -20,7 +20,7 @@ SAMARA_TZ = timezone(timedelta(hours=4))
 def now_samara():
     return datetime.now(SAMARA_TZ)
 
-TOKEN = "8844022654:AAFZt7DXdHWoORHlGrFSi0rMyX7BUYBzUR8"
+TOKEN = "8767139035:AAHxyoOwhWeEZoQqDCOQeXZxjQO3_tPXxpQ"
 bot = telebot.TeleBot(TOKEN)
 
 # ─────────────────────────────────────────
