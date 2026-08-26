@@ -4261,28 +4261,26 @@ def router(message):
         bot.send_message(cid,"Используй кнопки меню.",reply_markup=main_menu(cid))
 
 if __name__ == '__main__':
-    print("1. Инициализация БД...")
+    print("=== BOT START ===")
+
     init_db()
-
-    print("2. Удаляем webhook...")
-    bot.remove_webhook()
-    time.sleep(1)
-
-    print("3. Запускаем напоминания...")
-    t = threading.Thread(
-        target=reminder_worker,
-        daemon=True
-    )
-    t.start()
-
-    print("4. BOT IS READY. Starting polling...")
+    print("=== DB OK ===")
 
     try:
-        bot.infinity_polling(
-            skip_pending=True,
-            timeout=60,
-            long_polling_timeout=60
-        )
+        bot.remove_webhook()
+        print("=== WEBHOOK REMOVED ===")
     except Exception as e:
-        print("POLLING ERROR:", repr(e))
-        raise
+        print("WEBHOOK ERROR:", repr(e))
+
+    @bot.message_handler(commands=['test'])
+    def test_command(message):
+        print("=== TEST COMMAND RECEIVED ===", message.chat.id)
+        bot.send_message(message.chat.id, "ТЕСТ РАБОТАЕТ")
+
+    print("=== STARTING POLLING ===")
+
+    bot.infinity_polling(
+        skip_pending=False,
+        timeout=60,
+        long_polling_timeout=60
+    )
