@@ -3168,6 +3168,56 @@ def router(message):
 
         set_state(cid, "idle")
         return
+    # ── Выбор приёма пищи ──
+    if state == "ration_choose_meal":
+        if text not in MEAL_FOODS:
+            bot.send_message(cid, "Выбери приём пищи кнопкой ниже.")
+            return
+
+        set_state(cid, "ration_choose_food", extra=text)
+
+        foods = []
+        for group_items in MEAL_FOODS[text].values():
+            foods.extend(group_items)
+
+        foods = list(dict.fromkeys(foods))
+
+        bot.send_message(
+            cid,
+            f"🍽️ *{text}*\n\nВыбери продукт:",
+            parse_mode="Markdown",
+            reply_markup=foods_keyboard(foods)
+        )
+        return
+
+    # ── Выбор продукта ──
+    if state == "ration_choose_food":
+        meal = extra
+
+        available_foods = []
+        for group_items in MEAL_FOODS.get(meal, {}).values():
+            available_foods.extend(group_items)
+
+        if text not in available_foods:
+            bot.send_message(cid, "Выбери продукт кнопкой ниже.")
+            return
+
+        grams = DEFAULT_PORTIONS.get(text, 100)
+        kcal_100 = KCAL_PER_100G.get(text, 150)
+        kcal = round(kcal_100 * grams / 100)
+
+        bot.send_message(
+            cid,
+            f"✅ *{meal}*\n\n"
+            f"🥗 Продукт: *{text}*\n"
+            f"⚖️ Порция: *{grams} г*\n"
+            f"🔥 Энергетическая ценность: *{kcal} ккал*",
+            parse_mode="Markdown",
+            reply_markup=main_menu(cid)
+        )
+
+        set_state(cid, "idle")
+        return
 
     # Онбординг
     if state in [s[0] for s in ONBOARDING_STEPS]:
@@ -3893,22 +3943,20 @@ if state == "ration_choose_food":
             "3 — Умеренно 🟡\n4 — Сильно 🔴\n5 — Выжат 😵",
             parse_mode="Markdown",reply_markup=fatigue_menu())
 
-    # Рацион
-   elif text=="🍽️ Рацион сегодня":
-    profile=get_profile(cid)
+    
+   # Рацион
+elif text == "🍽️ Рацион сегодня":
+    profile = get_profile(cid)
+
     if not profile:
-        bot.send_message(cid,"Сначала настрой профиль.",parse_mode="Markdown"); return
+        bot.send_message(
+            cid,
+            "Сначала настрой профиль.",
+            parse_mode="Markdown"
+        )
+        return
 
     start_ration_builder(cid)
-        weights=get_weights(cid)
-        a=analyze_progress(weights) if len(weights)>=2 else None
-        label=("🤒 Режим болезни" if profile.get("is_sick") else
-               "📈 Порции увеличены" if a and a["cal_change"]>0 else
-               "📉 Порции снижены" if a and a["cal_change"]<0 else "✅ Стандартный рацион")
-        bot.send_message(cid,
-            f"🍽️ *РАЦИОН НА СЕГОДНЯ*\n{label}\n─────────────\n{ration}\n\n"
-            "💡 Для замены нажми «🔄 Заменить блюдо»",
-            parse_mode="Markdown")
 
     elif text=="📅 Рацион на завтра":
         profile=get_profile(cid)
