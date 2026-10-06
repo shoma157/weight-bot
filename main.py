@@ -2984,8 +2984,14 @@ def reminder_worker():
 
 @bot.message_handler(commands=['start','help'])
 def send_welcome(message):
-    cid = message.chat.id
-    profile = get_profile(cid)
+    ...
+    # здесь ничего не меняем
+
+
+@bot.message_handler(func=lambda m: True)
+def router(message):
+    ...
+    # сюда добавляем новую логику выбора еды
 
     DISCLAIMER = (
         "⚠️ *Важная информация*\n\n"
@@ -3085,9 +3091,60 @@ def router(message):
     cid  = message.chat.id
     text = message.text.strip() if message.text else ""
     state, extra = get_state(cid)
-    if text == "❌ Отмена":
+       if text == "❌ Отмена":
         set_state(cid, "idle")
         bot.send_message(cid, "Отменено.", reply_markup=main_menu(cid))
+        return
+
+    # ── Новый выбор рациона: приём пищи ──
+    if state == "ration_choose_meal":
+        if text not in MEAL_FOODS:
+            bot.send_message(cid, "Выбери приём пищи кнопкой ниже.")
+            return
+
+        set_state(cid, "ration_choose_food", extra=text)
+
+        foods = []
+        for group_items in MEAL_FOODS[text].values():
+            foods.extend(group_items)
+
+        foods = list(dict.fromkeys(foods))
+
+        bot.send_message(
+            cid,
+            f"🍽️ *{text}*\n\nВыбери продукт:",
+            parse_mode="Markdown",
+            reply_markup=foods_keyboard(foods)
+        )
+        return
+
+    # ── Новый выбор рациона: продукт ──
+    if state == "ration_choose_food":
+        meal = extra
+
+        available_foods = []
+        for group_items in MEAL_FOODS.get(meal, {}).values():
+            available_foods.extend(group_items)
+
+        if text not in available_foods:
+            bot.send_message(cid, "Выбери продукт кнопкой ниже.")
+            return
+
+        grams = DEFAULT_PORTIONS.get(text, 100)
+        kcal_100 = KCAL_PER_100G.get(text, 150)
+        kcal = round(kcal_100 * grams / 100)
+
+        bot.send_message(
+            cid,
+            f"✅ *{meal}*\n\n"
+            f"🥗 Продукт: *{text}*\n"
+            f"⚖️ Порция: *{grams} г*\n"
+            f"🔥 Энергетическая ценность: *{kcal} ккал*",
+            parse_mode="Markdown",
+            reply_markup=main_menu(cid)
+        )
+
+        set_state(cid, "idle")
         return
 
     # Онбординг
