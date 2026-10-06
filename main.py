@@ -2987,7 +2987,29 @@ def send_welcome(message):
     ...
     # здесь ничего не меняем
 
+def start_ration_builder(cid):
+    set_state(cid, "ration_choose_meal")
 
+    m = types.ReplyKeyboardMarkup(
+        resize_keyboard=True,
+        row_width=2
+    )
+
+    for meal in MEAL_FOODS:
+        m.add(types.KeyboardButton(meal))
+
+    m.add(types.KeyboardButton("❌ Отмена"))
+
+    bot.send_message(
+        cid,
+        "🍽️ *Выбери приём пищи:*",
+        parse_mode="Markdown",
+        reply_markup=m
+    )
+
+
+@bot.message_handler(func=lambda m: True)
+def router(message):
 @bot.message_handler(func=lambda m: True)
 def router(message):
     ...
