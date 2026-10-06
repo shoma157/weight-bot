@@ -8,6 +8,7 @@ import io
 import re
 from datetime import datetime, timezone, timedelta
 import random
+from functools import lru_cache
 
 try:
     import pdfplumber
@@ -20,10 +21,9 @@ SAMARA_TZ = timezone(timedelta(hours=4))
 def now_samara():
     return datetime.now(SAMARA_TZ)
 
-TOKEN = "8767139035:AAHxyoOwhWeEZoQqDCOQeXZxjQO3_tPXxpQ"
+TOKEN = "8844022654:AAFZt7DXdHWoORHlGrFSi0rMyX7BUYBzUR8"
 bot = telebot.TeleBot(TOKEN)
 
-print("=== MAIN.PY LOADED ===")
 # ─────────────────────────────────────────
 #  КАЛОРИЙНОСТЬ И ПРОДУКТЫ
 # ─────────────────────────────────────────
@@ -518,6 +518,9 @@ def init_db():
         water REAL, protein REAL, bone REAL, visceral_fat REAL, bmi REAL,
         lean_mass REAL, bmr INTEGER, tdee INTEGER, optimal_weight REAL,
         report_date TEXT, date TEXT)''')
+    c.execute('''CREATE TABLE IF NOT EXISTS achievements (
+        id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER,
+        achievement_key TEXT, unlocked_date TEXT)''')
     c.execute('''CREATE TABLE IF NOT EXISTS waist (
         id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER,
         waist_cm REAL, date TEXT)''')
@@ -538,7 +541,16 @@ def init_db():
             pass
     conn.commit(); conn.close()
 
+_profile_cache = {}  # {uid: (profile_dict, timestamp)}
+_CACHE_TTL = 300  # 5 минут
+
 def get_profile(uid):
+    import time as _time
+    now_ts = _time.time()
+    if uid in _profile_cache:
+        cached, ts = _profile_cache[uid]
+        if now_ts - ts < _CACHE_TTL:
+            return cached
     conn = sqlite3.connect("weight_tracker.db")
     row = conn.execute("SELECT * FROM user_profile WHERE user_id=?", (uid,)).fetchone()
     conn.close()
@@ -553,6 +565,7 @@ def get_profile(uid):
     for k in ("is_sick","fatigue","reminders_enabled","cheatmeal_used","is_driver","home_workouts","drying_mode"):
         d[k] = int(d[k]) if d[k] else 0
     d["health_conditions"] = d.get("health_conditions") or ""
+    _profile_cache[uid] = (d, __import__("time").time())
     return d
 
 def save_profile(uid, **kw):
@@ -566,6 +579,9 @@ def save_profile(uid, **kw):
         cols = ", ".join(kw.keys()); vals = ", ".join("?"*len(kw))
         conn.execute(f"INSERT INTO user_profile ({cols}) VALUES ({vals})", list(kw.values()))
     conn.commit(); conn.close()
+    # Сбрасываем кэш при сохранении
+    if uid in _profile_cache:
+        del _profile_cache[uid]
 
 def get_all_users():
     conn = sqlite3.connect("weight_tracker.db")
@@ -734,6 +750,133 @@ def get_waist_history(uid, limit=14):
                         (uid, limit)).fetchall()
     conn.close()
     return list(reversed(rows))
+
+# ─────────────────────────────────────────
+#  ДОСТИЖЕНИЯ И БЕЙДЖИ
+# ─────────────────────────────────────────
+
+ACHIEVEMENTS = {
+    "first_weight":     {"emoji":"⚖️",  "name":"Первый шаг",        "desc":"Внёс первый вес"},
+    "lose_1kg":         {"emoji":"🔥",  "name":"Минус 1 кг",        "desc":"Сбросил первый килограмм"},
+    "lose_5kg":         {"emoji":"🌟",  "name":"Минус 5 кг",        "desc":"Сбросил 5 кг — это серьёзно!"},
+    "lose_10kg":        {"emoji":"💎",  "name":"Минус 10 кг",       "desc":"Сбросил 10 кг — ты молодец!"},
+    "lose_half":        {"emoji":"🏆",  "name":"Полпути",           "desc":"Достиг 50% от цели"},
+    "goal_reached":     {"emoji":"🎯",  "name":"ЦЕЛЬ ДОСТИГНУТА",   "desc":"Достиг своего целевого веса!"},
+    "streak_7":         {"emoji":"🔥",  "name":"Неделя без пропусков","desc":"7 дней подряд вносил данные"},
+    "streak_30":        {"emoji":"💪",  "name":"Месяц без пропусков","desc":"30 дней подряд вносил данные"},
+    "streak_100":       {"emoji":"👑",  "name":"100 дней",          "desc":"100 дней подряд — легенда!"},
+    "first_workout":    {"emoji":"🏋️", "name":"Первая тренировка", "desc":"Завершил первую тренировку"},
+    "workouts_10":      {"emoji":"💪",  "name":"10 тренировок",     "desc":"Завершил 10 тренировок"},
+    "workouts_50":      {"emoji":"🥇",  "name":"50 тренировок",     "desc":"Завершил 50 тренировок"},
+    "steps_10k":        {"emoji":"👟",  "name":"10 000 шагов",      "desc":"Прошёл 10 000 шагов за день"},
+    "steps_100k":       {"emoji":"🚶",  "name":"100 000 шагов",     "desc":"Суммарно прошёл 100 000 шагов"},
+    "water_week":       {"emoji":"💧",  "name":"Неделя с водой",    "desc":"7 дней подряд выполнял норму воды"},
+    "inbody_done":      {"emoji":"📋",  "name":"Первый InBody",     "desc":"Загрузил первый отчёт InBody"},
+    "drying_start":     {"emoji":"🏆",  "name":"На сушке",          "desc":"Активировал режим сушки"},
+    "drying_finish":    {"emoji":"🏅",  "name":"Сушка завершена",   "desc":"Успешно завершил режим сушки"},
+    "sleep_week":       {"emoji":"😴",  "name":"Сон под контролем", "desc":"7 дней подряд записывал сон"},
+}
+
+def get_unlocked_achievements(uid):
+    conn = sqlite3.connect("weight_tracker.db")
+    rows = conn.execute("SELECT achievement_key, unlocked_date FROM achievements WHERE user_id=? ORDER BY id",
+                        (uid,)).fetchall()
+    conn.close()
+    return {r[0]: r[1] for r in rows}
+
+def unlock_achievement(uid, key):
+    """Выдаёт достижение если ещё не получено. Возвращает True если выдано впервые."""
+    if key not in ACHIEVEMENTS:
+        return False
+    conn = sqlite3.connect("weight_tracker.db")
+    ex = conn.execute("SELECT id FROM achievements WHERE user_id=? AND achievement_key=?",
+                      (uid, key)).fetchone()
+    if ex:
+        conn.close()
+        return False
+    conn.execute("INSERT INTO achievements (user_id,achievement_key,unlocked_date) VALUES (?,?,?)",
+                 (uid, key, now_samara().strftime("%Y-%m-%d")))
+    conn.commit(); conn.close()
+    return True
+
+def check_and_unlock(uid):
+    """Проверяет все условия и выдаёт новые достижения. Возвращает список новых."""
+    new_achievements = []
+    profile = get_profile(uid)
+    if not profile: return []
+
+    wd = get_weights(uid)
+    sd = get_steps(uid, limit=200)
+    current, best = get_streak(uid)
+    workouts_count = 0
+    try:
+        conn = sqlite3.connect("weight_tracker.db")
+        workouts_count = conn.execute("SELECT COUNT(*) FROM workouts WHERE user_id=?", (uid,)).fetchone()[0]
+        conn.close()
+    except Exception:
+        pass
+
+    checks = [
+        ("first_weight",  len(wd) >= 1),
+        ("lose_1kg",      len(wd) >= 2 and (wd[0][0] - wd[-1][0]) >= 1),
+        ("lose_5kg",      len(wd) >= 2 and (wd[0][0] - wd[-1][0]) >= 5),
+        ("lose_10kg",     len(wd) >= 2 and (wd[0][0] - wd[-1][0]) >= 10),
+        ("lose_half",     len(wd) >= 2 and profile.get("target_weight") and
+                          (wd[0][0] - wd[-1][0]) >= (wd[0][0] - profile["target_weight"]) * 0.5),
+        ("goal_reached",  len(wd) >= 1 and profile.get("target_weight") and
+                          wd[-1][0] <= profile["target_weight"]),
+        ("streak_7",      current >= 7),
+        ("streak_30",     current >= 30),
+        ("streak_100",    current >= 100),
+        ("first_workout", workouts_count >= 1),
+        ("workouts_10",   workouts_count >= 10),
+        ("workouts_50",   workouts_count >= 50),
+        ("steps_10k",     any(s >= 10000 for s,_ in sd)),
+        ("steps_100k",    sum(s for s,_ in sd) >= 100000),
+        ("inbody_done",   get_last_inbody(uid) is not None),
+        ("drying_start",  int(profile.get("drying_mode") or 0) == 1),
+    ]
+
+    for key, condition in checks:
+        if condition and unlock_achievement(uid, key):
+            new_achievements.append(key)
+
+    return new_achievements
+
+def build_achievements_text(uid):
+    unlocked = get_unlocked_achievements(uid)
+    if not unlocked:
+        return None
+    lines = []
+    for key, ach in ACHIEVEMENTS.items():
+        if key in unlocked:
+            lines.append(f"{ach['emoji']} *{ach['name']}* — {ach['desc']} ✅ ({unlocked[key]})")
+        else:
+            lines.append(f"🔒 *{ach['name']}* — {ach['desc']}")
+    total = len(unlocked)
+    return f"🏅 *МОИ ДОСТИЖЕНИЯ* ({total}/{len(ACHIEVEMENTS)})\n{'─'*24}\n\n" + "\n".join(lines)
+
+# ─────────────────────────────────────────
+#  ТАЙМЕР ОТДЫХА МЕЖДУ ПОДХОДАМИ
+# ─────────────────────────────────────────
+
+REST_TIMERS = {
+    "60 сек": 60,
+    "90 сек": 90,
+    "120 сек": 120,
+    "180 сек": 180,
+}
+
+def rest_timer_worker(uid, seconds, start_time_str):
+    """Фоновый поток — ждёт N секунд и отправляет сообщение"""
+    time.sleep(seconds)
+    try:
+        bot.send_message(uid,
+            f"⏱️ *{seconds} секунд прошло — начинай следующий подход!* 💪\n\n"
+            f"Начало отдыха: {start_time_str}",
+            parse_mode="Markdown")
+    except Exception:
+        pass
 
 def get_last_waist(uid):
     conn = sqlite3.connect("weight_tracker.db")
@@ -2305,11 +2448,20 @@ RECIPES = {
     },
 }
 
-def build_recipe_card(dish_name):
-    """Строит карточку рецепта блюда"""
+def build_recipe_card(dish_name, profile=None):
+    """Строит карточку рецепта блюда с учётом ограничений здоровья"""
     r = RECIPES.get(dish_name)
     if not r:
         return None
+    # Проверяем запрещённые ингредиенты
+    health_warn = ""
+    if profile:
+        banned = get_banned_foods(profile)
+        found_banned = [f for f in banned if f in r.get("ingredients","")]
+        if found_banned:
+            alts = [get_safe_replacement(profile, f) for f in found_banned]
+            health_warn = (f"\n\n⚠️ *Внимание по твоим ограничениям здоровья:*\n"
+                          f"Замени *{', '.join(found_banned)}* на *{', '.join(alts)}*")
     grams = DEFAULT_PORTIONS.get(dish_name, 200)
     return (
         f"{r['emoji']} *{dish_name.upper()}*\n{'─'*22}\n\n"
@@ -2317,7 +2469,7 @@ def build_recipe_card(dish_name):
         f"🔥 Калорийность порции: *{r['kcal_portion']}*\n\n"
         f"🛒 *Ингредиенты:*\n{r['ingredients']}\n\n"
         f"👨‍🍳 *Приготовление:*\n{r['steps']}\n\n"
-        f"{r['tip']}"
+        f"{r['tip']}{health_warn}"
     )
 
 # ─────────────────────────────────────────
@@ -2462,6 +2614,8 @@ def main_menu(uid=None):
         types.KeyboardButton("🔔 Напоминания"),
         types.KeyboardButton("🏥 Мои ограничения"),
         types.KeyboardButton("🏆 Режим сушки"),
+        types.KeyboardButton("⏱️ Таймер отдыха"),
+        types.KeyboardButton("🏅 Мои достижения"),
         types.KeyboardButton("📏 Обхват талии"),
         types.KeyboardButton("📋 Загрузить InBody"),
         types.KeyboardButton("📊 История InBody"),
@@ -2570,6 +2724,20 @@ def reminder_worker():
                     report = build_weekly_report(uid)
                     if report:
                         bot.send_message(uid, report, parse_mode="Markdown")
+                    # Автобэкап данных каждое воскресенье
+                    wd2 = get_weights(uid); sd2 = get_steps(uid, limit=200)
+                    sl2 = get_sleep_history(uid, limit=50)
+                    out = io.StringIO(); wr = csv.writer(out)
+                    wr.writerow(["Тип","Значение","Дата"])
+                    for wv,d in wd2: wr.writerow(["вес",wv,d])
+                    for sv,d in sd2: wr.writerow(["шаги",sv,d])
+                    for st,wt,dur,qual,d in sl2: wr.writerow(["сон",f"{dur}ч кач:{qual}",d])
+                    out.seek(0)
+                    bio = io.BytesIO(out.getvalue().encode("utf-8-sig"))
+                    bio.name = f"backup_{now.strftime('%Y%m%d')}.csv"
+                    bot.send_document(uid, bio,
+                        caption="💾 *Еженедельный бэкап данных*\n\nВсе твои данные за неделю. Сохрани файл на всякий случай.",
+                        parse_mode="Markdown")
                 except Exception:
                     pass
         time.sleep(30)
@@ -2674,12 +2842,13 @@ def handle_document(message):
 
     bot.send_message(cid, report, parse_mode="Markdown", reply_markup=main_menu(cid))
 
+ADMIN_UID = None  # Установи свой Telegram ID для получения уведомлений об ошибках
+
 @bot.message_handler(func=lambda m: True)
 def router(message):
     cid  = message.chat.id
-    text = message.text.strip()
+    text = message.text.strip() if message.text else ""
     state, extra = get_state(cid)
-
     if text == "❌ Отмена":
         set_state(cid, "idle")
         bot.send_message(cid, "Отменено.", reply_markup=main_menu(cid))
@@ -2763,6 +2932,10 @@ def router(message):
             w = float(text.replace(",",".")); assert 30<w<300
             add_weight(cid, w); save_profile(cid, current_weight=w)
             set_state(cid, "idle")
+            new_ach = check_and_unlock(cid)
+            if new_ach:
+                for k in new_ach:
+                    bot.send_message(cid, f"🎉 *{ACHIEVEMENTS[k]['emoji']} {ACHIEVEMENTS[k]['name']}!*\n{ACHIEVEMENTS[k]['desc']}", parse_mode="Markdown")
             wd = get_weights(cid); profile = get_profile(cid)
             target = profile["target_weight"] if profile else 92.0
             loss   = round(wd[0][0]-w,2); remain = round(w-target,1)
@@ -3163,6 +3336,10 @@ def router(message):
             wtype=extra or "тренировка"
             save_profile(cid,fatigue=f,last_workout_date=now_samara().strftime("%Y-%m-%d %H:%M"))
             log_workout(cid,wtype,f); set_state(cid,"idle")
+            new_ach = check_and_unlock(cid)
+            if new_ach:
+                for k in new_ach:
+                    bot.send_message(cid, f"🎉 *{ACHIEVEMENTS[k]['emoji']} {ACHIEVEMENTS[k]['name']}!*\n{ACHIEVEMENTS[k]['desc']}", parse_mode="Markdown")
             if f<=2: msg=f"💪 Усталость {f}/5 — отлично! Следующая по плану."
             elif f==3: msg=f"🟡 Усталость {f}/5 — умеренная. Если завтра силовая — снизим веса."
             else:
@@ -3640,7 +3817,44 @@ def router(message):
         bot.send_message(cid,f"🔔 Напоминания: *{status}*",parse_mode="Markdown",reply_markup=main_menu(cid))
 
     # ── Мои ограничения по здоровью ──
+    # ── Таймер отдыха ──
+    elif text == "⏱️ Таймер отдыха":
+        m2 = types.ReplyKeyboardMarkup(resize_keyboard=True, row_width=2)
+        for label in REST_TIMERS:
+            m2.add(types.KeyboardButton(f"⏱️ {label}"))
+        m2.add(types.KeyboardButton("❌ Отмена"))
+        bot.send_message(cid,
+            "⏱️ *ТАЙМЕР ОТДЫХА МЕЖДУ ПОДХОДАМИ*\n\nВыбери время отдыха:",
+            parse_mode="Markdown", reply_markup=m2)
+
+    elif text.startswith("⏱️ ") and text[2:].strip() in REST_TIMERS:
+        label = text[2:].strip()
+        seconds = REST_TIMERS[label]
+        start_time = now_samara().strftime("%H:%M:%S")
+        bot.send_message(cid,
+            f"⏱️ Отдыхай *{label}*... Отправлю сигнал когда время выйдет! 🔔",
+            parse_mode="Markdown", reply_markup=main_menu(cid))
+        t = threading.Thread(target=rest_timer_worker, args=(cid, seconds, start_time), daemon=True)
+        t.start()
+
+    # ── Достижения ──
+    elif text == "🏅 Мои достижения":
+        # Сначала проверяем новые достижения
+        new_ach = check_and_unlock(cid)
+        if new_ach:
+            new_text = "\n".join(f"{ACHIEVEMENTS[k]['emoji']} *{ACHIEVEMENTS[k]['name']}* разблокировано!" for k in new_ach)
+            bot.send_message(cid, f"🎉 *Новые достижения!*\n\n{new_text}", parse_mode="Markdown")
+        ach_text = build_achievements_text(cid)
+        if not ach_text:
+            bot.send_message(cid,
+                "🏅 *Достижений пока нет.*\n\nВноси данные каждый день — "
+                "первое достижение придёт уже сегодня!",
+                parse_mode="Markdown")
+        else:
+            bot.send_message(cid, ach_text, parse_mode="Markdown")
+
     # ── Режим сушки ──
+
     elif text == "🏆 Режим сушки":
         profile = get_profile(cid)
         if not profile:
@@ -3851,7 +4065,7 @@ def router(message):
             sleep_mins = sh * 60 + sm
             wake_mins  = wh * 60 + wm
             if wake_mins < sleep_mins:
-                wake_mins += 24 * 60  # переход через полночь
+                wake_mins += 24 * 60
             duration = round((wake_mins - sleep_mins) / 60, 1)
         except Exception:
             duration = 7.0
@@ -4255,23 +4469,16 @@ def router(message):
 
     elif text.startswith("📖 ") and text[2:] in RECIPES:
         dish = text[2:]
-        card = build_recipe_card(dish)
+        card = build_recipe_card(dish, get_profile(cid))
         bot.send_message(cid, card, parse_mode="Markdown", reply_markup=main_menu(cid))
 
     else:
         bot.send_message(cid,"Используй кнопки меню.",reply_markup=main_menu(cid))
 
 if __name__ == '__main__':
-    print("=== BOT START ===")
-
     init_db()
-
-    print("=== WEBHOOK REMOVED ===")
-    bot.remove_webhook()
-
-    print("=== STARTING POLLING ===")
-
-    bot.infinity_polling(
-        timeout=60,
-        long_polling_timeout=60
-    )
+    # Запуск фонового потока напоминаний
+    t=threading.Thread(target=reminder_worker,daemon=True)
+    t.start()
+    print("Бот v7 запущен! Самара UTC+4 | Напоминания | Полуфабрикаты | Читмил | График | Экспорт")
+    bot.infinity_polling()
