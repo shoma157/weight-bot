@@ -388,6 +388,25 @@ def find_group(food):
 
 ALL_CARD_PRODUCTS = set(FOOD_GROUPS.get("фрукты", [])) | set(FOOD_GROUPS.get("спортпит", []))
 
+# Убираем "Протеиновый молочный коктейль"
+FOOD_GROUPS["спортпит"].remove("Протеиновый молочный коктейль")
+
+# Добавляем новые молочные коктейли
+FOOD_GROUPS["спортпит"].append("Миндальный молочный коктейль")
+FOOD_GROUPS["спортпит"].append("Кокосовый молочный коктейль")
+FOOD_GROUPS["спортпит"].append("Безлактозный молочный коктейль")
+FOOD_GROUPS["спортпит"].append("Арахисовый молочный коктейль")
+FOOD_GROUPS["спортпит"].append("Овсяный молочный коктейль")
+
+# Обновляем информацию о калорийности
+KCAL_PER_100G.update({
+    "Миндальный молочный коктейль": 150,
+    "Кокосовый молочный коктейль": 180,
+    "Безлактозный молочный коктейль": 120,
+    "Арахисовый молочный коктейль": 160,
+    "Овсяный молочный коктейль": 110,
+})
+
 PRODUCT_CARDS = {
     "яблоко":    {"emoji":"🍎","gi":"низкий (36)","protein":"0.3г","best_time":"Полдник, до 19:00","tip":"Пектин замедляет усвоение сахара. Лучший выбор для похудения.","warn":""},
     "банан":     {"emoji":"🍌","gi":"средний (51)","protein":"1.1г","best_time":"До/после тренировки, утром","tip":"Быстрое восстановление после нагрузки. Калий защищает мышцы от судорог.","warn":"⚠️ Не вечером — высокий ГИ поднимет инсулин перед сном."},
@@ -418,6 +437,50 @@ PRODUCT_CARDS = {
     "протеин сывороточный (порция 30г)": {"emoji":"🥤","gi":"низкий","protein":"~23г/порц.","best_time":"После тренировки, утром","tip":"Быстрое усвоение — идеально после зала.","warn":"✅ На воде или миндальном молоке."},
     "протеин казеиновый (порция 30г)":   {"emoji":"🥛","gi":"низкий","protein":"~24г/порц.","best_time":"Перед сном","tip":"Медленное усвоение — питает мышцы всю ночь.","warn":"✅ Лучший выбор на ночь."},
     "высокобелковый творог (0%)":        {"emoji":"🧀","gi":"низкий","protein":"~18г/100г","best_time":"Завтрак, перед сном","tip":"Казеиновый белок — медленное усвоение.","warn":"⚠️ Уточни переносимость лактозы."},
+    PRODUCT_CARDS["Миндальный молочный коктейль"] = {
+    "emoji": "🥛",                                                
+     "ingredients": "200мл миндального молока + 1 банан",
+    "kcal": 200,
+    "protein": 5,
+    "carbs": 20,
+    "fat": 10,
+}
+
+PRODUCT_CARDS["Кокосовый молочный коктейль"] = {
+    "emoji": "🥥",
+    "ingredients": "200мл кокосового молока + 1 банан",
+    "kcal": 220,
+    "protein": 3,
+    "carbs": 15,
+    "fat": 15,
+}
+
+PRODUCT_CARDS["Безлактозный молочный коктейль"] = {
+    "emoji": "🥛",
+    "ingredients": "200мл безлактозного молока + 1 банан",
+    "kcal": 180,
+    "protein": 8,
+    "carbs": 12,
+    "fat": 8,
+}
+
+PRODUCT_CARDS["Арахисовый молочный коктейль"] = {
+    "emoji": "🥜",
+    "ingredients": "200мл арахисового молока + 1 банан",
+    "kcal": 210,
+    "protein": 7,
+    "carbs": 18,
+    "fat": 12,
+}
+
+PRODUCT_CARDS["Овсяный молочный коктейль"] = {
+    "emoji": "🌾",
+    "ingredients": "200мл овсяного молока + 1 банан",
+    "kcal": 190,
+    "protein": 6,
+    "carbs": 22,
+    "fat": 6,
+}
 }
 
 def build_product_card(name, profile=None):
@@ -2844,11 +2907,40 @@ def handle_document(message):
 
 ADMIN_UID = None  # Установи свой Telegram ID для получения уведомлений об ошибках
 
+def build_product_menu(uid):
+    """Строит меню выбора продуктов с учётом калорийности."""
+    profile = get_profile(uid)
+    plan = get_user_plan(uid, profile)
+    current_calories = get_kcal_today(uid) or 0
+    remaining_calories = plan["calories"] - current_calories
+
+    # Строим меню
+    m2 = types.ReplyKeyboardMarkup(resize_keyboard=True, row_width=2)
+    for group in FOOD_GROUPS:
+        for product in FOOD_GROUPS[group]:
+            m2.add(types.KeyboardButton(product))
+    m2.add(types.KeyboardButton("❌ Отмена"))
+
+    bot.send_message(
+        uid,
+        f"Выбери продукт для замены. Осталось *{remaining_calories} ккал* на сегодня.",
+        parse_mode="Markdown",
+        reply_markup=m2
+    )
+
 @bot.message_handler(func=lambda m: True)
 def router(message):
     cid  = message.chat.id
     text = message.text.strip() if message.text else ""
     state, extra = get_state(cid)
+
+    elif text == "📖 Карточки молочных коктейлей":
+    bot.send_message(cid,
+        "📖 *КАРТОЧКИ МОЛОЧНЫХ КОКТЕЙЛЕЙ*\n\n"
+        "Выбери молочный коктейль — получишь подробную информацию о составе, калорийности и порции:",
+        parse_mode="Markdown")
+    build_product_menu(cid)
+    
     if text == "❌ Отмена":
         set_state(cid, "idle")
         bot.send_message(cid, "Отменено.", reply_markup=main_menu(cid))
