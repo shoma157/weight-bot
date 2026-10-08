@@ -2935,16 +2935,20 @@ def build_product_menu(uid):
 
 @bot.message_handler(func=lambda m: True)
 def router(message):
-    cid  = message.chat.id
+    cid = message.chat.id
     text = message.text.strip() if message.text else ""
     state, extra = get_state(cid)
 
-    elif text == "📖 Карточки молочных коктейлей":
-    bot.send_message(cid,
-        "📖 *КАРТОЧКИ МОЛОЧНЫХ КОКТЕЙЛЕЙ*\n\n"
-        "Выбери молочный коктейль — получишь подробную информацию о составе, калорийности и порции:",
-        parse_mode="Markdown")
-    build_product_menu(cid)
+    if text == "📖 Карточки молочных коктейлей":
+        bot.send_message(
+            cid,
+            "📖 *КАРТОЧКИ МОЛОЧНЫХ КОКТЕЙЛЕЙ*\n\n"
+            "Выбери молочный коктейль — получишь подробную "
+            "информацию о составе, калорийности и порции:",
+            parse_mode="Markdown",
+            reply_markup=main_menu(cid)
+        )
+        return
     
     if text == "❌ Отмена":
         set_state(cid, "idle")
