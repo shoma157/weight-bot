@@ -2585,14 +2585,24 @@ ONBOARDING_STEPS = [
 ]
 
 # Обработчик для шага "setup_pref"
-elif state == "setup_pref":
+if state == "setup_pref":
     try:
         pref = int(text)
         assert 1 <= pref <= 3
-        save_profile(cid, workout_pref={"1": "только зал", "2": "50/50", "3": "только дома"}.get(str(pref), "50/50"))
+        save_profile(
+            cid,
+            workout_pref={
+                "1": "только зал",
+                "2": "50/50",
+                "3": "только дома"
+            }.get(str(pref), "50/50")
+        )
         set_state(cid, "setup_deadline")
-        bot.send_message(cid, "✅ *Тип тренировок установлен.*\n\n"
-                              "Следующий вопрос:", parse_mode="Markdown")
+        bot.send_message(
+            cid,
+            "✅ *Тип тренировок установлен.*\n\nСледующий вопрос:",
+            parse_mode="Markdown"
+        )
         bot.send_message(cid, ONBOARDING_STEPS[6][1], parse_mode="Markdown")
     except Exception:
         bot.send_message(cid, "Введи число от 1 до 3")
