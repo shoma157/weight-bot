@@ -2585,7 +2585,7 @@ ONBOARDING_STEPS = [
 ]
 
 # Обработчик для шага "setup_pref"
-if state == "setup_pref":
+elif state == "setup_pref":
     try:
         pref = int(text)
         assert 1 <= pref <= 3
@@ -2627,6 +2627,7 @@ elif text == "Тренировка сегодня":
         "Выбери тренировку:",
         parse_mode="Markdown",
         reply_markup=m2)
+    
 def start_onboarding(cid, edit=False):
     prefix = "✏️ *Обновляем профиль!*\n\n" if edit else "👤 *Настройка профиля*\n\nОтвечай на вопросы по очереди.\n\n"
     set_state(cid, "setup_weight", extra="edit" if edit else "new")
