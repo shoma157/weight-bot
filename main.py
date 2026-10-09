@@ -2585,7 +2585,7 @@ ONBOARDING_STEPS = [
 ]
 
 # Обработчик для шага "setup_pref"
-if state == "setup_pref":
+elif state == "setup_pref":
     try:
         pref = int(text)
         assert 1 <= pref <= 3
@@ -3023,8 +3023,57 @@ def router(message):
         return
 
     # Онбординг
+   
+    # Онбординг
     if state in [s[0] for s in ONBOARDING_STEPS]:
         handle_onboarding(cid, state, text, extra)
+        return
+
+    # Тренировка сегодня
+    if text in ("Тренировка сегодня", "🟢 Тренировка сегодня"):
+        profile = get_profile(cid)
+
+        if not profile:
+            bot.send_message(
+                cid,
+                "Сначала настрой профиль.",
+                reply_markup=main_menu(cid)
+            )
+            return
+
+        if profile.get("is_sick"):
+            bot.send_message(
+                cid,
+                "🤒 Ты болеешь — тренировки отменены.",
+                reply_markup=main_menu(cid)
+            )
+            return
+
+        workout_pref = profile.get("workout_pref", "50/50")
+
+        if workout_pref == "только зал":
+            workouts = GYM_ONLY_MENU
+        elif workout_pref == "50/50":
+            workouts = HOME_AND_GYM_MENU
+        else:
+            workouts = HOME_ONLY_MENU
+
+        m2 = types.ReplyKeyboardMarkup(
+            resize_keyboard=True,
+            row_width=2
+        )
+
+        for workout in workouts:
+            m2.add(types.KeyboardButton(workout))
+
+        m2.add(types.KeyboardButton("❌ Отмена"))
+
+        bot.send_message(
+            cid,
+            f"🏋️ *ТРЕНИРОВКИ {workout_pref}*\n\nВыбери тренировку:",
+            parse_mode="Markdown",
+            reply_markup=m2
+        )
         return
 
     # Если пользователь что-то пишет пока "спит" — напомнить
