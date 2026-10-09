@@ -2584,60 +2584,6 @@ ONBOARDING_STEPS = [
                        "0 — Нет ограничений"),
 ]
 
-# Обработчик для шага "setup_pref"
-elif state == "setup_pref":
-    try:
-        pref = int(text)
-        assert 1 <= pref <= 3
-        save_profile(
-            cid,
-            workout_pref={
-                "1": "только зал",
-                "2": "50/50",
-                "3": "только дома"
-            }.get(str(pref), "50/50")
-        )
-        set_state(cid, "setup_deadline")
-        bot.send_message(
-            cid,
-            "✅ *Тип тренировок установлен.*\n\nСледующий вопрос:",
-            parse_mode="Markdown"
-        )
-        bot.send_message(cid, ONBOARDING_STEPS[6][1], parse_mode="Markdown")
-    except Exception:
-        bot.send_message(cid, "Введи число от 1 до 3")
-
-# При нажатии "Тренировка сегодня"
-elif text == "Тренировка сегодня":
-    profile = get_profile(cid)
-    if not profile:
-        bot.send_message(cid, "Сначала настрой профиль.", reply_markup=main_menu(cid))
-        return
-    if profile.get("is_sick"):
-        bot.send_message(cid, "🤒 Ты болеешь — тренировки отменены.", reply_markup=main_menu(cid))
-        return
-
-    # Получаем предпочтения пользователя
-    workout_pref = profile.get("workout_pref", "50/50")
-
-    # Показываем только подходящие тренировки
-    if workout_pref == "только зал":
-        workouts = GYM_ONLY_MENU
-    elif workout_pref == "50/50":
-        workouts = HOME_AND_GYM_MENU
-    else:  # "только дома"
-        workouts = HOME_ONLY_MENU
-
-    m2 = types.ReplyKeyboardMarkup(resize_keyboard=True, row_width=2)
-    for workout in workouts:
-        m2.add(types.KeyboardButton(workout))
-    m2.add(types.KeyboardButton("❌ Отмена"))
-    bot.send_message(cid,
-        f"🏋️ *ТРЕНИРОВКИ {workout_pref}*\n\n"
-        "Выбери тренировку:",
-        parse_mode="Markdown",
-        reply_markup=m2)
-    
 def start_onboarding(cid, edit=False):
     prefix = "✏️ *Обновляем профиль!*\n\n" if edit else "👤 *Настройка профиля*\n\nОтвечай на вопросы по очереди.\n\n"
     set_state(cid, "setup_weight", extra="edit" if edit else "new")
@@ -2660,7 +2606,7 @@ def handle_onboarding(cid, state, text, extra):
             v=int(text); assert 1<=v<=5; save_profile(cid,gym_days=v)
         elif state == "setup_pref":
             assert text in ("1","2","3")
-            save_profile(cid,workout_pref={"1":"кардио","2":"силовые","3":"авто"}[text])
+            save_profile(cid,workout_pref={"1":"только зал","2":"50/50","3":"только дома"}[text])
         elif state == "setup_deadline":
             v=int(text); assert 1<=v<=104; save_profile(cid,deadline_weeks=v)
         elif state == "setup_home":
