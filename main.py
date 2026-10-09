@@ -3022,7 +3022,6 @@ def router(message):
         bot.send_message(cid, "Отменено.", reply_markup=main_menu(cid))
         return
 
-    # Онбординг
    
     # Онбординг
     if state in [s[0] for s in ONBOARDING_STEPS]:
