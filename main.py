@@ -2541,16 +2541,32 @@ def build_recipe_card(dish_name, profile=None):
 #  ОНБОРДИНГ
 # ─────────────────────────────────────────
 
+# Категории тренировок
+WORKOUT_CATEGORIES = {
+    "А": "только зал",  # Пример: "Грудь+Спина"
+    "Б": "можно и дома",  # Пример: "Ноги+Спина"
+    "ДА": "только дома",  # Пример: "Грудь+Кор"
+    "ДБ": "только дома",  # Пример: "Ноги+Спина"
+    "ДВ": "только дома",  # Пример: "Всё тело"
+    "ДК": "только дома",  # Пример: "Кардио дома"
+}
+
+# Меню для разных типов тренировок
+GYM_ONLY_MENU = [workout for workout, category in WORKOUT_CATEGORIES.items() if category == "только зал"]
+HOME_AND_GYM_MENU = [workout for workout, category in WORKOUT_CATEGORIES.items() if category == "можно и дома"]
+HOME_ONLY_MENU = [workout for workout, category in WORKOUT_CATEGORIES.items() if category == "только дома"]
+
+# Онбординг
 ONBOARDING_STEPS = [
     ("setup_weight",   "⚖️ Введи свой *текущий вес* (кг), например: `107`"),
     ("setup_target",   "🎯 Введи *желаемый вес* (кг), например: `92`"),
     ("setup_height",   "📏 Введи свой *рост* (см), например: `194`"),
     ("setup_age",      "🎂 Введи свой *возраст* (лет), например: `24`"),
     ("setup_gymdays",  "🏋️ Сколько дней в неделю готов ходить в зал?\nВведи число от 1 до 5"),
-    ("setup_pref",     "💬 Что тебе больше нравится в зале?\n\n"
-                       "1 — Кардио (эллипс, дорожка)\n"
-                       "2 — Силовые (тренажёры, веса)\n"
-                       "3 — Без разницы, пусть бот решает"),
+    ("setup_pref",     "💬 Какой тип тренировок тебе больше подходит?\n\n"
+                       "1 — Только в зале\n"
+                       "2 — 50/50 (комбинированные тренировки)\n"
+                       "3 — Только дома"),
     ("setup_deadline", "📅 За сколько *недель* хочешь достичь цели?\nНапример: `12` (3 месяца)"),
     ("setup_home",     "🏠 Готов ли ты иногда тренироваться *дома* (без похода в зал)?\n\n"
                        "1 — Да, иногда хочу тренироваться дома\n"
@@ -2568,6 +2584,49 @@ ONBOARDING_STEPS = [
                        "0 — Нет ограничений"),
 ]
 
+# Обработчик для шага "setup_pref"
+if state == "setup_pref":
+    try:
+        pref = int(text)
+        assert 1 <= pref <= 3
+        save_profile(cid, workout_pref={"1": "только зал", "2": "50/50", "3": "только дома"}.get(str(pref), "50/50"))
+        set_state(cid, "setup_deadline")
+        bot.send_message(cid, "✅ *Тип тренировок установлен.*\n\n"
+                              "Следующий вопрос:", parse_mode="Markdown")
+        bot.send_message(cid, ONBOARDING_STEPS[6][1], parse_mode="Markdown")
+    except Exception:
+        bot.send_message(cid, "Введи число от 1 до 3")
+
+# При нажатии "Тренировка сегодня"
+elif text == "Тренировка сегодня":
+    profile = get_profile(cid)
+    if not profile:
+        bot.send_message(cid, "Сначала настрой профиль.", reply_markup=main_menu(cid))
+        return
+    if profile.get("is_sick"):
+        bot.send_message(cid, "🤒 Ты болеешь — тренировки отменены.", reply_markup=main_menu(cid))
+        return
+
+    # Получаем предпочтения пользователя
+    workout_pref = profile.get("workout_pref", "50/50")
+
+    # Показываем только подходящие тренировки
+    if workout_pref == "только зал":
+        workouts = GYM_ONLY_MENU
+    elif workout_pref == "50/50":
+        workouts = HOME_AND_GYM_MENU
+    else:  # "только дома"
+        workouts = HOME_ONLY_MENU
+
+    m2 = types.ReplyKeyboardMarkup(resize_keyboard=True, row_width=2)
+    for workout in workouts:
+        m2.add(types.KeyboardButton(workout))
+    m2.add(types.KeyboardButton("❌ Отмена"))
+    bot.send_message(cid,
+        f"🏋️ *ТРЕНИРОВКИ {workout_pref}*\n\n"
+        "Выбери тренировку:",
+        parse_mode="Markdown",
+        reply_markup=m2)
 def start_onboarding(cid, edit=False):
     prefix = "✏️ *Обновляем профиль!*\n\n" if edit else "👤 *Настройка профиля*\n\nОтвечай на вопросы по очереди.\n\n"
     set_state(cid, "setup_weight", extra="edit" if edit else "new")
