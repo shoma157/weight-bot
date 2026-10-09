@@ -3024,11 +3024,12 @@ def router(message):
 
    
     # Онбординг
+
     if state in [s[0] for s in ONBOARDING_STEPS]:
         handle_onboarding(cid, state, text, extra)
         return
 
-    # Тренировка сегодня
+    # При нажатии «Тренировка сегодня»
     if text in ("Тренировка сегодня", "🟢 Тренировка сегодня"):
         profile = get_profile(cid)
 
