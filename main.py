@@ -64,6 +64,53 @@ KCAL_PER_100G = {
     "рис в пакете": 330,
     "куриные сосиски": 190,
     "куриные наггетсы запечённые": 195,
+    # Плов
+    "плов с курицей": 180,
+    "плов со свининой": 220,
+    "плов с говядиной": 200,
+    "плов с бараниной": 210,
+    # Милкшейки (протеиновые/низкокалорийные)
+    "протеиновый милкшейк ваниль": 95,
+    "протеиновый милкшейк шоколад": 100,
+    "протеиновый милкшейк клубника": 90,
+    "банановый милкшейк (без сахара)": 85,
+    "ягодный смузи": 65,
+    "зелёный смузи": 55,
+    # Супы
+    "куриный суп с овощами": 45,
+    "борщ без картофеля": 40,
+    "томатный суп": 35,
+    "суп из чечевицы": 95,
+    # Рыба (несмотря на личные предпочтения — для других пользователей)
+    "тунец консервированный": 96,
+    "лосось запечённый": 208,
+    "тилапия запечённая": 128,
+    # Дополнительные белки
+    "куриные яйца перепелиные": 168,
+    "творожная запеканка": 140,
+    "сырники из творога": 185,
+    "протеиновые оладьи": 155,
+    # Гарниры
+    "картофельное пюре": 83,
+    "запечённый картофель": 93,
+    "кускус": 376,
+    "полба": 338,
+    # Закуски и перекусы
+    "хумус": 177,
+    "рисовые хлебцы": 313,
+    "цельнозерновые хлебцы": 295,
+    "авокадо": 160,
+    "оливки": 145,
+    # Напитки
+    "кефир 1%": 40,
+    "ряженка 2.5%": 54,
+    "натуральный йогурт без сахара": 51,
+    # Молочные коктейли (растительные)
+    "миндальный молочный коктейль": 150,
+    "кокосовый молочный коктейль": 180,
+    "безлактозный молочный коктейль": 120,
+    "арахисовый молочный коктейль": 160,
+    "овсяный молочный коктейль": 110,
     # Новые блюда
     "куриный фарш": 143,
     "говяжий фарш": 254,
@@ -347,6 +394,21 @@ DEFAULT_PORTIONS = {
     "гречка в пакете": 80, "рис в пакете": 80,
     "куриские сосиски": 160, "куриные сосиски": 160,
     "куриные наггетсы запечённые": 200,
+    "плов с курицей": 300, "плов со свининой": 280, "плов с говядиной": 280, "плов с бараниной": 280,
+    "протеиновый милкшейк ваниль": 300, "протеиновый милкшейк шоколад": 300,
+    "протеиновый милкшейк клубника": 300, "банановый милкшейк (без сахара)": 300,
+    "ягодный смузи": 350, "зелёный смузи": 350,
+    "куриный суп с овощами": 400, "борщ без картофеля": 400,
+    "томатный суп": 400, "суп из чечевицы": 400,
+    "тунец консервированный": 185, "лосось запечённый": 180, "тилапия запечённая": 200,
+    "творожная запеканка": 200, "сырники из творога": 150, "протеиновые оладьи": 150,
+    "картофельное пюре": 200, "запечённый картофель": 200,
+    "кускус": 65, "полба": 65, "хумус": 80,
+    "рисовые хлебцы": 40, "цельнозерновые хлебцы": 40,
+    "авокадо": 100, "оливки": 50,
+    "кефир 1%": 250, "ряженка 2.5%": 250, "натуральный йогурт без сахара": 200,
+    "миндальный молочный коктейль": 300, "кокосовый молочный коктейль": 300,
+    "безлактозный молочный коктейль": 300, "арахисовый молочный коктейль": 300, "овсяный молочный коктейль": 300,
     # Фрукты расширенные
     "банан": 120, "апельсин": 150, "мандарин": 100, "грейпфрут": 200,
     "киви": 100, "манго": 150, "персик": 130, "слива": 100,
@@ -388,22 +450,6 @@ def find_group(food):
 
 ALL_CARD_PRODUCTS = set(FOOD_GROUPS.get("фрукты", [])) | set(FOOD_GROUPS.get("спортпит", []))
 
-# Добавляем новые молочные коктейли
-FOOD_GROUPS["спортпит"].append("Миндальный молочный коктейль")
-FOOD_GROUPS["спортпит"].append("Кокосовый молочный коктейль")
-FOOD_GROUPS["спортпит"].append("Безлактозный молочный коктейль")
-FOOD_GROUPS["спортпит"].append("Арахисовый молочный коктейль")
-FOOD_GROUPS["спортпит"].append("Овсяный молочный коктейль")
-
-# Обновляем информацию о калорийности
-KCAL_PER_100G.update({
-    "Миндальный молочный коктейль": 150,
-    "Кокосовый молочный коктейль": 180,
-    "Безлактозный молочный коктейль": 120,
-    "Арахисовый молочный коктейль": 160,
-    "Овсяный молочный коктейль": 110,
-})
-
 PRODUCT_CARDS = {
     "яблоко":    {"emoji":"🍎","gi":"низкий (36)","protein":"0.3г","best_time":"Полдник, до 19:00","tip":"Пектин замедляет усвоение сахара. Лучший выбор для похудения.","warn":""},
     "банан":     {"emoji":"🍌","gi":"средний (51)","protein":"1.1г","best_time":"До/после тренировки, утром","tip":"Быстрое восстановление после нагрузки. Калий защищает мышцы от судорог.","warn":"⚠️ Не вечером — высокий ГИ поднимет инсулин перед сном."},
@@ -434,55 +480,6 @@ PRODUCT_CARDS = {
     "протеин сывороточный (порция 30г)": {"emoji":"🥤","gi":"низкий","protein":"~23г/порц.","best_time":"После тренировки, утром","tip":"Быстрое усвоение — идеально после зала.","warn":"✅ На воде или миндальном молоке."},
     "протеин казеиновый (порция 30г)":   {"emoji":"🥛","gi":"низкий","protein":"~24г/порц.","best_time":"Перед сном","tip":"Медленное усвоение — питает мышцы всю ночь.","warn":"✅ Лучший выбор на ночь."},
     "высокобелковый творог (0%)":        {"emoji":"🧀","gi":"низкий","protein":"~18г/100г","best_time":"Завтрак, перед сном","tip":"Казеиновый белок — медленное усвоение.","warn":"⚠️ Уточни переносимость лактозы."},
-       "Миндальный молочный коктейль": {
-        "emoji": "🥛",
-        "ingredients": "200 мл миндального молока + 1 банан",
-        "kcal": 200,
-        "protein": 5,
-        "carbs": 20,
-        "fat": 10,
-        "portion": "1 порция (~300 мл)",
-    },
-
-    "Кокосовый молочный коктейль": {
-        "emoji": "🥥",
-        "ingredients": "200 мл кокосового молока + 1 банан",
-        "kcal": 220,
-        "protein": 3,
-        "carbs": 15,
-        "fat": 15,
-        "portion": "1 порция (~300 мл)",
-    },
-
-    "Безлактозный молочный коктейль": {
-        "emoji": "🥛",
-        "ingredients": "200 мл безлактозного молока + 1 банан",
-        "kcal": 180,
-        "protein": 8,
-        "carbs": 12,
-        "fat": 8,
-        "portion": "1 порция (~300 мл)",
-    },
-
-    "Арахисовый молочный коктейль": {
-        "emoji": "🥜",
-        "ingredients": "200 мл арахисового молока + 1 банан",
-        "kcal": 210,
-        "protein": 7,
-        "carbs": 18,
-        "fat": 12,
-        "portion": "1 порция (~300 мл)",
-    },
-
-    "Овсяный молочный коктейль": {
-        "emoji": "🥛",
-        "ingredients": "200 мл овсяного молока + 1 банан",
-        "kcal": 190,
-        "protein": 4,
-        "carbs": 28,
-        "fat": 5,
-        "portion": "1 порция (~300 мл)",
-    },
 }
 
 def build_product_card(name, profile=None):
@@ -2191,6 +2188,76 @@ def build_weekly_report(uid):
 #  РЕЦЕПТЫ НОВЫХ БЛЮД
 # ─────────────────────────────────────────
 
+# ─────────────────────────────────────────
+#  УМНЫЙ ВЫБОР БЛЮДА ПО КАЛОРАЖУ
+# ─────────────────────────────────────────
+
+SMART_MENU_CATEGORIES = {
+    "🍳 Завтраки": [
+        "овсяная каша на воде","омлет (2 яйца)","протеиновые оладьи",
+        "творожная запеканка","сырники из творога","яичница (2 яйца)",
+        "протеиновый милкшейк ваниль","протеиновый милкшейк шоколад",
+        "банановый милкшейк (без сахара)","ягодный смузи","зелёный смузи",
+    ],
+    "🍗 Обеды": [
+        "куриная грудка отварная","куриное бедро запечённое",
+        "говядина тушёная","индейка запечённая","тефтели куриные домашние",
+        "плов с курицей","плов с говядиной","плов с бараниной",
+        "куриный суп с овощами","борщ без картофеля","томатный суп",
+        "гречневая каша","бурый рис отварной","картофельное пюре",
+        "кускус","полба",
+    ],
+    "🥗 Ужины": [
+        "куриная грудка отварная","говядина тушёная","индейка запечённая",
+        "тунец консервированный","тилапия запечённая","лосось запечённый",
+        "стручковая фасоль","брокколи отварная","цветная капуста",
+        "овощи тушёные","греческий салат",
+    ],
+    "🍎 Перекусы": [
+        "творог 5%","кефир 1%","натуральный йогурт без сахара","ряженка 2.5%",
+        "яблоко","банан","апельсин","груша","черника","клубника",
+        "миндаль","грецкие орехи","рисовые хлебцы","цельнозерновые хлебцы",
+        "авокадо","хумус","протеиновый батончик",
+    ],
+    "🍝 Гарниры": [
+        "гречневая каша","бурый рис отварной","макароны цельнозерновые",
+        "картофельное пюре","запечённый картофель","кускус","полба",
+        "овощи тушёные","брокколи отварная","стручковая фасоль",
+    ],
+    "🥤 Напитки и смузи": [
+        "протеиновый милкшейк ваниль","протеиновый милкшейк шоколад",
+        "протеиновый милкшейк клубника","банановый милкшейк (без сахара)",
+        "ягодный смузи","зелёный смузи","кефир 1%","ряженка 2.5%",
+        "натуральный йогурт без сахара",
+    ],
+}
+
+def calc_smart_portion(food_name, target_kcal):
+    """Считает порцию блюда под заданный калораж"""
+    kcal_per_100 = KCAL_PER_100G.get(food_name)
+    if not kcal_per_100 or kcal_per_100 == 0:
+        return None, None
+    grams = round((target_kcal / kcal_per_100) * 100)
+    grams = max(50, min(grams, 600))  # Ограничение разумной порции
+    actual_kcal = round(grams * kcal_per_100 / 100)
+    return grams, actual_kcal
+
+def build_smart_food_menu(category=None):
+    """Строит меню выбора блюда"""
+    m = types.ReplyKeyboardMarkup(resize_keyboard=True, row_width=2)
+    if category is None:
+        for cat in SMART_MENU_CATEGORIES:
+            m.add(types.KeyboardButton(cat))
+        m.add(types.KeyboardButton("❌ Отмена"))
+    else:
+        foods = SMART_MENU_CATEGORIES.get(category, [])
+        for food in foods:
+            m.add(types.KeyboardButton(f"🍴 {food}"))
+        m.add(types.KeyboardButton("◀️ Назад к категориям"))
+        m.add(types.KeyboardButton("❌ Отмена"))
+    return m
+
+
 RECIPES = {
     "макароны с куриным фаршем": {
         "emoji": "🍝",
@@ -2541,32 +2608,16 @@ def build_recipe_card(dish_name, profile=None):
 #  ОНБОРДИНГ
 # ─────────────────────────────────────────
 
-# Категории тренировок
-WORKOUT_CATEGORIES = {
-    "А": "только зал",  # Пример: "Грудь+Спина"
-    "Б": "можно и дома",  # Пример: "Ноги+Спина"
-    "ДА": "только дома",  # Пример: "Грудь+Кор"
-    "ДБ": "только дома",  # Пример: "Ноги+Спина"
-    "ДВ": "только дома",  # Пример: "Всё тело"
-    "ДК": "только дома",  # Пример: "Кардио дома"
-}
-
-# Меню для разных типов тренировок
-GYM_ONLY_MENU = [workout for workout, category in WORKOUT_CATEGORIES.items() if category == "только зал"]
-HOME_AND_GYM_MENU = [workout for workout, category in WORKOUT_CATEGORIES.items() if category == "можно и дома"]
-HOME_ONLY_MENU = [workout for workout, category in WORKOUT_CATEGORIES.items() if category == "только дома"]
-
-# Онбординг
 ONBOARDING_STEPS = [
     ("setup_weight",   "⚖️ Введи свой *текущий вес* (кг), например: `107`"),
     ("setup_target",   "🎯 Введи *желаемый вес* (кг), например: `92`"),
     ("setup_height",   "📏 Введи свой *рост* (см), например: `194`"),
     ("setup_age",      "🎂 Введи свой *возраст* (лет), например: `24`"),
     ("setup_gymdays",  "🏋️ Сколько дней в неделю готов ходить в зал?\nВведи число от 1 до 5"),
-    ("setup_pref",     "💬 Какой тип тренировок тебе больше подходит?\n\n"
-                       "1 — Только в зале\n"
-                       "2 — 50/50 (комбинированные тренировки)\n"
-                       "3 — Только дома"),
+    ("setup_pref",     "💬 Что тебе больше нравится в зале?\n\n"
+                       "1 — Кардио (эллипс, дорожка)\n"
+                       "2 — Силовые (тренажёры, веса)\n"
+                       "3 — Без разницы, пусть бот решает"),
     ("setup_deadline", "📅 За сколько *недель* хочешь достичь цели?\nНапример: `12` (3 месяца)"),
     ("setup_home",     "🏠 Готов ли ты иногда тренироваться *дома* (без похода в зал)?\n\n"
                        "1 — Да, иногда хочу тренироваться дома\n"
@@ -2606,7 +2657,7 @@ def handle_onboarding(cid, state, text, extra):
             v=int(text); assert 1<=v<=5; save_profile(cid,gym_days=v)
         elif state == "setup_pref":
             assert text in ("1","2","3")
-            save_profile(cid,workout_pref={"1":"только зал","2":"50/50","3":"только дома"}[text])
+            save_profile(cid,workout_pref={"1":"кардио","2":"силовые","3":"авто"}[text])
         elif state == "setup_deadline":
             v=int(text); assert 1<=v<=104; save_profile(cid,deadline_weeks=v)
         elif state == "setup_home":
@@ -2673,6 +2724,7 @@ def main_menu(uid=None):
         types.KeyboardButton("🟢 Тренировка сегодня"),
         types.KeyboardButton("✅ Тренировка завершена"),
         types.KeyboardButton("🍽️ Рацион сегодня"),
+        types.KeyboardButton("🍴 Выбрать блюдо"),
         types.KeyboardButton("📅 Рацион на завтра"),
         types.KeyboardButton("🥩 Полуфабрикаты"),
         types.KeyboardButton("🍕 Читмил"),
@@ -2925,101 +2977,19 @@ def handle_document(message):
 
 ADMIN_UID = None  # Установи свой Telegram ID для получения уведомлений об ошибках
 
-def build_product_menu(uid):
-    """Строит меню выбора продуктов с учётом калорийности."""
-    profile = get_profile(uid)
-    plan = get_user_plan(uid, profile)
-    current_calories = get_kcal_today(uid) or 0
-    remaining_calories = plan["calories"] - current_calories
-
-    # Строим меню
-    m2 = types.ReplyKeyboardMarkup(resize_keyboard=True, row_width=2)
-    for group in FOOD_GROUPS:
-        for product in FOOD_GROUPS[group]:
-            m2.add(types.KeyboardButton(product))
-    m2.add(types.KeyboardButton("❌ Отмена"))
-
-    bot.send_message(
-        uid,
-        f"Выбери продукт для замены. Осталось *{remaining_calories} ккал* на сегодня.",
-        parse_mode="Markdown",
-        reply_markup=m2
-    )
-
 @bot.message_handler(func=lambda m: True)
 def router(message):
-    cid = message.chat.id
+    cid  = message.chat.id
     text = message.text.strip() if message.text else ""
     state, extra = get_state(cid)
-
-    if text == "📖 Карточки молочных коктейлей":
-        bot.send_message(
-            cid,
-            "📖 *КАРТОЧКИ МОЛОЧНЫХ КОКТЕЙЛЕЙ*\n\n"
-            "Выбери молочный коктейль — получишь подробную "
-            "информацию о составе, калорийности и порции:",
-            parse_mode="Markdown",
-            reply_markup=main_menu(cid)
-        )
-        return
-    
     if text == "❌ Отмена":
         set_state(cid, "idle")
         bot.send_message(cid, "Отменено.", reply_markup=main_menu(cid))
         return
 
-   
     # Онбординг
-
     if state in [s[0] for s in ONBOARDING_STEPS]:
         handle_onboarding(cid, state, text, extra)
-        return
-
-    # При нажатии «Тренировка сегодня»
-    if text in ("Тренировка сегодня", "🟢 Тренировка сегодня"):
-        profile = get_profile(cid)
-
-        if not profile:
-            bot.send_message(
-                cid,
-                "Сначала настрой профиль.",
-                reply_markup=main_menu(cid)
-            )
-            return
-
-        if profile.get("is_sick"):
-            bot.send_message(
-                cid,
-                "🤒 Ты болеешь — тренировки отменены.",
-                reply_markup=main_menu(cid)
-            )
-            return
-
-        workout_pref = profile.get("workout_pref", "50/50")
-
-        if workout_pref == "только зал":
-            workouts = GYM_ONLY_MENU
-        elif workout_pref == "50/50":
-            workouts = HOME_AND_GYM_MENU
-        else:
-            workouts = HOME_ONLY_MENU
-
-        m2 = types.ReplyKeyboardMarkup(
-            resize_keyboard=True,
-            row_width=2
-        )
-
-        for workout in workouts:
-            m2.add(types.KeyboardButton(workout))
-
-        m2.add(types.KeyboardButton("❌ Отмена"))
-
-        bot.send_message(
-            cid,
-            f"🏋️ *ТРЕНИРОВКИ {workout_pref}*\n\nВыбери тренировку:",
-            parse_mode="Markdown",
-            reply_markup=m2
-        )
         return
 
     # Если пользователь что-то пишет пока "спит" — напомнить
@@ -3380,6 +3350,63 @@ def router(message):
         except Exception:
             bot.send_message(cid, "Введи цифры через запятую (например: 1,3) или 0",
                              parse_mode="Markdown")
+        return
+
+    # ── Умный выбор: категория ──
+    if state == "smart_food_category":
+        if text in SMART_MENU_CATEGORIES:
+            set_state(cid, "smart_food_pick", extra=text)
+            bot.send_message(cid,
+                f"🍴 *{text}*\n\nВыбери блюдо:",
+                parse_mode="Markdown", reply_markup=build_smart_food_menu(text))
+        elif text == "❌ Отмена":
+            set_state(cid, "idle")
+            bot.send_message(cid, "Отменено.", reply_markup=main_menu(cid))
+        else:
+            bot.send_message(cid, "Выбери категорию из кнопок.", reply_markup=build_smart_food_menu())
+        return
+
+    # ── Умный выбор: блюдо ──
+    if state == "smart_food_pick":
+        category = extra or ""
+        if text == "◀️ Назад к категориям":
+            set_state(cid, "smart_food_category")
+            bot.send_message(cid, "Выбери категорию:", reply_markup=build_smart_food_menu())
+            return
+        if text == "❌ Отмена":
+            set_state(cid, "idle")
+            bot.send_message(cid, "Отменено.", reply_markup=main_menu(cid))
+            return
+        # Текст кнопки: "🍴 блюдо"
+        food_name = text[2:].strip() if text.startswith("🍴 ") else text
+        profile = get_profile(cid)
+        if not profile:
+            bot.send_message(cid, "Сначала заполни профиль.", reply_markup=main_menu(cid))
+            set_state(cid, "idle"); return
+        # Считаем остаток калорий на день
+        ration_kcal = profile.get("ration_kcal") or 0
+        if not ration_kcal:
+            from_plan = build_ration(cid)
+            # Оцениваем ~ 30% суточного на один приём
+            target_kcal = round((profile.get("tdee", 2200) * 0.85) * 0.3)
+        else:
+            target_kcal = round(ration_kcal * 0.3)
+        target_kcal = max(200, min(target_kcal, 700))
+        grams, actual_kcal = calc_smart_portion(food_name, target_kcal)
+        if grams is None:
+            bot.send_message(cid,
+                f"⚠️ Не могу рассчитать — нет данных о калорийности *{food_name}*.",
+                parse_mode="Markdown", reply_markup=main_menu(cid))
+            set_state(cid, "idle"); return
+        # Белки / жиры / углеводы (примерные)
+        macro_line = ""
+        set_state(cid, "idle")
+        bot.send_message(cid,
+            f"🍴 *{food_name.capitalize()}*\n\n"
+            f"📏 Порция: *{grams} г*\n"
+            f"🔥 Калорийность: *{actual_kcal} ккал*{macro_line}\n\n"
+            f"_Порция рассчитана под твой суточный калораж (~30% от нормы приёма пищи)_",
+            parse_mode="Markdown", reply_markup=main_menu(cid))
         return
 
     if state == "waiting_water":
@@ -4634,6 +4661,13 @@ def router(message):
         dish = text[2:]
         card = build_recipe_card(dish, get_profile(cid))
         bot.send_message(cid, card, parse_mode="Markdown", reply_markup=main_menu(cid))
+
+    # ── Умный выбор блюда ──
+    elif text == "🍴 Выбрать блюдо":
+        set_state(cid, "smart_food_category")
+        bot.send_message(cid,
+            "🍴 *УМНЫЙ ВЫБОР БЛЮДА*\n\nВыбери категорию — я сам рассчитаю порцию под твой калораж:",
+            parse_mode="Markdown", reply_markup=build_smart_food_menu())
 
     else:
         bot.send_message(cid,"Используй кнопки меню.",reply_markup=main_menu(cid))
