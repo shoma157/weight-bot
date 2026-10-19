@@ -2604,6 +2604,26 @@ def build_recipe_card(dish_name, profile=None):
         f"{r['tip']}{health_warn}"
     )
 
+
+def get_ration_recipe_buttons(ration_text):
+    """Ищет в тексте рациона блюда из RECIPES и возвращает inline-кнопки"""
+    buttons = []
+    for dish in RECIPES:
+        if dish.lower() in ration_text.lower():
+            buttons.append(dish)
+    return buttons[:8]  # максимум 8 кнопок
+
+def ration_recipe_inline(ration_text):
+    """Строит InlineKeyboardMarkup с рецептами из рациона"""
+    dishes = get_ration_recipe_buttons(ration_text)
+    if not dishes:
+        return None
+    kb = types.InlineKeyboardMarkup(row_width=2)
+    for dish in dishes:
+        short = dish[:28] + "…" if len(dish) > 28 else dish
+        kb.add(types.InlineKeyboardButton(f"📖 {short}", callback_data=f"recipe:{dish}"))
+    return kb
+
 # ─────────────────────────────────────────
 #  ОНБОРДИНГ
 # ─────────────────────────────────────────
@@ -2725,6 +2745,7 @@ def main_menu(uid=None):
         types.KeyboardButton("✅ Тренировка завершена"),
         types.KeyboardButton("🍽️ Рацион сегодня"),
         types.KeyboardButton("🍴 Выбрать блюдо"),
+        types.KeyboardButton("📊 Дневник питания"),
         types.KeyboardButton("📅 Рацион на завтра"),
         types.KeyboardButton("🥩 Полуфабрикаты"),
         types.KeyboardButton("🍕 Читмил"),
@@ -2976,6 +2997,71 @@ def handle_document(message):
     bot.send_message(cid, report, parse_mode="Markdown", reply_markup=main_menu(cid))
 
 ADMIN_UID = None  # Установи свой Telegram ID для получения уведомлений об ошибках
+
+
+@bot.callback_query_handler(func=lambda call: True)
+def handle_callback(call):
+    cid = call.message.chat.id
+    data = call.data
+
+    # ── Открытие рецепта из рациона ──
+    if data.startswith("recipe:"):
+        dish = data[7:]
+        card = build_recipe_card(dish, get_profile(cid))
+        if card:
+            kb_inline = types.InlineKeyboardMarkup()
+            kb_inline.add(
+                types.InlineKeyboardButton("➕ Добавить в дневник", callback_data=f"add_to_diary:{dish}"),
+                types.InlineKeyboardButton("✅ Понятно", callback_data="close"),
+            )
+            bot.answer_callback_query(call.id)
+            bot.send_message(cid, card, parse_mode="Markdown", reply_markup=kb_inline)
+        else:
+            bot.answer_callback_query(call.id, "Рецепт не найден")
+
+    # ── Добавить в дневник питания ──
+    elif data.startswith("add_to_diary:"):
+        dish = data[13:]
+        kcal = KCAL_PER_100G.get(dish, 0)
+        portion = DEFAULT_PORTIONS.get(dish, 100)
+        kcal_portion = round(kcal * portion / 100)
+        # Логируем в базу как приём пищи
+        today = now_samara().strftime("%Y-%m-%d")
+        conn = sqlite3.connect(DB_PATH)
+        c = conn.cursor()
+        c.execute("CREATE TABLE IF NOT EXISTS food_diary (uid INTEGER, date TEXT, food TEXT, grams INTEGER, kcal INTEGER)")
+        c.execute("INSERT INTO food_diary VALUES (?,?,?,?,?)", (cid, today, dish, portion, kcal_portion))
+        conn.commit(); conn.close()
+        bot.answer_callback_query(call.id, f"✅ {dish} добавлено в дневник!")
+        bot.send_message(cid,
+            f"✅ *{dish.capitalize()}* добавлено в дневник питания\n\n"
+            f"📏 Порция: *{portion} г* | 🔥 *{kcal_portion} ккал*\n\n"
+            f"_Нажми «📊 Дневник питания» чтобы увидеть итог за день_",
+            parse_mode="Markdown", reply_markup=main_menu(cid))
+
+    # ── Открыть рацион ──
+    elif data == "open_ration":
+        bot.answer_callback_query(call.id)
+        profile = get_profile(cid)
+        if not profile:
+            bot.send_message(cid, "Сначала настрой профиль."); return
+        ration, cal = build_ration(cid)
+        ration_kb = ration_recipe_inline(ration)
+        bot.send_message(cid,
+            f"🍽️ *РАЦИОН НА СЕГОДНЯ*\n─────────────\n{ration}",
+            parse_mode="Markdown",
+            reply_markup=ration_kb if ration_kb else main_menu(cid))
+        if ration_kb:
+            bot.send_message(cid, "⬆️ Рецепты из рациона:", reply_markup=main_menu(cid))
+
+    # ── Закрыть ──
+    elif data == "close":
+        bot.answer_callback_query(call.id, "Ок!")
+        try: bot.delete_message(cid, call.message.message_id)
+        except: pass
+
+    else:
+        bot.answer_callback_query(call.id)
 
 @bot.message_handler(func=lambda m: True)
 def router(message):
@@ -3708,10 +3794,15 @@ def router(message):
         label=("🤒 Режим болезни" if profile.get("is_sick") else
                "📈 Порции увеличены" if a and a["cal_change"]>0 else
                "📉 Порции снижены" if a and a["cal_change"]<0 else "✅ Стандартный рацион")
+        ration_kb = ration_recipe_inline(ration)
+        extra_hint = "\n💡 Нажми на кнопку ниже чтобы открыть рецепт нужного блюда 👇" if ration_kb else ""
         bot.send_message(cid,
             f"🍽️ *РАЦИОН НА СЕГОДНЯ*\n{label}\n─────────────\n{ration}\n\n"
-            "💡 Для замены нажми «🔄 Заменить блюдо»",
-            parse_mode="Markdown")
+            f"💡 Для замены нажми «🔄 Заменить блюдо»{extra_hint}",
+            parse_mode="Markdown",
+            reply_markup=ration_kb if ration_kb else main_menu(cid))
+        if ration_kb:
+            bot.send_message(cid, "⬆️ Рецепты блюд из твоего рациона:", reply_markup=main_menu(cid))
 
     elif text=="📅 Рацион на завтра":
         profile=get_profile(cid)
@@ -4660,7 +4751,57 @@ def router(message):
     elif text.startswith("📖 ") and text[2:] in RECIPES:
         dish = text[2:]
         card = build_recipe_card(dish, get_profile(cid))
-        bot.send_message(cid, card, parse_mode="Markdown", reply_markup=main_menu(cid))
+        kb_inline = types.InlineKeyboardMarkup()
+        kb_inline.add(
+            types.InlineKeyboardButton("➕ Добавить в дневник питания", callback_data=f"add_to_diary:{dish}"),
+            types.InlineKeyboardButton("🍽️ Открыть рацион", callback_data="open_ration"),
+        )
+        bot.send_message(cid, card, parse_mode="Markdown", reply_markup=kb_inline)
+        bot.send_message(cid, "⬆️ Что сделать с этим блюдом?", reply_markup=main_menu(cid))
+
+    # ── Дневник питания ──
+    elif text == "📊 Дневник питания":
+        today = now_samara().strftime("%Y-%m-%d")
+        conn = sqlite3.connect(DB_PATH)
+        c = conn.cursor()
+        c.execute("CREATE TABLE IF NOT EXISTS food_diary (uid INTEGER, date TEXT, food TEXT, grams INTEGER, kcal INTEGER)")
+        c.execute("SELECT food, grams, kcal FROM food_diary WHERE uid=? AND date=? ORDER BY rowid", (cid, today))
+        rows = c.fetchall()
+        conn.close()
+        if not rows:
+            # Показываем рацион как план + предложение добавить
+            ration, cal = build_ration(cid)
+            ration_kb = ration_recipe_inline(ration)
+            bot.send_message(cid,
+                "📊 *ДНЕВНИК ПИТАНИЯ*\n\nСегодня ещё ничего не записано.\n\n"
+                "📋 _Открой рецепт любого блюда и нажми «➕ Добавить в дневник»_\n"
+                "или выбери из рациона ниже:",
+                parse_mode="Markdown")
+            bot.send_message(cid,
+                f"🍽️ *Рацион на сегодня:*\n{ration}",
+                parse_mode="Markdown",
+                reply_markup=ration_kb if ration_kb else main_menu(cid))
+            if ration_kb:
+                bot.send_message(cid, "⬆️ Нажми на блюдо для рецепта и добавления:", reply_markup=main_menu(cid))
+        else:
+            total_kcal = sum(r[2] for r in rows)
+            profile = get_profile(cid)
+            day_norm = profile.get("ration_kcal", 0) if profile else 0
+            if not day_norm and profile:
+                plan = get_user_plan(cid, profile)
+                day_norm = plan.get("calories", 2000)
+            remain = day_norm - total_kcal if day_norm else 0
+            lines = "\n".join(f"• {r[0]} — {r[1]}г / {r[2]} ккал" for r in rows)
+            remain_str = f"\n\n🎯 Осталось: *{remain} ккал* из *{day_norm}*" if day_norm else ""
+            bar_filled = min(10, round(total_kcal / day_norm * 10)) if day_norm else 0
+            bar = "🟩" * bar_filled + "⬜" * (10 - bar_filled)
+            bot.send_message(cid,
+                f"📊 *ДНЕВНИК ПИТАНИЯ — СЕГОДНЯ*\n\n"
+                f"{lines}\n\n"
+                f"─────────────\n"
+                f"🔥 Итого: *{total_kcal} ккал*{remain_str}\n"
+                f"{bar}",
+                parse_mode="Markdown", reply_markup=main_menu(cid))
 
     # ── Умный выбор блюда ──
     elif text == "🍴 Выбрать блюдо":
