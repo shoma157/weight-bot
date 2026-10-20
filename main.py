@@ -3946,6 +3946,13 @@ def router(message):
     #  КНОПКИ МЕНЮ
     # ════════════════════════════════════════
 
+    # Если осталось какое-то незавершённое состояние — не обрабатываем как кнопку
+    if state not in ("idle", None, ""):
+        bot.send_message(cid,
+            "⚠️ Я жду твоего ввода. Нажми *«❌ Отмена»* чтобы выйти.",
+            parse_mode="Markdown", reply_markup=cancel_menu())
+        return
+
     # Болезнь
     if text=="🤒 Я заболел":
         save_profile(cid,is_sick=1,sick_since=now_samara().strftime("%Y-%m-%d"),fatigue=0)
