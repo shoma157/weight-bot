@@ -4496,33 +4496,67 @@ def router(message):
                 for k in new_ach:
                     bot.send_message(cid, f"🎉 *{ACHIEVEMENTS[k]['emoji']} {ACHIEVEMENTS[k]['name']}!*\n{ACHIEVEMENTS[k]['desc']}", parse_mode="Markdown")
             wd = get_weights(cid); profile = get_profile(cid)
-            target = profile["target_weight"] if profile else 92.0
-            loss   = round(wd[0][0]-w,2); remain = round(w-target,1)
-            pct    = round((wd[0][0]-w)/(wd[0][0]-target)*100,1) if wd[0][0]!=target else 100.0
+            target = profile["target_weight"] if profile else 70.0
+
+            # wd отсортирован ASC (старые первые), последний элемент — только что добавленный
+            start_w = wd[0][0] if wd else w
+            loss = round(start_w - w, 2)
+            remain = round(w - target, 1)
+            try:
+                pct = round((start_w - w) / (start_w - target) * 100, 1) if start_w != target else 100.0
+            except ZeroDivisionError:
+                pct = 0.0
+
+            # Иконка тренда
+            if len(wd) >= 2:
+                prev_w = wd[-2][0]
+                diff = round(w - prev_w, 2)
+                if diff < -0.1:
+                    trend = f"📉 -{abs(diff)} кг с прошлого раза"
+                elif diff > 0.1:
+                    trend = f"📈 +{diff} кг с прошлого раза"
+                else:
+                    trend = "➡️ Вес не изменился"
+            else:
+                trend = "🆕 Первая запись"
+
             resp = (f"✅ Вес *{w} кг* сохранён! ({now_samara().strftime('%d.%m.%Y')})\n\n"
-                    f"📉 Сброшено: *{loss} кг* | До цели: *{remain} кг* | Прогресс: *{pct}%*")
-            if len(wd)>=2:
-                a=analyze_progress(wd)
+                    f"{trend}\n"
+                    f"📉 Сброшено всего: *{loss} кг*\n"
+                    f"🎯 До цели: *{remain} кг* ({pct}%)")
+
+            if len(wd) >= 2:
+                a = analyze_progress(wd)
                 if a:
-                    resp+=f"\n\n─────────────\n🤖 {a['advice']}"
-                    if a["cal_change"]!=0:
-                        d="увеличен" if a["cal_change"]>0 else "снижен"
-                        resp+=f"\n📋 Рацион {d} на *{abs(a['cal_change'])} ккал*."
+                    resp += f"\n\n─────────────\n🤖 {a['advice']}"
+                    if a["cal_change"] != 0:
+                        d = "увеличен" if a["cal_change"] > 0 else "снижен"
+                        resp += f"\n📋 Рацион {d} на *{abs(a['cal_change'])} ккал*."
+
             # Мотивационная цитата
             quote = random.choice(MOTIVATIONAL_QUOTES)
             resp += f"\n\n{quote}"
+
             # Прогноз даты цели
-            prediction = predict_goal_date(wd, target)
-            if prediction:
-                resp += (f"\n\n📅 *Прогноз:* при темпе {prediction['rate_week']} кг/нед — "
-                         f"цель *{prediction['date']}* (≈{prediction['weeks']} нед.)")
-            # Новые ачивки из нашей системы
-            new_ach2 = check_and_unlock_achievements(cid)
+            try:
+                prediction = predict_goal_date(wd, target)
+                if prediction:
+                    resp += (f"\n\n📅 *Прогноз:* при темпе {prediction['rate_week']} кг/нед — "
+                             f"цель *{prediction['date']}* (≈{prediction['weeks']} нед.)")
+            except Exception:
+                pass
+
+            # Новые ачивки
+            try:
+                new_ach2 = check_and_unlock_achievements(cid)
+            except Exception:
+                new_ach2 = []
+
             bot.send_message(cid, resp, parse_mode="Markdown", reply_markup=main_menu(cid))
             for name, desc, _ in new_ach2:
                 bot.send_message(cid, f"🎉 *Новая ачивка: {name}!*\n_{desc}_", parse_mode="Markdown")
-        except Exception:
-            bot.send_message(cid, "Введи число, например: 105.7")
+        except Exception as e:
+            bot.send_message(cid, f"Введи число, например: 105.7")
         return
 
     # Ввод шагов
