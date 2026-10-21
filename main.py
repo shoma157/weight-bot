@@ -5027,75 +5027,104 @@ def router(message):
     # Ввод веса
     if state == "waiting_weight":
         try:
-            w = float(text.replace(",",".")); assert 30<w<300
-            add_weight(cid, w); save_profile(cid, current_weight=w)
-            set_state(cid, "idle")
+            w = float(text.replace(",", "."))
+            if not (30 < w < 300):
+                raise ValueError("out of range")
+        except Exception:
+            bot.send_message(cid, "Введи число, например: *105.7*", parse_mode="Markdown")
+            return
+
+        # Сохраняем
+        add_weight(cid, w)
+        save_profile(cid, current_weight=w)
+        set_state(cid, "idle")
+
+        # Обновляем стрик
+        try:
+            update_streak(cid)
+        except Exception:
+            pass
+
+        # Ачивки (старая система)
+        try:
             new_ach = check_and_unlock(cid)
             if new_ach:
                 for k in new_ach:
-                    bot.send_message(cid, f"🎉 *{ACHIEVEMENTS[k]['emoji']} {ACHIEVEMENTS[k]['name']}!*\n{ACHIEVEMENTS[k]['desc']}", parse_mode="Markdown")
-            wd = get_weights(cid); profile = get_profile(cid)
-            target = profile["target_weight"] if profile else 70.0
+                    a_info = ACHIEVEMENTS.get(k, {})
+                    bot.send_message(cid,
+                        f"🎉 *{a_info.get('emoji','')} {a_info.get('name','Ачивка')}!*\n{a_info.get('desc','')}",
+                        parse_mode="Markdown")
+        except Exception:
+            pass
 
-            # wd отсортирован ASC (старые первые), последний элемент — только что добавленный
-            start_w = wd[0][0] if wd else w
-            loss = round(start_w - w, 2)
-            remain = round(w - target, 1)
-            try:
-                pct = round((start_w - w) / (start_w - target) * 100, 1) if start_w != target else 100.0
-            except ZeroDivisionError:
-                pct = 0.0
+        wd = get_weights(cid)
+        profile = get_profile(cid)
+        target = (profile.get("target_weight") or 70.0) if profile else 70.0
 
-            # Иконка тренда
-            if len(wd) >= 2:
-                prev_w = wd[-2][0]
-                diff = round(w - prev_w, 2)
-                if diff < -0.1:
-                    trend = f"📉 -{abs(diff)} кг с прошлого раза"
-                elif diff > 0.1:
-                    trend = f"📈 +{diff} кг с прошлого раза"
-                else:
-                    trend = "➡️ Вес не изменился"
+        # Начальный вес
+        start_w = wd[0][0] if wd else w
+        loss = round(start_w - w, 2)
+        remain = round(w - target, 1)
+        try:
+            pct = round((start_w - w) / (start_w - target) * 100, 1) if abs(start_w - target) > 0.01 else 100.0
+        except Exception:
+            pct = 0.0
+
+        # Тренд
+        if len(wd) >= 2:
+            prev_w = wd[-2][0]
+            diff = round(w - prev_w, 2)
+            if diff < -0.05:
+                trend = f"📉 {abs(diff)} кг меньше, чем в прошлый раз"
+            elif diff > 0.05:
+                trend = f"📈 +{diff} кг больше, чем в прошлый раз"
             else:
-                trend = "🆕 Первая запись"
+                trend = "➡️ Вес не изменился с прошлого раза"
+        else:
+            trend = "🆕 Первая запись веса"
 
-            resp = (f"✅ Вес *{w} кг* сохранён! ({now_samara().strftime('%d.%m.%Y')})\n\n"
-                    f"{trend}\n"
-                    f"📉 Сброшено всего: *{loss} кг*\n"
-                    f"🎯 До цели: *{remain} кг* ({pct}%)")
+        resp = (f"✅ Вес *{w} кг* сохранён! ({now_samara().strftime('%d.%m.%Y')})\n\n"
+                f"{trend}\n"
+                f"📉 Сброшено от старта: *{loss} кг*\n"
+                f"🎯 До цели ({target} кг): *{remain} кг* ({pct}%)")
 
-            if len(wd) >= 2:
+        # Анализ прогресса
+        try:
+            if len(wd) >= 3:
                 a = analyze_progress(wd)
-                if a:
+                if a and a.get("advice"):
                     resp += f"\n\n─────────────\n🤖 {a['advice']}"
-                    if a["cal_change"] != 0:
+                    if a.get("cal_change", 0) != 0:
                         d = "увеличен" if a["cal_change"] > 0 else "снижен"
                         resp += f"\n📋 Рацион {d} на *{abs(a['cal_change'])} ккал*."
+        except Exception:
+            pass
 
-            # Мотивационная цитата
-            quote = random.choice(MOTIVATIONAL_QUOTES)
-            resp += f"\n\n{quote}"
+        # Мотивационная цитата
+        try:
+            resp += f"\n\n{random.choice(MOTIVATIONAL_QUOTES)}"
+        except Exception:
+            pass
 
-            # Прогноз даты цели
-            try:
+        # Прогноз даты
+        try:
+            if len(wd) >= 4:
                 prediction = predict_goal_date(wd, target)
                 if prediction:
-                    resp += (f"\n\n📅 *Прогноз:* при темпе {prediction['rate_week']} кг/нед — "
-                             f"цель *{prediction['date']}* (≈{prediction['weeks']} нед.)")
-            except Exception:
-                pass
+                    resp += (f"\n\n📅 *Прогноз:* {prediction['rate_week']} кг/нед → "
+                             f"цель *{prediction['date']}* (~{prediction['weeks']} нед.)")
+        except Exception:
+            pass
 
-            # Новые ачивки
-            try:
-                new_ach2 = check_and_unlock_achievements(cid)
-            except Exception:
-                new_ach2 = []
+        bot.send_message(cid, resp, parse_mode="Markdown", reply_markup=main_menu(cid))
 
-            bot.send_message(cid, resp, parse_mode="Markdown", reply_markup=main_menu(cid))
+        # Ачивки (новая система)
+        try:
+            new_ach2 = check_and_unlock_achievements(cid)
             for name, desc, _ in new_ach2:
                 bot.send_message(cid, f"🎉 *Новая ачивка: {name}!*\n_{desc}_", parse_mode="Markdown")
-        except Exception as e:
-            bot.send_message(cid, f"Введи число, например: 105.7")
+        except Exception:
+            pass
         return
 
     # Ввод шагов
