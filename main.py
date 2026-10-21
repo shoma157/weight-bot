@@ -586,6 +586,12 @@ def init_db():
     c.execute('''CREATE TABLE IF NOT EXISTS waist (
         id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER,
         waist_cm REAL, date TEXT)''')
+    c.execute('''CREATE TABLE IF NOT EXISTS supplements (
+        id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER,
+        supplement TEXT, taken_date TEXT)''')
+    c.execute('''CREATE TABLE IF NOT EXISTS mood_log (
+        id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER,
+        mood INTEGER, stress INTEGER, energy INTEGER, note TEXT, date TEXT)''')
     # Миграция
     for col, dflt in [
         ("fatigue","0"), ("last_workout_date","''"), ("next_workout_override","''"),
@@ -1621,6 +1627,269 @@ def build_exercise_analytics(uid):
     if len(lines) <= 1:
         return None
     return "\n\n".join(lines)
+
+# ─────────────────────────────────────────
+#  ТРЕКЕР ДОБАВОК
+# ─────────────────────────────────────────
+
+SUPPLEMENTS_LIST = [
+    "💊 Омега-3", "☀️ Витамин D", "🧲 Магний",
+    "💊 Витамин C", "🫀 Коэнзим Q10", "🦴 Кальций",
+    "🧬 Цинк", "💉 Витамин B12", "🌿 Ашваганда",
+]
+
+def log_supplement(uid, supplement):
+    today = now_samara().strftime("%Y-%m-%d")
+    with sqlite3.connect(DB_PATH) as conn:
+        conn.execute("CREATE TABLE IF NOT EXISTS supplements (id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER, supplement TEXT, taken_date TEXT)")
+        conn.execute("INSERT INTO supplements (user_id, supplement, taken_date) VALUES (?,?,?)", (uid, supplement, today))
+        conn.commit()
+
+def get_supplements_today(uid):
+    today = now_samara().strftime("%Y-%m-%d")
+    with sqlite3.connect(DB_PATH) as conn:
+        conn.execute("CREATE TABLE IF NOT EXISTS supplements (id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER, supplement TEXT, taken_date TEXT)")
+        rows = conn.execute("SELECT supplement FROM supplements WHERE user_id=? AND taken_date=?", (uid, today)).fetchall()
+    return [r[0] for r in rows]
+
+def get_supplements_streak(uid, supplement):
+    with sqlite3.connect(DB_PATH) as conn:
+        conn.execute("CREATE TABLE IF NOT EXISTS supplements (id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER, supplement TEXT, taken_date TEXT)")
+        rows = conn.execute("SELECT DISTINCT taken_date FROM supplements WHERE user_id=? AND supplement=? ORDER BY taken_date DESC LIMIT 30", (uid, supplement)).fetchall()
+    if not rows:
+        return 0
+    streak = 0
+    check_date = now_samara().date()
+    for (d,) in rows:
+        row_date = datetime.strptime(d, "%Y-%m-%d").date()
+        if row_date == check_date:
+            streak += 1
+            check_date -= timedelta(days=1)
+        else:
+            break
+    return streak
+
+def build_supplements_menu():
+    kb = types.ReplyKeyboardMarkup(resize_keyboard=True, row_width=2)
+    for s in SUPPLEMENTS_LIST:
+        kb.add(types.KeyboardButton(s))
+    kb.add(types.KeyboardButton("📊 Статистика добавок"))
+    kb.add(types.KeyboardButton("🔙 Назад"))
+    return kb
+
+# ─────────────────────────────────────────
+#  ТРЕКЕР НАСТРОЕНИЯ
+# ─────────────────────────────────────────
+
+MOOD_EMOJIS = {1: "😞", 2: "😕", 3: "😐", 4: "🙂", 5: "😄"}
+STRESS_EMOJIS = {1: "🧘", 2: "😌", 3: "😐", 4: "😤", 5: "🤯"}
+
+def log_mood(uid, mood, stress, energy, note=""):
+    today = now_samara().strftime("%Y-%m-%d")
+    with sqlite3.connect(DB_PATH) as conn:
+        conn.execute("CREATE TABLE IF NOT EXISTS mood_log (id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER, mood INTEGER, stress INTEGER, energy INTEGER, note TEXT, date TEXT)")
+        conn.execute("DELETE FROM mood_log WHERE user_id=? AND date=?", (uid, today))
+        conn.execute("INSERT INTO mood_log (user_id,mood,stress,energy,note,date) VALUES (?,?,?,?,?,?)",
+                     (uid, mood, stress, energy, note, today))
+        conn.commit()
+
+def get_mood_today(uid):
+    today = now_samara().strftime("%Y-%m-%d")
+    with sqlite3.connect(DB_PATH) as conn:
+        conn.execute("CREATE TABLE IF NOT EXISTS mood_log (id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER, mood INTEGER, stress INTEGER, energy INTEGER, note TEXT, date TEXT)")
+        row = conn.execute("SELECT mood,stress,energy,note FROM mood_log WHERE user_id=? AND date=?", (uid, today)).fetchone()
+    return row
+
+def get_mood_history(uid, days=7):
+    with sqlite3.connect(DB_PATH) as conn:
+        conn.execute("CREATE TABLE IF NOT EXISTS mood_log (id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER, mood INTEGER, stress INTEGER, energy INTEGER, note TEXT, date TEXT)")
+        rows = conn.execute("SELECT mood,stress,energy,date FROM mood_log WHERE user_id=? ORDER BY date DESC LIMIT ?", (uid, days)).fetchall()
+    return rows
+
+def mood_nutrition_advice(mood, stress, energy):
+    advice = []
+    if stress >= 4:
+        advice.append("🍫 Стресс высокий — магний поможет: орехи, тёмный шоколад, гречка.")
+    if energy <= 2:
+        advice.append("⚡ Энергия низкая — добавь сложные углеводы: овсянка, банан, бурый рис.")
+    if mood <= 2:
+        advice.append("😊 Настроение низкое — омега-3 и триптофан: рыба, яйца, индейка.")
+    if not advice:
+        advice.append("✅ Всё в норме — питайся по плану!")
+    return "\n".join(advice)
+
+# ─────────────────────────────────────────
+#  УМНЫЙ КБЖУ-СЧЁТЧИК
+# ─────────────────────────────────────────
+
+def get_daily_kcal_consumed(uid):
+    today = now_samara().strftime("%Y-%m-%d")
+    total = 0
+    with sqlite3.connect(DB_PATH) as conn:
+        try:
+            rows = conn.execute("SELECT kcal FROM food_diary WHERE user_id=? AND date=?", (uid, today)).fetchall()
+            total += sum(r[0] for r in rows if r[0])
+        except Exception:
+            pass
+        try:
+            rows2 = conn.execute("SELECT kcal FROM food_diary WHERE uid=? AND date=?", (uid, today)).fetchall()
+            total += sum(r[0] for r in rows2 if r[0])
+        except Exception:
+            pass
+    return round(total)
+
+def get_daily_kcal_goal(uid):
+    profile = get_profile(uid)
+    if not profile:
+        return 2000
+    return profile.get("tdee") or profile.get("calories") or 2000
+
+def build_kcal_status(uid):
+    consumed = get_daily_kcal_consumed(uid)
+    goal = get_daily_kcal_goal(uid)
+    remain = goal - consumed
+    pct = min(100, round(consumed / max(goal, 1) * 100))
+    bar_len = 10
+    filled = round(pct / 100 * bar_len)
+    bar = "█" * filled + "░" * (bar_len - filled)
+    status = "✅" if remain >= 0 else "⚠️"
+    remain_str = f"+{abs(remain)} ккал перебор" if remain < 0 else f"{remain} ккал осталось"
+    return (f"🍽️ *Калории сегодня:*\n"
+            f"{bar} {pct}%\n"
+            f"Съедено: *{consumed}* / *{goal}* ккал\n"
+            f"{status} {remain_str}")
+
+def suggest_meal_for_remaining(uid):
+    remain = get_daily_kcal_goal(uid) - get_daily_kcal_consumed(uid)
+    if remain < 100:
+        return None
+    candidates = []
+    for name, data in RECIPES.items():
+        kcal_str = data.get("kcal_portion", "")
+        m = re.search(r"~?(\d+)", kcal_str)
+        if m:
+            kcal = int(m.group(1))
+            if abs(kcal - remain) < remain * 0.35:
+                candidates.append((name, kcal, abs(kcal - remain)))
+    if not candidates:
+        return None
+    candidates.sort(key=lambda x: x[2])
+    best = candidates[0]
+    return f"📖 *{best[0]}* (~{best[1]} ккал) — подходит под твой остаток!"
+
+# ─────────────────────────────────────────
+#  АЧИВКИ И МОТИВАЦИОННЫЕ ЦИТАТЫ
+# ─────────────────────────────────────────
+
+MOTIVATIONAL_QUOTES = [
+    "💪 «Каждый килограмм — это победа над собой вчерашним.»",
+    "🔥 «Тело достигает то, во что верит разум.»",
+    "🎯 «Прогресс, а не совершенство — вот цель.»",
+    "⚡ «Дисциплина — это мост между целями и достижениями.»",
+    "🏆 «Ты не похудел сегодня, но и не набрал — это тоже победа.»",
+    "🌅 «Каждое утро — новый шанс стать лучше.»",
+    "💡 «Маленькие ежедневные улучшения дают поразительные результаты.»",
+    "🧠 «Сила воли — мышца. Чем больше тренируешь, тем сильнее.»",
+    "🚀 «Вчера ты сказал 'завтра'. Сегодня — действуй.»",
+    "🌊 «Не считай дни — делай так, чтобы дни считались.»",
+    "🦁 «Боль временна. Гордость — навсегда.»",
+    "⚖️ «1 кг в неделю — это 52 кг за год. Стабильность побеждает.»",
+]
+
+ACHIEVEMENTS_MAP = {
+    "first_weight":  ("🏅 Первый шаг",      "Внёс вес первый раз"),
+    "weight_5kg":    ("🥉 Минус 5 кг",       "Сбросил первые 5 кг"),
+    "weight_10kg":   ("🥈 Минус 10 кг",      "Сбросил 10 кг"),
+    "weight_goal":   ("🏆 Цель достигнута!", "Достиг целевого веса"),
+    "streak_7":      ("🔥 Неделя подряд",    "7 дней без пропусков"),
+    "streak_30":     ("💎 Месяц подряд",     "30 дней без пропусков"),
+    "steps_10k":     ("👣 10 000 шагов",     "Прошёл 10 000 шагов за день"),
+    "workouts_10":   ("💪 10 тренировок",    "Провёл 10 тренировок"),
+    "workouts_50":   ("🦾 50 тренировок",    "Провёл 50 тренировок"),
+    "supplements_7": ("💊 Неделя добавок",   "7 дней принимал добавки подряд"),
+    "early_bird":    ("🌅 Ранняя пташка",    "Внёс данные до 8 утра"),
+    "night_owl":     ("🦉 Ночная сова",      "Внёс данные после 23:00"),
+}
+
+def check_and_unlock_achievements(uid):
+    unlocked = []
+    with sqlite3.connect(DB_PATH) as conn:
+        existing = {r[0] for r in conn.execute("SELECT achievement_key FROM achievements WHERE user_id=?", (uid,)).fetchall()}
+        def unlock(key):
+            if key not in existing:
+                conn.execute("INSERT INTO achievements (user_id,achievement_key,unlocked_date) VALUES (?,?,?)",
+                             (uid, key, now_samara().strftime("%Y-%m-%d")))
+                unlocked.append(key)
+                existing.add(key)
+        wd = get_weights(uid)
+        if wd:
+            unlock("first_weight")
+            start_w = wd[0][0]; curr_w = wd[-1][0]
+            if start_w - curr_w >= 5:  unlock("weight_5kg")
+            if start_w - curr_w >= 10: unlock("weight_10kg")
+            profile = get_profile(uid)
+            if profile and curr_w <= profile.get("target_weight", 9999):
+                unlock("weight_goal")
+        streak_row = conn.execute("SELECT current_streak FROM streak WHERE user_id=?", (uid,)).fetchone()
+        if streak_row:
+            s = streak_row[0]
+            if s >= 7:  unlock("streak_7")
+            if s >= 30: unlock("streak_30")
+        workouts_count = conn.execute("SELECT COUNT(*) FROM workouts WHERE user_id=?", (uid,)).fetchone()[0]
+        if workouts_count >= 10: unlock("workouts_10")
+        if workouts_count >= 50: unlock("workouts_50")
+        hour = now_samara().hour
+        if hour < 8:   unlock("early_bird")
+        if hour >= 23: unlock("night_owl")
+        conn.commit()
+    return [ACHIEVEMENTS_MAP[k] for k in unlocked if k in ACHIEVEMENTS_MAP]
+
+def get_all_achievements(uid):
+    with sqlite3.connect(DB_PATH) as conn:
+        rows = conn.execute("SELECT achievement_key, unlocked_date FROM achievements WHERE user_id=? ORDER BY id", (uid,)).fetchall()
+    result = []
+    for key, date in rows:
+        if key in ACHIEVEMENTS_MAP:
+            name, desc = ACHIEVEMENTS_MAP[key]
+            result.append((name, desc, date))
+    return result
+
+# ─────────────────────────────────────────
+#  ПЕРИОДИЗАЦИЯ ТРЕНИРОВОК
+# ─────────────────────────────────────────
+
+TRAINING_PHASES = [
+    {"name": "📦 Адаптация (нед. 1–4)", "focus": "Базовая сила и техника",
+     "reps": "3×12–15", "intensity": "60–65% от максимума", "rest": "60 сек",
+     "tip": "Акцент на правильную технику. Вес не важен — форма важна."},
+    {"name": "💪 Гипертрофия (нед. 5–8)", "focus": "Рост мышечной массы",
+     "reps": "4×8–12", "intensity": "70–75% от максимума", "rest": "90 сек",
+     "tip": "Добавляй вес на штанге каждые 2 тренировки (+2.5 кг)."},
+    {"name": "🔥 Интенсивность (нед. 9–12)", "focus": "Сила и выносливость",
+     "reps": "5×5–8", "intensity": "80–85% от максимума", "rest": "2–3 мин",
+     "tip": "Тяжелее — не значит хуже формы. Страховка обязательна."},
+    {"name": "♻️ Разгрузка (нед. 13–14)", "focus": "Восстановление",
+     "reps": "3×10", "intensity": "50–60% от максимума", "rest": "45 сек",
+     "tip": "Разгрузочная неделя — не слабость. Это рост после перерыва."},
+]
+
+def get_training_phase(uid):
+    profile = get_profile(uid)
+    if not profile:
+        return TRAINING_PHASES[0]
+    reg_date_str = profile.get("created_at") or profile.get("reg_date")
+    if not reg_date_str:
+        return TRAINING_PHASES[0]
+    try:
+        reg_date = datetime.strptime(reg_date_str[:10], "%Y-%m-%d")
+        weeks_since = (now_samara().replace(tzinfo=None) - reg_date).days // 7
+        week_in_cycle = weeks_since % 14
+        if week_in_cycle < 4:    return TRAINING_PHASES[0]
+        elif week_in_cycle < 8:  return TRAINING_PHASES[1]
+        elif week_in_cycle < 12: return TRAINING_PHASES[2]
+        else:                    return TRAINING_PHASES[3]
+    except Exception:
+        return TRAINING_PHASES[0]
 
 def compare_weeks(uid):
     """Сравнивает текущую и прошлую неделю по шагам и весу"""
@@ -3388,6 +3657,11 @@ def main_menu(uid=None):
         types.KeyboardButton("👣 Мои шаги"),
         types.KeyboardButton("📬 Отчёт за неделю"),
         types.KeyboardButton("💪 Прогресс упражнений"),
+        types.KeyboardButton("💊 Мои добавки"),
+        types.KeyboardButton("😊 Самочувствие"),
+        types.KeyboardButton("🏆 Мои ачивки"),
+        types.KeyboardButton("🍽️ Калории сегодня"),
+        types.KeyboardButton("📅 Фаза тренировок"),
         types.KeyboardButton("🕐 Расписание дня"),
         types.KeyboardButton("🍫 Сладкое"),
         types.KeyboardButton("🔥 Жиросжигающие"),
@@ -3799,7 +4073,19 @@ def router(message):
                     if a["cal_change"]!=0:
                         d="увеличен" if a["cal_change"]>0 else "снижен"
                         resp+=f"\n📋 Рацион {d} на *{abs(a['cal_change'])} ккал*."
+            # Мотивационная цитата
+            quote = random.choice(MOTIVATIONAL_QUOTES)
+            resp += f"\n\n{quote}"
+            # Прогноз даты цели
+            prediction = predict_goal_date(wd, target)
+            if prediction:
+                resp += (f"\n\n📅 *Прогноз:* при темпе {prediction['rate_week']} кг/нед — "
+                         f"цель *{prediction['date']}* (≈{prediction['weeks']} нед.)")
+            # Новые ачивки из нашей системы
+            new_ach2 = check_and_unlock_achievements(cid)
             bot.send_message(cid, resp, parse_mode="Markdown", reply_markup=main_menu(cid))
+            for name, desc, _ in new_ach2:
+                bot.send_message(cid, f"🎉 *Новая ачивка: {name}!*\n_{desc}_", parse_mode="Markdown")
         except Exception:
             bot.send_message(cid, "Введи число, например: 105.7")
         return
@@ -4124,6 +4410,60 @@ def router(message):
             f"🔥 Калорийность: *{actual_kcal} ккал*{macro_line}\n\n"
             f"_Порция рассчитана под твой суточный калораж (~30% от нормы приёма пищи)_",
             parse_mode="Markdown", reply_markup=main_menu(cid))
+        return
+
+    # ── Настроение: шаг 1 — оценка настроения ──
+    if state == "mood_step1":
+        try:
+            mood = int(text.strip())
+            assert 1 <= mood <= 5
+            set_state(cid, "mood_step2", extra=str(mood))
+            kb = types.ReplyKeyboardMarkup(resize_keyboard=True, row_width=5)
+            kb.add(*[types.KeyboardButton(str(i)) for i in range(1, 6)])
+            bot.send_message(cid,
+                f"Настроение: {MOOD_EMOJIS[mood]} *{mood}/5*\n\n"
+                "2️⃣ Оцени *уровень стресса* (1 — нет стресса, 5 — очень высокий):",
+                parse_mode="Markdown", reply_markup=kb)
+        except Exception:
+            bot.send_message(cid, "Введи число от 1 до 5.")
+        return
+
+    # ── Настроение: шаг 2 — стресс ──
+    if state == "mood_step2":
+        try:
+            stress = int(text.strip())
+            assert 1 <= stress <= 5
+            mood = int(extra)
+            set_state(cid, "mood_step3", extra=f"{mood},{stress}")
+            kb = types.ReplyKeyboardMarkup(resize_keyboard=True, row_width=5)
+            kb.add(*[types.KeyboardButton(str(i)) for i in range(1, 6)])
+            bot.send_message(cid,
+                f"Стресс: {STRESS_EMOJIS[stress]} *{stress}/5*\n\n"
+                "3️⃣ Оцени *уровень энергии* (1 — совсем нет, 5 — максимум):",
+                parse_mode="Markdown", reply_markup=kb)
+        except Exception:
+            bot.send_message(cid, "Введи число от 1 до 5.")
+        return
+
+    # ── Настроение: шаг 3 — энергия ──
+    if state == "mood_step3":
+        try:
+            energy = int(text.strip())
+            assert 1 <= energy <= 5
+            parts_extra = extra.split(",")
+            mood = int(parts_extra[0]); stress = int(parts_extra[1])
+            log_mood(cid, mood, stress, energy)
+            set_state(cid, "idle")
+            advice = mood_nutrition_advice(mood, stress, energy)
+            bot.send_message(cid,
+                f"✅ *Самочувствие записано!*\n\n"
+                f"Настроение: {MOOD_EMOJIS[mood]} {mood}/5\n"
+                f"Стресс: {STRESS_EMOJIS[stress]} {stress}/5\n"
+                f"Энергия: ⚡ {energy}/5\n\n"
+                f"💡 *Советы по питанию:*\n{advice}",
+                parse_mode="Markdown", reply_markup=main_menu(cid))
+        except Exception:
+            bot.send_message(cid, "Введи число от 1 до 5.")
         return
 
     if state == "waiting_water":
@@ -4599,6 +4939,98 @@ def router(message):
                 parse_mode="Markdown")
             return
         bot.send_message(cid, analytics, parse_mode="Markdown")
+
+    # ── Трекер добавок ──
+    elif text == "💊 Мои добавки":
+        taken = get_supplements_today(cid)
+        taken_set = set(taken)
+        lines = []
+        for s in SUPPLEMENTS_LIST:
+            icon = "✅" if s in taken_set else "⬜"
+            lines.append(f"{icon} {s}")
+        msg = "💊 *Добавки на сегодня:*\n\n" + "\n".join(lines) + "\n\nНажми на добавку чтобы отметить приём:"
+        bot.send_message(cid, msg, parse_mode="Markdown", reply_markup=build_supplements_menu())
+
+    elif text in SUPPLEMENTS_LIST:
+        taken_today = get_supplements_today(cid)
+        if text in taken_today:
+            bot.send_message(cid, f"✅ *{text}* уже отмечена сегодня!", parse_mode="Markdown")
+        else:
+            log_supplement(cid, text)
+            streak = get_supplements_streak(cid, text)
+            streak_str = f"\n🔥 Серия: *{streak} дней* подряд!" if streak > 1 else ""
+            bot.send_message(cid, f"✅ *{text}* — принято!{streak_str}", parse_mode="Markdown")
+            if streak >= 7:
+                with sqlite3.connect(DB_PATH) as conn:
+                    existing = {r[0] for r in conn.execute("SELECT achievement_key FROM achievements WHERE user_id=?", (cid,)).fetchall()}
+                    if "supplements_7" not in existing:
+                        conn.execute("INSERT INTO achievements (user_id,achievement_key,unlocked_date) VALUES (?,?,?)",
+                                     (cid, "supplements_7", now_samara().strftime("%Y-%m-%d")))
+                        conn.commit()
+                        bot.send_message(cid, "🎉 *Новая ачивка: 💊 Неделя добавок!*\n_7 дней принимал добавки подряд_", parse_mode="Markdown")
+
+    elif text == "📊 Статистика добавок":
+        lines = []
+        for s in SUPPLEMENTS_LIST:
+            streak = get_supplements_streak(cid, s)
+            bar = "█" * min(streak, 7) + "░" * max(0, 7 - streak)
+            lines.append(f"{s}: {bar} {streak}д.")
+        bot.send_message(cid, "📊 *Серии приёма добавок (макс. 7 дней):*\n\n" + "\n".join(lines), parse_mode="Markdown")
+
+    # ── Трекер настроения ──
+    elif text == "😊 Самочувствие":
+        today_mood = get_mood_today(cid)
+        if today_mood:
+            m, s, e, note = today_mood
+            history = get_mood_history(cid, 7)
+            hist_lines = [f"• {hd[:10]}: {MOOD_EMOJIS.get(hm,'?')} {hm} / стресс {hs} / энергия {he}" for hm, hs, he, hd in history]
+            advice = mood_nutrition_advice(m, s, e)
+            bot.send_message(cid,
+                f"😊 *Самочувствие сегодня:*\n\nНастроение: {MOOD_EMOJIS[m]} {m}/5\nСтресс: {STRESS_EMOJIS[s]} {s}/5\nЭнергия: ⚡ {e}/5\n\n💡 {advice}\n\n*За неделю:*\n" + "\n".join(hist_lines),
+                parse_mode="Markdown")
+        else:
+            kb = types.ReplyKeyboardMarkup(resize_keyboard=True, row_width=5)
+            kb.add(*[types.KeyboardButton(str(i)) for i in range(1, 6)])
+            set_state(cid, "mood_step1")
+            bot.send_message(cid,
+                "😊 *Как ты себя чувствуешь сегодня?*\n\n1️⃣ Оцени *настроение* от 1 до 5:\n1 — очень плохо  |  5 — отлично",
+                parse_mode="Markdown", reply_markup=kb)
+
+    # ── Ачивки ──
+    elif text == "🏆 Мои ачивки":
+        check_and_unlock_achievements(cid)
+        ach = get_all_achievements(cid)
+        total_ach = len(ACHIEVEMENTS_MAP)
+        if not ach:
+            bot.send_message(cid, "Пока ачивок нет.\n\nВноси вес, шаги и тренировки — и они появятся! 💪")
+            return
+        lines = [f"✅ *{name}* — _{desc}_ ({date})" for name, desc, date in ach]
+        locked = total_ach - len(ach)
+        bot.send_message(cid,
+            f"🏆 *Твои достижения ({len(ach)}/{total_ach}):*\n\n" + "\n".join(lines) +
+            (f"\n\n🔒 Ещё {locked} не разблокировано..." if locked > 0 else "\n\n🎉 Все ачивки получены!"),
+            parse_mode="Markdown")
+
+    # ── Калории сегодня ──
+    elif text == "🍽️ Калории сегодня":
+        status = build_kcal_status(cid)
+        suggest = suggest_meal_for_remaining(cid)
+        msg = status
+        if suggest:
+            msg += f"\n\n💡 *Что поесть:*\n{suggest}"
+        bot.send_message(cid, msg, parse_mode="Markdown")
+
+    # ── Фаза тренировок ──
+    elif text == "📅 Фаза тренировок":
+        phase = get_training_phase(cid)
+        bot.send_message(cid,
+            f"🏋️ *Текущая фаза:* {phase['name']}\n\n"
+            f"🎯 *Цель:* {phase['focus']}\n"
+            f"📊 *Подходы × повторения:* {phase['reps']}\n"
+            f"⚡ *Интенсивность:* {phase['intensity']}\n"
+            f"⏱️ *Отдых:* {phase['rest']}\n\n"
+            f"💡 {phase['tip']}",
+            parse_mode="Markdown")
 
     # Расписание
     elif text=="🕐 Расписание дня":
