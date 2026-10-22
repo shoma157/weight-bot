@@ -5202,9 +5202,9 @@ def reminder_worker():
 #  ХЭНДЛЕРЫ
 # ─────────────────────────────────────────
 
-@bot.message_handler(commands=['вес', 'w', 'weight'])
+@bot.message_handler(commands=['w', 'weight', 'ves'])
 def cmd_weight(message):
-    """Быстрая команда /вес 105.7"""
+    """Быстрая команда /w 105.7"""
     cid = message.chat.id
     parts = message.text.strip().split()
     if len(parts) >= 2:
@@ -5216,14 +5216,14 @@ def cmd_weight(message):
             except: pass
             bot.send_message(cid, f"✅ Вес *{w} кг* сохранён!", parse_mode="Markdown", reply_markup=main_menu(cid))
         except Exception:
-            bot.send_message(cid, "❌ Неверный формат. Пример: `/вес 105.7`", parse_mode="Markdown")
+            bot.send_message(cid, "❌ Пример: `/w 105.7`", parse_mode="Markdown")
     else:
         set_state(cid, "waiting_weight")
-        bot.send_message(cid, "⚖️ Введи текущий вес (например: *105.7*)", parse_mode="Markdown", reply_markup=cancel_menu())
+        bot.send_message(cid, "⚖️ Введи вес (например: *105.7*)", parse_mode="Markdown", reply_markup=cancel_menu())
 
-@bot.message_handler(commands=['шаги', 's', 'steps'])
+@bot.message_handler(commands=['s', 'steps', 'shagi'])
 def cmd_steps(message):
-    """Быстрая команда /шаги 8500"""
+    """Быстрая команда /s 8500"""
     cid = message.chat.id
     parts = message.text.strip().split()
     if len(parts) >= 2:
@@ -5234,14 +5234,14 @@ def cmd_steps(message):
             v = ("🔥 Отлично!" if s >= 12000 else "✅ Хорошо!" if s >= 8000 else "🟡 Добавь прогулку." if s >= 5000 else "🔴 Мало движения.")
             bot.send_message(cid, f"👟 *{s:,} шагов* {v}".replace(",", " "), parse_mode="Markdown", reply_markup=main_menu(cid))
         except Exception:
-            bot.send_message(cid, "❌ Неверный формат. Пример: `/шаги 8500`", parse_mode="Markdown")
+            bot.send_message(cid, "❌ Пример: `/s 8500`", parse_mode="Markdown")
     else:
         set_state(cid, "waiting_steps")
-        bot.send_message(cid, "👟 Введи количество шагов:", reply_markup=cancel_menu())
+        bot.send_message(cid, "👟 Введи шаги:", reply_markup=cancel_menu())
 
-@bot.message_handler(commands=['воды', 'water'])
+@bot.message_handler(commands=['water', 'voda'])
 def cmd_water(message):
-    """Быстрая команда /воды 3"""
+    """Быстрая команда /water 3"""
     cid = message.chat.id
     parts = message.text.strip().split()
     if len(parts) >= 2:
@@ -5252,7 +5252,7 @@ def cmd_water(message):
             total = get_water_today(cid)
             bot.send_message(cid, f"💧 +{g} стак. Сегодня: *{total}/8*", parse_mode="Markdown", reply_markup=main_menu(cid))
         except Exception:
-            bot.send_message(cid, "❌ Пример: `/воды 3`", parse_mode="Markdown")
+            bot.send_message(cid, "❌ Пример: `/water 3`", parse_mode="Markdown")
     else:
         set_state(cid, "waiting_water")
         bot.send_message(cid, "💧 Сколько стаканов?", reply_markup=cancel_menu())
@@ -5378,22 +5378,23 @@ def handle_callback(call):
 
     # ── Добавить в дневник питания ──
     elif data.startswith("add_to_diary:"):
-        dish = data[13:]
-        kcal = KCAL_PER_100G.get(dish, 0)
-        portion = DEFAULT_PORTIONS.get(dish, 100)
-        kcal_portion = round(kcal * portion / 100)
-        # Логируем в базу как приём пищи
-        today = now_samara().strftime("%Y-%m-%d")
-        conn = sqlite3.connect(DB_PATH)
-        c = conn.cursor()
-        c.execute("CREATE TABLE IF NOT EXISTS food_diary (uid INTEGER, date TEXT, food TEXT, grams INTEGER, kcal INTEGER)")
-        c.execute("INSERT INTO food_diary VALUES (?,?,?,?,?)", (cid, today, dish, portion, kcal_portion))
-        conn.commit(); conn.close()
-        bot.answer_callback_query(call.id, f"✅ {dish} добавлено в дневник!")
+        payload = data[13:]  # может быть "dish" или "dish:grams"
+        payload_parts = payload.rsplit(":", 1)
+        dish = payload_parts[0]
+        if len(payload_parts) == 2:
+            try:
+                portion = int(payload_parts[1])
+            except Exception:
+                portion = DEFAULT_PORTIONS.get(dish, 100)
+        else:
+            portion = DEFAULT_PORTIONS.get(dish, 100)
+        kcal_per_100 = KCAL_PER_100G.get(dish, 0)
+        kcal_portion = round(kcal_per_100 * portion / 100)
+        log_meal_entry(cid, "🍽️ Прочее", dish, portion, kcal_portion)
+        bot.answer_callback_query(call.id, f"✅ Записано!")
         bot.send_message(cid,
-            f"✅ *{dish.capitalize()}* добавлено в дневник питания\n\n"
-            f"📏 Порция: *{portion} г* | 🔥 *{kcal_portion} ккал*\n\n"
-            f"_Нажми «📊 Дневник питания» чтобы увидеть итог за день_",
+            f"✅ *{dish.capitalize()}* добавлено в дневник\n\n"
+            f"📏 Порция: *{portion} г* | 🔥 *{kcal_portion} ккал*",
             parse_mode="Markdown", reply_markup=main_menu(cid))
 
     # ── Открыть рацион ──
@@ -6700,7 +6701,7 @@ def router(message):
         bot.send_message(cid, msg, parse_mode="Markdown", reply_markup=kb2)
 
     # ── Экспорт CSV ──
-    elif text == "📤 Экспорт данных":
+    elif text in ("📤 Экспорт CSV", "📤 Экспорт данных"):
         csv_data = export_all_data_csv(cid)
         fname = f"/tmp/export_{cid}.csv"
         with open(fname, "w", encoding="utf-8") as f:
@@ -7604,7 +7605,41 @@ def router(message):
             parse_mode="Markdown", reply_markup=build_smart_food_menu())
 
     else:
-        bot.send_message(cid,"Используй кнопки меню.",reply_markup=main_menu(cid))
+        # Умный fallback: пробуем распознать "продукт граммы" (напр. "гречка 200")
+        parts = text.strip().rsplit(" ", 1)
+        if len(parts) == 2:
+            try:
+                grams = float(parts[1].replace(",", "."))
+                product = parts[0].lower().strip()
+                if 0 < grams < 5000 and product:
+                    kcal_p = KCAL_PER_100G.get(product)
+                    if not kcal_p:
+                        matches = [k for k in KCAL_PER_100G if product in k or k in product]
+                        if matches:
+                            product = matches[0]
+                            kcal_p = KCAL_PER_100G[product]
+                    if kcal_p:
+                        kcal = round(kcal_p * grams / 100)
+                        bot.send_message(cid,
+                            f"🧮 *{product.capitalize()}* {grams}г = *{kcal} ккал*\n\n"
+                            f"Записать в дневник питания?",
+                            parse_mode="Markdown",
+                            reply_markup=types.InlineKeyboardMarkup().add(
+                                types.InlineKeyboardButton("✅ Записать", callback_data=f"add_to_diary:{product}:{int(grams)}"),
+                                types.InlineKeyboardButton("❌ Нет", callback_data="close")
+                            ))
+                        return
+            except Exception:
+                pass
+        bot.send_message(cid,
+            "Используй кнопки меню ниже 👇\n\n"
+            "💡 *Быстрые команды:*\n"
+            "`/w 105.7` — записать вес\n"
+            "`/s 8500` — записать шаги\n"
+            "`/water 3` — записать воду\n\n"
+            "Или просто напиши продукт с граммами:\n"
+            "`гречка 200`",
+            parse_mode="Markdown", reply_markup=main_menu(cid))
 
 if __name__ == '__main__':
     init_db()
