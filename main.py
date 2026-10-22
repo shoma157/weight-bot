@@ -661,6 +661,15 @@ def init_db():
         id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER,
         friend_id INTEGER,
         UNIQUE(user_id, friend_id))''')
+    c.execute('''CREATE TABLE IF NOT EXISTS pressure_log (
+        id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER,
+        systolic INTEGER, diastolic INTEGER, pulse INTEGER, date TEXT)''')
+    c.execute('''CREATE TABLE IF NOT EXISTS medications (
+        id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER,
+        name TEXT, dose TEXT, times_per_day INTEGER, active INTEGER DEFAULT 1)''')
+    c.execute('''CREATE TABLE IF NOT EXISTS medication_log (
+        id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER,
+        med_id INTEGER, date TEXT)''')
     # Миграция
     for col, dflt in [
         ("fatigue","0"), ("last_workout_date","''"), ("next_workout_override","''"),
@@ -2689,6 +2698,411 @@ def build_friends_leaderboard(uid):
     return "\n".join(lines)
 
 
+# ══════════════════════════════════════════════════════
+#  УМНЫЙ ИИ-СОВЕТНИК
+# ══════════════════════════════════════════════════════
+def build_ai_advice(uid):
+    """Анализирует все данные пользователя и даёт персональный совет на день"""
+    profile = get_profile(uid)
+    if not profile:
+        return "🤖 *Советник*\n\nСначала пройди настройку профиля (кнопка «⚙️ Профиль»)."
+
+    today = now_samara().strftime("%Y-%m-%d")
+    yesterday = (now_samara() - timedelta(days=1)).strftime("%Y-%m-%d")
+    conn = sqlite3.connect("weight_tracker.db")
+
+    # Собираем данные
+    last_sleep = conn.execute(
+        "SELECT duration_hours, quality FROM sleep WHERE user_id=? ORDER BY id DESC LIMIT 1", (uid,)).fetchone()
+    last_steps = conn.execute(
+        "SELECT step_count FROM steps WHERE user_id=? AND date>=? ORDER BY id DESC LIMIT 1",
+        (uid, yesterday)).fetchone()
+    last_mood = conn.execute(
+        "SELECT mood, stress, energy FROM mood_log WHERE user_id=? ORDER BY id DESC LIMIT 1", (uid,)).fetchone()
+    water_today = conn.execute(
+        "SELECT SUM(glasses) FROM water WHERE user_id=? AND date=?", (uid, today)).fetchone()[0] or 0
+    kcal_today = conn.execute(
+        "SELECT SUM(kcal) FROM food_diary WHERE user_id=? AND date=?", (uid, today)).fetchone()[0] or 0
+    weights = conn.execute(
+        "SELECT weight_value FROM weights WHERE user_id=? ORDER BY id DESC LIMIT 3", (uid,)).fetchall()
+    conn.close()
+
+    advice_lines = ["🤖 *Персональный совет на сегодня:*\n"]
+    score = 0  # общий «балл» состояния
+
+    # Анализ сна
+    if last_sleep:
+        hrs, quality = last_sleep
+        if hrs >= 7 and quality >= 4:
+            advice_lines.append("😴 Сон отличный — энергия на максимуме. Можно тренироваться интенсивно.")
+            score += 2
+        elif hrs >= 6:
+            advice_lines.append("😴 Сон нормальный. Умеренная тренировка — хороший выбор.")
+            score += 1
+        else:
+            advice_lines.append("😴 Сон плохой — организм не восстановился. Сегодня лёгкая прогулка, никакого железа.")
+            score -= 1
+    else:
+        advice_lines.append("😴 Данных о сне нет. Веди дневник сна — это влияет на вес!")
+
+    # Анализ шагов
+    if last_steps:
+        s = last_steps[0]
+        if s >= 10000:
+            advice_lines.append("👟 Вчера был активный день. Сегодня можно сделать силовую.")
+            score += 1
+        elif s >= 6000:
+            advice_lines.append("👟 Активность вчера средняя. Добавь ещё 2–3 тыс. шагов сегодня.")
+        else:
+            advice_lines.append("👟 Вчера было мало движения. Сегодня обязательно пройди 8000+ шагов.")
+            score -= 1
+
+    # Анализ настроения
+    if last_mood:
+        mood, stress, energy = last_mood
+        if stress >= 4:
+            advice_lines.append("😤 Высокий стресс — избегай жёстких диет сегодня. Магний + медитация помогут.")
+            score -= 1
+        if energy <= 2:
+            advice_lines.append("⚡ Низкая энергия — добавь сложных углеводов (гречка, овсянка) на завтрак.")
+        elif energy >= 4:
+            advice_lines.append("⚡ Энергия высокая — отличный день для интенсивной тренировки!")
+            score += 1
+
+    # Анализ воды
+    if water_today < 4:
+        advice_lines.append("💧 Сегодня почти не пил воду — выпей стакан прямо сейчас.")
+    elif water_today >= 8:
+        advice_lines.append("💧 Гидрация отличная — так держать!")
+
+    # Анализ калорий
+    goal_kcal = get_daily_kcal_goal(uid) if profile else 2000
+    if kcal_today > 0:
+        remain = goal_kcal - kcal_today
+        if remain < -200:
+            advice_lines.append(f"🍽️ Уже превышена норма на {abs(remain)} ккал — лёгкий ужин без углеводов.")
+        elif remain > goal_kcal * 0.5:
+            advice_lines.append(f"🍽️ Съел мало ({kcal_today} ккал) — не допускай голода, добавь белковый перекус.")
+
+    # Тренд веса
+    if len(weights) >= 2:
+        diff = round(weights[0][0] - weights[-1][0], 2)
+        if diff > 0.5:
+            advice_lines.append(f"⚖️ Вес растёт (+{diff} кг за последние дни) — проверь калораж и соль.")
+        elif diff < -0.5:
+            advice_lines.append(f"⚖️ Вес снижается ({diff} кг) — всё идёт по плану! 🔥")
+
+    # Итоговый совет
+    advice_lines.append("")
+    if score >= 3:
+        advice_lines.append("🌟 *Итог: отличное состояние! День для рекордов.*")
+    elif score >= 1:
+        advice_lines.append("✅ *Итог: хорошее состояние. Стандартный план на день.*")
+    elif score == 0:
+        advice_lines.append("🟡 *Итог: среднее состояние. Слушай себя, не перегружайся.*")
+    else:
+        advice_lines.append("🔴 *Итог: организм устал. Отдых и восстановление — приоритет.*")
+
+    return "\n".join(advice_lines)
+
+
+# ══════════════════════════════════════════════════════
+#  ФАСТФУД КБЖУ
+# ══════════════════════════════════════════════════════
+FASTFOOD_KCAL = {
+    # KFC
+    "kfc крылышки": 305, "kfc ножки": 215, "kfc твистер": 240,
+    "kfc биг тастер": 490, "kfc шеф бургер": 510, "kfc картошка фри": 310,
+    "kfc кесадилья": 270, "kfc стрипсы": 260, "kfc зингер": 380,
+    # McDonald's
+    "макдоналдс биг мак": 257, "макдоналдс чизбургер": 303, "макдоналдс картошка фри": 320,
+    "макдоналдс маккурица": 208, "макдоналдс роял": 230, "макдоналдс нагетсы": 223,
+    "макдоналдс филе-о-фиш": 260, "макдоналдс двойной чизбургер": 338,
+    "макдоналдс картошка": 320, "макдоналдс яблочный пирог": 260,
+    # Burger King
+    "бургер кинг воппер": 253, "бургер кинг чизбургер": 290, "бургер кинг картошка": 290,
+    "бургер кинг наггетсы": 215, "бургер кинг онион ринг": 380,
+    "бургер кинг двойной воппер": 290, "бургер кинг кинг": 260,
+    # Subway
+    "сабвей курица тандури": 140, "сабвей индейка": 105, "сабвей тунец": 200,
+    "сабвей ветчина": 120, "сабвей итальянский": 185, "сабвей клаб": 130,
+    "сабвей митбол": 230, "сабвей хлеб": 270,
+    # Шаурма
+    "шаурма куриная": 180, "шаурма говядина": 210, "шаурма микс": 195,
+    "донер кебаб": 220, "фалафель": 333,
+    # Суши/роллы
+    "ролл калифорния": 140, "ролл филадельфия": 145, "ролл темпура": 175,
+    "нигири лосось": 130, "нигири тунец": 120, "мисо суп": 40,
+}
+
+# Добавляем фастфуд в общий словарь
+KCAL_PER_100G.update(FASTFOOD_KCAL)
+
+# Гликемический индекс продуктов
+GI_TABLE = {
+    # Высокий ГИ (>70) — ограничивать
+    "белый рис": 70, "белый хлеб": 75, "картошка фри": 75, "арбуз": 72,
+    "кукурузные хлопья": 85, "рисовая каша": 70, "вафли": 76, "пиво": 110,
+    "финики": 100, "кока-кола": 65, "мёд": 61,
+    # Средний ГИ (40–70)
+    "бурый рис": 55, "овсянка": 60, "гречка": 50, "булгур": 48,
+    "виноград": 46, "манго": 55, "банан": 60, "свёкла": 65,
+    "картофель варёный": 65, "макароны": 55, "ананас": 66,
+    # Низкий ГИ (<40) — предпочтительно
+    "яблоко": 36, "апельсин": 35, "груша": 38, "клубника": 32,
+    "вишня": 22, "чечевица": 29, "нут": 35, "фасоль": 40,
+    "молоко": 32, "йогурт": 35, "шоколад горький": 25,
+    "куриная грудка": 0, "говядина": 0, "рыба": 0, "яйцо": 0,
+    "огурец": 15, "помидор": 15, "брокколи": 15, "шпинат": 10,
+    "орехи": 15, "миндаль": 15, "грецкий орех": 15,
+}
+
+def get_gi_info(product):
+    p = product.lower().strip()
+    gi = GI_TABLE.get(p)
+    if gi is None:
+        # частичное совпадение
+        for k, v in GI_TABLE.items():
+            if k in p or p in k:
+                gi = v; break
+    if gi is None:
+        return None
+    if gi == 0:
+        cat, emoji = "Нет углеводов", "✅"
+    elif gi < 40:
+        cat, emoji = "Низкий ГИ", "✅"
+    elif gi < 70:
+        cat, emoji = "Средний ГИ", "🟡"
+    else:
+        cat, emoji = "Высокий ГИ", "🔴"
+    return {"gi": gi, "category": cat, "emoji": emoji}
+
+def build_macros_today(uid):
+    """Строит сводку макронутриентов за сегодня (упрощённо через КБЖУ)"""
+    rows = get_meals_today(uid)
+    if not rows:
+        return "📊 *Макронутриенты сегодня*\n\nЗаписей нет. Начни вести дневник питания!"
+    # Примерные соотношения БЖУ для известных продуктов
+    MACROS = {
+        "куриная грудка":  (23, 2, 0), "говядина": (26, 11, 0),
+        "яйцо":            (13, 11, 1), "творог":   (18, 5, 3),
+        "гречка":          (13, 3, 68), "бурый рис": (7, 2, 77),
+        "овсянка":         (11, 6, 65), "макароны": (11, 1, 71),
+        "молоко":          (3, 3, 5),   "йогурт":   (5, 3, 7),
+        "куриное бедро":   (18, 15, 0), "индейка":  (22, 4, 0),
+    }
+    total_p = total_f = total_c = total_kcal = 0
+    for meal, product, grams, kcal in rows:
+        total_kcal += kcal
+        if product in MACROS:
+            p_ratio, f_ratio, c_ratio = MACROS[product]
+            total_p += round(p_ratio * grams / 100, 1)
+            total_f += round(f_ratio * grams / 100, 1)
+            total_c += round(c_ratio * grams / 100, 1)
+    lines = [
+        "📊 *Макронутриенты сегодня:*\n",
+        f"🔥 Калории: *{round(total_kcal)} ккал*",
+        f"🥩 Белки: *{round(total_p)} г*",
+        f"🧈 Жиры: *{round(total_f)} г*",
+        f"🍞 Углеводы: *{round(total_c)} г*",
+    ]
+    profile = get_profile(uid)
+    if profile:
+        w = profile.get("current_weight", 80)
+        rec_p = round(w * 2)  # 2г/кг
+        lines.append(f"\n_Рекомендуется белка: ~{rec_p}г/день (2г/кг веса)_")
+        if total_p > 0 and total_p < rec_p * 0.7:
+            lines.append("⚠️ Белка маловато — добавь творог, яйца или грудку")
+    return "\n".join(lines)
+
+
+# ══════════════════════════════════════════════════════
+#  ТРЕКЕР ДАВЛЕНИЯ И ПУЛЬСА
+# ══════════════════════════════════════════════════════
+def log_pressure(uid, systolic, diastolic, pulse=None):
+    conn = sqlite3.connect("weight_tracker.db")
+    conn.execute(
+        "INSERT INTO pressure_log (user_id, systolic, diastolic, pulse, date) VALUES (?,?,?,?,?)",
+        (uid, systolic, diastolic, pulse, now_samara().strftime("%Y-%m-%d %H:%M")))
+    conn.commit(); conn.close()
+
+def get_pressure_history(uid, limit=10):
+    conn = sqlite3.connect("weight_tracker.db")
+    rows = conn.execute(
+        "SELECT systolic, diastolic, pulse, date FROM pressure_log WHERE user_id=? ORDER BY id DESC LIMIT ?",
+        (uid, limit)).fetchall()
+    conn.close()
+    return rows
+
+def analyze_pressure(systolic, diastolic):
+    if systolic < 90 or diastolic < 60:
+        return "🔵 Пониженное", "Выпей воды, лягь отдохнуть"
+    elif systolic <= 120 and diastolic <= 80:
+        return "✅ Норма", "Отличное давление!"
+    elif systolic <= 139 or diastolic <= 89:
+        return "🟡 Повышенное", "Ограничь соль и кофе, больше воды"
+    else:
+        return "🔴 Высокое", "Избегай нагрузок, обратись к врачу"
+
+def build_pressure_history_text(uid):
+    rows = get_pressure_history(uid, 7)
+    if not rows:
+        return "🩺 *Давление/пульс*\n\nЗаписей нет. Нажми *«➕ Записать давление»*"
+    lines = ["🩺 *История давления (последние 7):*\n"]
+    for sys, dia, pulse, dt in rows:
+        cat, _ = analyze_pressure(sys, dia)
+        pulse_str = f" | 💓 {pulse}" if pulse else ""
+        lines.append(f"{dt[:16]} — *{sys}/{dia}* {cat}{pulse_str}")
+    return "\n".join(lines)
+
+
+# ══════════════════════════════════════════════════════
+#  ТРЕКЕР ЛЕКАРСТВ
+# ══════════════════════════════════════════════════════
+def add_medication(uid, name, dose, times_per_day):
+    conn = sqlite3.connect("weight_tracker.db")
+    conn.execute(
+        "INSERT INTO medications (user_id, name, dose, times_per_day, active) VALUES (?,?,?,?,1)",
+        (uid, name.strip(), dose.strip(), times_per_day))
+    conn.commit(); conn.close()
+
+def get_medications(uid):
+    conn = sqlite3.connect("weight_tracker.db")
+    rows = conn.execute(
+        "SELECT id, name, dose, times_per_day FROM medications WHERE user_id=? AND active=1",
+        (uid,)).fetchall()
+    conn.close()
+    return rows
+
+def log_medication_taken(uid, med_id):
+    conn = sqlite3.connect("weight_tracker.db")
+    conn.execute(
+        "INSERT INTO medication_log (user_id, med_id, date) VALUES (?,?,?)",
+        (uid, med_id, now_samara().strftime("%Y-%m-%d %H:%M")))
+    conn.commit(); conn.close()
+
+def get_medications_taken_today(uid):
+    conn = sqlite3.connect("weight_tracker.db")
+    today = now_samara().strftime("%Y-%m-%d")
+    rows = conn.execute(
+        "SELECT med_id, COUNT(*) FROM medication_log WHERE user_id=? AND date LIKE ? GROUP BY med_id",
+        (uid, f"{today}%")).fetchall()
+    conn.close()
+    return {r[0]: r[1] for r in rows}
+
+def build_medications_today(uid):
+    meds = get_medications(uid)
+    if not meds:
+        return ("💊 *Трекер лекарств*\n\nЛекарств нет.\n\n"
+                "Нажми *«➕ Добавить лекарство»* чтобы добавить.")
+    taken = get_medications_taken_today(uid)
+    lines = ["💊 *Лекарства на сегодня:*\n"]
+    for mid, name, dose, tpd in meds:
+        t = taken.get(mid, 0)
+        status = "✅" * t + "⬜" * max(0, tpd - t)
+        lines.append(f"{status} *{name}* {dose} ({t}/{tpd} раз)")
+    return "\n".join(lines)
+
+
+# ══════════════════════════════════════════════════════
+#  ЭКСПОРТ ДАННЫХ
+# ══════════════════════════════════════════════════════
+def export_all_data_csv(uid):
+    """Экспортирует все данные пользователя в CSV-строку"""
+    import io as _io
+    conn = sqlite3.connect("weight_tracker.db")
+    output = _io.StringIO()
+
+    # Веса
+    output.write("=== ВЕС ===\nДата,Вес (кг)\n")
+    for row in conn.execute("SELECT date, weight_value FROM weights WHERE user_id=? ORDER BY id", (uid,)):
+        output.write(f"{row[0]},{row[1]}\n")
+
+    # Шаги
+    output.write("\n=== ШАГИ ===\nДата,Шагов\n")
+    for row in conn.execute("SELECT date, step_count FROM steps WHERE user_id=? ORDER BY id", (uid,)):
+        output.write(f"{row[0]},{row[1]}\n")
+
+    # Сон
+    output.write("\n=== СОН ===\nДата,Часов,Качество\n")
+    for row in conn.execute("SELECT date, duration_hours, quality FROM sleep WHERE user_id=? ORDER BY id", (uid,)):
+        output.write(f"{row[0]},{row[1]},{row[2]}\n")
+
+    # Вода
+    output.write("\n=== ВОДА ===\nДата,Стаканов\n")
+    for row in conn.execute("SELECT date, glasses FROM water WHERE user_id=? ORDER BY id", (uid,)):
+        output.write(f"{row[0]},{row[1]}\n")
+
+    # Настроение
+    output.write("\n=== НАСТРОЕНИЕ ===\nДата,Настроение,Стресс,Энергия\n")
+    for row in conn.execute("SELECT date, mood, stress, energy FROM mood_log WHERE user_id=? ORDER BY id", (uid,)):
+        output.write(f"{row[0]},{row[1]},{row[2]},{row[3]}\n")
+
+    # Давление
+    output.write("\n=== ДАВЛЕНИЕ ===\nДата,Систолическое,Диастолическое,Пульс\n")
+    try:
+        for row in conn.execute("SELECT date, systolic, diastolic, pulse FROM pressure_log WHERE user_id=? ORDER BY id", (uid,)):
+            output.write(f"{row[0]},{row[1]},{row[2]},{row[3] or ''}\n")
+    except Exception:
+        pass
+
+    # Питание
+    output.write("\n=== ПИТАНИЕ ===\nДата,Приём,Продукт,Граммы,Ккал\n")
+    for row in conn.execute("SELECT date, meal, product, grams, kcal FROM food_diary WHERE user_id=? ORDER BY id", (uid,)):
+        output.write(f"{row[0]},{row[1]},{row[2]},{row[3]},{row[4]}\n")
+
+    conn.close()
+    return output.getvalue()
+
+def export_monthly_report_text(uid):
+    """Текстовый отчёт за последние 30 дней"""
+    conn = sqlite3.connect("weight_tracker.db")
+    month_ago = (now_samara() - timedelta(days=30)).strftime("%Y-%m-%d")
+    today = now_samara().strftime("%Y-%m-%d")
+
+    weights = conn.execute(
+        "SELECT weight_value FROM weights WHERE user_id=? AND date>=? ORDER BY id",
+        (uid, month_ago)).fetchall()
+    steps = conn.execute(
+        "SELECT step_count FROM steps WHERE user_id=? AND date>=?",
+        (uid, month_ago)).fetchall()
+    sleep_rows = conn.execute(
+        "SELECT duration_hours FROM sleep WHERE user_id=? AND date>=?",
+        (uid, month_ago)).fetchall()
+    water_rows = conn.execute(
+        "SELECT glasses FROM water WHERE user_id=? AND date>=?",
+        (uid, month_ago)).fetchall()
+    conn.close()
+
+    lines = [f"📋 *Отчёт за 30 дней*\n({month_ago} — {today})\n"]
+
+    if weights:
+        w_start = weights[0][0]; w_end = weights[-1][0]
+        diff = round(w_end - w_start, 2)
+        arrow = "📉" if diff < 0 else "📈" if diff > 0 else "➡️"
+        lines.append(f"⚖️ *Вес:* {w_start} → {w_end} кг {arrow} ({'+' if diff>0 else ''}{diff} кг)")
+        lines.append(f"   Измерений: {len(weights)}")
+
+    if steps:
+        avg = round(sum(s[0] for s in steps) / len(steps))
+        best = max(s[0] for s in steps)
+        lines.append(f"\n👟 *Шаги:*\n   Среднее: *{avg:,}*/день\n   Лучший день: *{best:,}*".replace(",", " "))
+
+    if sleep_rows:
+        avg_s = round(sum(s[0] for s in sleep_rows) / len(sleep_rows), 1)
+        lines.append(f"\n😴 *Сон:* среднее *{avg_s}ч*/ночь ({len(sleep_rows)} записей)")
+
+    if water_rows:
+        avg_w = round(sum(w[0] for w in water_rows) / len(water_rows), 1)
+        lines.append(f"\n💧 *Вода:* среднее *{avg_w}* стак./день")
+
+    streak_cur, streak_best = get_streak(uid)
+    lines.append(f"\n🔥 *Стрик:* {streak_cur} дн. (рекорд: {streak_best} дн.)")
+
+    lines.append("\n_Для полного экспорта данных используй «📤 Экспорт CSV»_")
+    return "\n".join(lines)
+
+
 def compare_weeks(uid):
     """Сравнивает текущую и прошлую неделю по шагам и весу"""
     wd = get_weights(uid)
@@ -4643,7 +5057,6 @@ def main_menu(uid=None):
         types.KeyboardButton("🍓 Фрукты"),
         types.KeyboardButton("👤 Мой профиль"),
         types.KeyboardButton("⚙️ Изменить профиль"),
-        types.KeyboardButton("📤 Экспорт данных"),
         types.KeyboardButton("🔔 Напоминания"),
         types.KeyboardButton("🏥 Мои ограничения"),
         types.KeyboardButton("🏆 Режим сушки"),
@@ -4668,6 +5081,16 @@ def main_menu(uid=None):
         types.KeyboardButton("😴 Лечь спать"),
         types.KeyboardButton("⏰ Проснулся"),
         types.KeyboardButton("💤 История сна"),
+        types.KeyboardButton("🤖 Совет на день"),
+        types.KeyboardButton("📊 Макронутриенты"),
+        types.KeyboardButton("🩺 Давление/пульс"),
+        types.KeyboardButton("💊 Лекарства"),
+        types.KeyboardButton("📤 Экспорт CSV"),
+        types.KeyboardButton("📋 Отчёт за месяц"),
+        types.KeyboardButton("🍎 ГИ продукта"),
+        types.KeyboardButton("📏 Обхваты"),
+        types.KeyboardButton("📊 Отчёт за неделю"),
+        types.KeyboardButton("🔬 Корреляции"),
     )
     return m
 
@@ -4778,6 +5201,61 @@ def reminder_worker():
 # ─────────────────────────────────────────
 #  ХЭНДЛЕРЫ
 # ─────────────────────────────────────────
+
+@bot.message_handler(commands=['вес', 'w', 'weight'])
+def cmd_weight(message):
+    """Быстрая команда /вес 105.7"""
+    cid = message.chat.id
+    parts = message.text.strip().split()
+    if len(parts) >= 2:
+        try:
+            w = float(parts[1].replace(",", "."))
+            assert 30 < w < 300
+            add_weight(cid, w); save_profile(cid, current_weight=w)
+            try: update_streak(cid)
+            except: pass
+            bot.send_message(cid, f"✅ Вес *{w} кг* сохранён!", parse_mode="Markdown", reply_markup=main_menu(cid))
+        except Exception:
+            bot.send_message(cid, "❌ Неверный формат. Пример: `/вес 105.7`", parse_mode="Markdown")
+    else:
+        set_state(cid, "waiting_weight")
+        bot.send_message(cid, "⚖️ Введи текущий вес (например: *105.7*)", parse_mode="Markdown", reply_markup=cancel_menu())
+
+@bot.message_handler(commands=['шаги', 's', 'steps'])
+def cmd_steps(message):
+    """Быстрая команда /шаги 8500"""
+    cid = message.chat.id
+    parts = message.text.strip().split()
+    if len(parts) >= 2:
+        try:
+            s = int(parts[1].replace(" ", ""))
+            assert 0 < s < 100000
+            add_steps(cid, s)
+            v = ("🔥 Отлично!" if s >= 12000 else "✅ Хорошо!" if s >= 8000 else "🟡 Добавь прогулку." if s >= 5000 else "🔴 Мало движения.")
+            bot.send_message(cid, f"👟 *{s:,} шагов* {v}".replace(",", " "), parse_mode="Markdown", reply_markup=main_menu(cid))
+        except Exception:
+            bot.send_message(cid, "❌ Неверный формат. Пример: `/шаги 8500`", parse_mode="Markdown")
+    else:
+        set_state(cid, "waiting_steps")
+        bot.send_message(cid, "👟 Введи количество шагов:", reply_markup=cancel_menu())
+
+@bot.message_handler(commands=['воды', 'water'])
+def cmd_water(message):
+    """Быстрая команда /воды 3"""
+    cid = message.chat.id
+    parts = message.text.strip().split()
+    if len(parts) >= 2:
+        try:
+            g = int(parts[1])
+            assert 0 < g <= 20
+            add_water(cid, g)
+            total = get_water_today(cid)
+            bot.send_message(cid, f"💧 +{g} стак. Сегодня: *{total}/8*", parse_mode="Markdown", reply_markup=main_menu(cid))
+        except Exception:
+            bot.send_message(cid, "❌ Пример: `/воды 3`", parse_mode="Markdown")
+    else:
+        set_state(cid, "waiting_water")
+        bot.send_message(cid, "💧 Сколько стаканов?", reply_markup=cancel_menu())
 
 @bot.message_handler(commands=['start','help'])
 def send_welcome(message):
@@ -4938,6 +5416,44 @@ def handle_callback(call):
         bot.answer_callback_query(call.id, "Ок!")
         try: bot.delete_message(cid, call.message.message_id)
         except: pass
+
+    # ── Давление: открыть форму ввода ──
+    elif data == "pressure_add":
+        bot.answer_callback_query(call.id)
+        set_state(cid, "waiting_pressure")
+        bot.send_message(cid,
+            "🩺 Введи давление в формате:\n*120/80* или *120/80/72* (с пульсом)",
+            parse_mode="Markdown", reply_markup=cancel_menu())
+
+    # ── Лекарство: принял ──
+    elif data.startswith("med_take:"):
+        mid = int(data.split(":")[1])
+        log_medication_taken(cid, mid)
+        bot.answer_callback_query(call.id, "✅ Отмечено!")
+        bot.send_message(cid, build_medications_today(cid), parse_mode="Markdown")
+
+    # ── Лекарство: добавить новое ──
+    elif data == "med_add":
+        bot.answer_callback_query(call.id)
+        set_state(cid, "med_add_name")
+        bot.send_message(cid, "💊 Введи название лекарства:", reply_markup=cancel_menu())
+
+    # ── Обхваты: выбор части тела ──
+    elif data == "measure_add":
+        bot.answer_callback_query(call.id)
+        kb2 = types.InlineKeyboardMarkup(row_width=2)
+        for key, label in MEASUREMENTS_LIST:
+            kb2.add(types.InlineKeyboardButton(label, callback_data=f"measure_part:{key}"))
+        bot.send_message(cid, "📏 Что измеряем?", reply_markup=kb2)
+
+    elif data.startswith("measure_part:"):
+        part_key = data.split(":")[1]
+        bot.answer_callback_query(call.id)
+        label = dict(MEASUREMENTS_LIST).get(part_key, part_key)
+        set_state(cid, "waiting_measurement", extra=part_key)
+        bot.send_message(cid,
+            f"📏 *{label}*\n\nВведи значение в сантиметрах:",
+            parse_mode="Markdown", reply_markup=cancel_menu())
 
     else:
         bot.answer_callback_query(call.id)
@@ -5447,6 +5963,93 @@ def router(message):
             f"🔥 Калорийность: *{actual_kcal} ккал*{macro_line}\n\n"
             f"_Порция рассчитана под твой суточный калораж (~30% от нормы приёма пищи)_",
             parse_mode="Markdown", reply_markup=main_menu(cid))
+        return
+
+    # ── ГИ продукта ──
+    if state == "waiting_gi_query":
+        gi = get_gi_info(text.strip())
+        set_state(cid, "idle")
+        if gi:
+            bot.send_message(cid,
+                f"🍎 *{text.strip().capitalize()}*\n\n"
+                f"ГИ: *{gi['gi']}* {gi['emoji']} — {gi['category']}",
+                parse_mode="Markdown", reply_markup=main_menu(cid))
+        else:
+            bot.send_message(cid,
+                f"❓ Продукт *{text.strip()}* не найден в базе ГИ.\n\nПопробуй другое название.",
+                parse_mode="Markdown", reply_markup=main_menu(cid))
+        return
+
+    # ── Давление: ввод (формат: 120/80 или 120/80/72) ──
+    if state == "waiting_pressure":
+        try:
+            parts = text.strip().replace(" ", "").split("/")
+            assert len(parts) in (2, 3)
+            sys_v = int(parts[0]); dia_v = int(parts[1])
+            pulse_v = int(parts[2]) if len(parts) == 3 else None
+            assert 50 < sys_v < 250 and 30 < dia_v < 150
+            log_pressure(cid, sys_v, dia_v, pulse_v)
+            set_state(cid, "idle")
+            cat, tip = analyze_pressure(sys_v, dia_v)
+            pulse_str = f"\n💓 Пульс: *{pulse_v}* уд/мин" if pulse_v else ""
+            bot.send_message(cid,
+                f"✅ *Давление записано!*\n\n"
+                f"🩺 *{sys_v}/{dia_v}* — {cat}{pulse_str}\n\n"
+                f"💡 {tip}",
+                parse_mode="Markdown", reply_markup=main_menu(cid))
+        except Exception:
+            bot.send_message(cid,
+                "Введи в формате *120/80* или *120/80/72* (с пульсом)",
+                parse_mode="Markdown")
+        return
+
+    # ── Добавить лекарство: шаг 1 — название ──
+    if state == "med_add_name":
+        set_state(cid, "med_add_dose", extra=text.strip())
+        bot.send_message(cid,
+            f"💊 Лекарство: *{text.strip()}*\n\nВведи дозировку (например: *500мг* или *1 таблетка*):",
+            parse_mode="Markdown")
+        return
+
+    # ── Добавить лекарство: шаг 2 — дозировка ──
+    if state == "med_add_dose":
+        set_state(cid, "med_add_times", extra=f"{extra}|{text.strip()}")
+        kb = types.ReplyKeyboardMarkup(resize_keyboard=True, row_width=4)
+        kb.add(*[types.KeyboardButton(str(i)) for i in range(1, 5)])
+        bot.send_message(cid,
+            f"Сколько раз в день?",
+            reply_markup=kb)
+        return
+
+    # ── Добавить лекарство: шаг 3 — кратность ──
+    if state == "med_add_times":
+        try:
+            tpd = int(text.strip()); assert 1 <= tpd <= 10
+            parts_extra = extra.split("|", 1)
+            name = parts_extra[0]; dose = parts_extra[1] if len(parts_extra) > 1 else ""
+            add_medication(cid, name, dose, tpd)
+            set_state(cid, "idle")
+            bot.send_message(cid,
+                f"✅ *{name}* {dose} × {tpd}/день — добавлено!",
+                parse_mode="Markdown", reply_markup=main_menu(cid))
+        except Exception:
+            bot.send_message(cid, "Введи число от 1 до 4.")
+        return
+
+    # ── Обхваты: ввод значения ──
+    if state == "waiting_measurement":
+        try:
+            cm = float(text.replace(",", "."))
+            assert 10 < cm < 300
+            part_key = extra  # ключ части тела
+            save_measurement(cid, part_key, cm)
+            set_state(cid, "idle")
+            label = dict(MEASUREMENTS_LIST).get(part_key, part_key)
+            bot.send_message(cid,
+                f"✅ *{label}: {cm} см* — сохранено!",
+                parse_mode="Markdown", reply_markup=main_menu(cid))
+        except Exception:
+            bot.send_message(cid, "Введи значение в сантиметрах, например: *85.5*", parse_mode="Markdown")
         return
 
     # ── Настроение: шаг 1 — оценка настроения ──
@@ -6069,7 +6672,71 @@ def router(message):
             f"💡 {phase['tip']}",
             parse_mode="Markdown")
 
-    # Расписание
+    # ── ИИ-советник ──
+    elif text == "🤖 Совет на день":
+        advice = build_ai_advice(cid)
+        bot.send_message(cid, advice, parse_mode="Markdown")
+
+    # ── Макронутриенты ──
+    elif text == "📊 Макронутриенты":
+        bot.send_message(cid, build_macros_today(cid), parse_mode="Markdown")
+
+    # ── Давление: запись ──
+    elif text == "🩺 Давление/пульс":
+        bot.send_message(cid, build_pressure_history_text(cid), parse_mode="Markdown",
+            reply_markup=types.InlineKeyboardMarkup().add(
+                types.InlineKeyboardButton("➕ Записать", callback_data="pressure_add")))
+
+    # ── Лекарства ──
+    elif text == "💊 Лекарства":
+        msg = build_medications_today(cid)
+        meds = get_medications(cid)
+        kb2 = types.InlineKeyboardMarkup(row_width=2)
+        for mid, name, dose, tpd in meds:
+            taken = get_medications_taken_today(cid).get(mid, 0)
+            if taken < tpd:
+                kb2.add(types.InlineKeyboardButton(f"✅ {name}", callback_data=f"med_take:{mid}"))
+        kb2.add(types.InlineKeyboardButton("➕ Добавить лекарство", callback_data="med_add"))
+        bot.send_message(cid, msg, parse_mode="Markdown", reply_markup=kb2)
+
+    # ── Экспорт CSV ──
+    elif text == "📤 Экспорт данных":
+        csv_data = export_all_data_csv(cid)
+        fname = f"/tmp/export_{cid}.csv"
+        with open(fname, "w", encoding="utf-8") as f:
+            f.write(csv_data)
+        with open(fname, "rb") as f:
+            bot.send_document(cid, f, caption="📊 Все твои данные в CSV",
+                              visible_file_name=f"health_data_{now_samara().strftime('%Y%m%d')}.csv")
+
+    # ── Месячный отчёт ──
+    elif text == "📋 Отчёт за месяц":
+        report = export_monthly_report_text(cid)
+        bot.send_message(cid, report, parse_mode="Markdown")
+
+    # ── ГИ продукта ──
+    elif text == "🍎 ГИ продукта":
+        set_state(cid, "waiting_gi_query")
+        bot.send_message(cid,
+            "🍎 *Гликемический индекс*\n\nВведи название продукта:",
+            parse_mode="Markdown", reply_markup=cancel_menu())
+
+    # ── Недельный отчёт ──
+    elif text == "📊 Отчёт за неделю":
+        bot.send_message(cid, build_weekly_report(cid), parse_mode="Markdown")
+
+    # ── Корреляции ──
+    elif text == "🔬 Корреляции":
+        bot.send_message(cid, build_correlations_report(cid), parse_mode="Markdown")
+
+    # ── Обхваты ──
+    elif text == "📏 Обхваты":
+        summary = build_measurements_summary(cid)
+        kb2 = types.InlineKeyboardMarkup().add(
+            types.InlineKeyboardButton("➕ Внести обхваты", callback_data="measure_add"))
+        bot.send_message(cid, summary, parse_mode="Markdown", reply_markup=kb2)
+
+    # ── Расписание
     elif text=="🕐 Расписание дня":
         now2=now_samara(); hour=now2.hour; weekday=now2.weekday()
         profile=get_profile(cid)
