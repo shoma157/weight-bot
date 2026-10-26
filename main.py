@@ -3629,6 +3629,623 @@ def build_trainer_message(uid):
     return "🤖 *Твой тренер:*\n\n" + "\n\n".join(messages)
 
 
+# ══════════════════════════════════════════════════════
+#  ТЕПЛОВАЯ КАРТА АКТИВНОСТИ
+# ══════════════════════════════════════════════════════
+def build_activity_heatmap(uid):
+    """Текстовая тепловая карта активности за последние 5 недель (как GitHub)"""
+    conn = sqlite3.connect("weight_tracker.db")
+    today = now_samara().date()
+    # Собираем данные за 35 дней
+    days_data = {}
+    for i in range(34, -1, -1):
+        d = (today - timedelta(days=i)).strftime("%Y-%m-%d")
+        days_data[d] = 0
+    # Шаги
+    rows = conn.execute(
+        "SELECT date, step_count FROM steps WHERE user_id=? AND date >= ?",
+        (uid, (today - timedelta(days=34)).strftime("%Y-%m-%d"))).fetchall()
+    for d, s in rows:
+        k = d[:10]
+        if k in days_data:
+            if s >= 10000: days_data[k] = max(days_data[k], 3)
+            elif s >= 7000: days_data[k] = max(days_data[k], 2)
+            elif s >= 3000: days_data[k] = max(days_data[k], 1)
+    # Вес (взвесился = активность)
+    rows2 = conn.execute(
+        "SELECT date FROM weights WHERE user_id=? AND date >= ?",
+        (uid, (today - timedelta(days=34)).strftime("%Y-%m-%d"))).fetchall()
+    for (d,) in rows2:
+        k = d[:10]
+        if k in days_data:
+            days_data[k] = max(days_data[k], 1)
+    conn.close()
+
+    BLOCKS = {0: "⬛", 1: "🟦", 2: "🟨", 3: "🟩"}
+    DAYS_RU = ["Пн", "Вт", "Ср", "Чт", "Пт", "Сб", "Вс"]
+
+    # Строим сетку: строки = дни недели, колонки = недели
+    dates_list = sorted(days_data.keys())
+    # Выравниваем на понедельник
+    first_date = datetime.strptime(dates_list[0], "%Y-%m-%d").date()
+    offset = first_date.weekday()  # 0=Пн
+
+    grid = [["⬛"] * 5 for _ in range(7)]
+    for i, d in enumerate(dates_list):
+        col = (i + offset) // 7
+        row = (i + offset) % 7
+        if col < 5:
+            grid[row][col] = BLOCKS[days_data[d]]
+
+    lines = ["📅 *Активность за 5 недель:*\n"]
+    for r, day_name in enumerate(DAYS_RU):
+        lines.append(f"`{day_name}` " + "".join(grid[r]))
+    lines.append("\n⬛ нет данных  🟦 мало  🟨 хорошо  🟩 отлично")
+    return "\n".join(lines)
+
+
+# ══════════════════════════════════════════════════════
+#  СРАВНЕНИЕ МЕСЯЦЕВ
+# ══════════════════════════════════════════════════════
+def build_month_comparison(uid):
+    """Сравнивает текущий и прошлый месяц"""
+    today = now_samara().date()
+    cur_month_start = today.replace(day=1)
+    if cur_month_start.month == 1:
+        prev_month_start = cur_month_start.replace(year=cur_month_start.year-1, month=12)
+    else:
+        prev_month_start = cur_month_start.replace(month=cur_month_start.month-1)
+    prev_month_end = cur_month_start - timedelta(days=1)
+
+    conn = sqlite3.connect("weight_tracker.db")
+
+    def get_avg(table, col, start, end):
+        r = conn.execute(
+            f"SELECT AVG({col}) FROM {table} WHERE user_id=? AND date>=? AND date<=?",
+            (uid, start.strftime("%Y-%m-%d"), end.strftime("%Y-%m-%d"))).fetchone()
+        return round(r[0], 1) if r and r[0] else 0
+
+    def get_sum(table, col, start, end):
+        r = conn.execute(
+            f"SELECT SUM({col}) FROM {table} WHERE user_id=? AND date>=? AND date<=?",
+            (uid, start.strftime("%Y-%m-%d"), end.strftime("%Y-%m-%d"))).fetchone()
+        return int(r[0]) if r and r[0] else 0
+
+    def get_count(table, start, end):
+        r = conn.execute(
+            f"SELECT COUNT(*) FROM {table} WHERE user_id=? AND date>=? AND date<=?",
+            (uid, start.strftime("%Y-%m-%d"), end.strftime("%Y-%m-%d"))).fetchone()
+        return r[0] if r else 0
+
+    # Текущий месяц (с начала по сегодня)
+    c_steps_avg = get_avg("steps", "step_count", cur_month_start, today)
+    c_kcal_avg  = get_avg("food_diary", "calories", cur_month_start, today)
+    c_water_avg = get_avg("water_log", "cups", cur_month_start, today)
+    c_weight_entries = get_count("weights", cur_month_start, today)
+
+    # Прошлый месяц
+    p_steps_avg = get_avg("steps", "step_count", prev_month_start, prev_month_end)
+    p_kcal_avg  = get_avg("food_diary", "calories", prev_month_start, prev_month_end)
+    p_water_avg = get_avg("water_log", "cups", prev_month_start, prev_month_end)
+    p_weight_entries = get_count("weights", prev_month_start, prev_month_end)
+
+    # Вес первый/последний
+    cw_first = conn.execute(
+        "SELECT weight FROM weights WHERE user_id=? AND date>=? ORDER BY date ASC LIMIT 1",
+        (uid, cur_month_start.strftime("%Y-%m-%d"))).fetchone()
+    cw_last = conn.execute(
+        "SELECT weight FROM weights WHERE user_id=? AND date<=? ORDER BY date DESC LIMIT 1",
+        (uid, today.strftime("%Y-%m-%d"))).fetchone()
+    pw_first = conn.execute(
+        "SELECT weight FROM weights WHERE user_id=? AND date>=? ORDER BY date ASC LIMIT 1",
+        (uid, prev_month_start.strftime("%Y-%m-%d"))).fetchone()
+    pw_last = conn.execute(
+        "SELECT weight FROM weights WHERE user_id=? AND date<=? ORDER BY date DESC LIMIT 1",
+        (uid, prev_month_end.strftime("%Y-%m-%d"))).fetchone()
+    conn.close()
+
+    def arrow(cur, prev):
+        if not prev: return ""
+        if cur > prev: return " 📈"
+        if cur < prev: return " 📉"
+        return " ➡️"
+
+    def weight_delta(first, last):
+        if not first or not last: return "нет данных"
+        d = round(last[0] - first[0], 1)
+        return f"{'+' if d>0 else ''}{d} кг"
+
+    cur_name  = cur_month_start.strftime("%B %Y")
+    prev_name = prev_month_start.strftime("%B %Y")
+
+    MONTHS_RU = {"January":"Январь","February":"Февраль","March":"Март","April":"Апрель",
+                 "May":"Май","June":"Июнь","July":"Июль","August":"Август",
+                 "September":"Сентябрь","October":"Октябрь","November":"Ноябрь","December":"Декабрь"}
+    for en, ru in MONTHS_RU.items():
+        cur_name = cur_name.replace(en, ru)
+        prev_name = prev_name.replace(en, ru)
+
+    lines = [
+        "📊 *СРАВНЕНИЕ МЕСЯЦЕВ*\n",
+        f"{'Показатель':<18} {'Прошлый':>10} {'Текущий':>10}",
+        "─" * 42,
+        f"{'🦶 Шаги (ср.)':<18} {p_steps_avg:>10} {c_steps_avg:>10}{arrow(c_steps_avg, p_steps_avg)}",
+        f"{'🔥 Ккал (ср.)':<18} {p_kcal_avg:>10} {c_kcal_avg:>10}{arrow(c_kcal_avg, p_kcal_avg)}",
+        f"{'💧 Вода (ср.)':<18} {p_water_avg:>10} {c_water_avg:>10}{arrow(c_water_avg, p_water_avg)}",
+        f"{'⚖️ Взвешиваний':<18} {p_weight_entries:>10} {c_weight_entries:>10}",
+        f"{'📉 Изм. веса':<18} {weight_delta(pw_first,pw_last):>10} {weight_delta(cw_first,cw_last):>10}",
+        "",
+        f"_{prev_name}_ vs _{cur_name}_"
+    ]
+    return "```\n" + "\n".join(lines) + "\n```"
+
+
+# ══════════════════════════════════════════════════════
+#  % ВЫПОЛНЕНИЯ ДНЕВНЫХ ЦЕЛЕЙ
+# ══════════════════════════════════════════════════════
+def build_daily_goals_pct(uid):
+    """Показывает % выполнения целей за последние 7 дней"""
+    profile = get_profile(uid)
+    goal_steps = 10000
+    goal_kcal  = get_daily_kcal_goal(uid) if profile else 2000
+    goal_water = 8
+
+    today = now_samara().date()
+    conn = sqlite3.connect("weight_tracker.db")
+
+    lines = ["🎯 *ВЫПОЛНЕНИЕ ЦЕЛЕЙ (7 дней)*\n"]
+    lines.append(f"Цели: {goal_steps:,} шагов | {goal_kcal} ккал | {goal_water} стак. воды\n".replace(",", " "))
+
+    total_score = 0
+    days_counted = 0
+    for i in range(6, -1, -1):
+        d = (today - timedelta(days=i)).strftime("%Y-%m-%d")
+        d_short = (today - timedelta(days=i)).strftime("%d.%m")
+        steps_r = conn.execute(
+            "SELECT step_count FROM steps WHERE user_id=? AND date=?", (uid, d)).fetchone()
+        kcal_r = conn.execute(
+            "SELECT SUM(calories) FROM food_diary WHERE user_id=? AND date=?", (uid, d)).fetchone()
+        water_r = conn.execute(
+            "SELECT SUM(cups) FROM water_log WHERE user_id=? AND date=?", (uid, d)).fetchone()
+
+        steps = steps_r[0] if steps_r else 0
+        kcal  = kcal_r[0]  if kcal_r and kcal_r[0] else 0
+        water = water_r[0] if water_r and water_r[0] else 0
+
+        s_pct = min(100, round(steps / goal_steps * 100)) if goal_steps else 0
+        k_pct = min(100, round(kcal  / goal_kcal  * 100)) if goal_kcal  else 0
+        w_pct = min(100, round(water / goal_water * 100)) if goal_water else 0
+        day_score = round((s_pct + k_pct + w_pct) / 3)
+
+        bar_len = day_score // 10
+        bar = "█" * bar_len + "░" * (10 - bar_len)
+        emoji = "🟩" if day_score >= 80 else ("🟨" if day_score >= 50 else "🟥")
+
+        lines.append(f"{emoji} *{d_short}* [{bar}] *{day_score}%*")
+        lines.append(f"   🦶{s_pct}%  🔥{k_pct}%  💧{w_pct}%")
+
+        if steps or kcal or water:
+            total_score += day_score
+            days_counted += 1
+
+    if days_counted:
+        avg = round(total_score / days_counted)
+        lines.append(f"\n📊 Средний балл за неделю: *{avg}%*")
+
+    conn.close()
+    return "\n".join(lines)
+
+
+# ══════════════════════════════════════════════════════
+#  ТРЕКЕР СНА
+# ══════════════════════════════════════════════════════
+def log_sleep(uid, hours):
+    conn = sqlite3.connect("weight_tracker.db")
+    today = now_samara().date().strftime("%Y-%m-%d")
+    conn.execute(
+        "INSERT OR REPLACE INTO sleep_log (user_id, date, hours) VALUES (?,?,?)",
+        (uid, today, hours))
+    conn.commit(); conn.close()
+
+def get_sleep_history(uid, days=7):
+    conn = sqlite3.connect("weight_tracker.db")
+    today = now_samara().date()
+    since = (today - timedelta(days=days)).strftime("%Y-%m-%d")
+    rows = conn.execute(
+        "SELECT date, hours FROM sleep_log WHERE user_id=? AND date>=? ORDER BY date DESC",
+        (uid, since)).fetchall()
+    conn.close()
+    return rows
+
+def build_sleep_report(uid):
+    rows = get_sleep_history(uid, 14)
+    if not rows:
+        return ("😴 *Трекер сна*\n\nДанных нет.\n\n"
+                "Введи кол-во часов сна через кнопку ниже.")
+    lines = ["😴 *ТРЕКЕР СНА (14 дней)*\n"]
+    total = 0
+    for d, h in rows:
+        emoji = "🟩" if h >= 7 else ("🟨" if h >= 6 else "🟥")
+        bar = "█" * int(h) + ("▌" if h % 1 >= 0.5 else "")
+        lines.append(f"{emoji} {d[5:]} — *{h}ч* {bar}")
+        total += h
+    avg = round(total / len(rows), 1)
+    lines.append(f"\n💤 Среднее: *{avg} ч/ночь*")
+    if avg < 6:
+        lines.append("⚠️ Сон меньше нормы! Недосып замедляет похудение.")
+    elif avg >= 7:
+        lines.append("✅ Отличный режим сна!")
+    return "\n".join(lines)
+
+
+# ══════════════════════════════════════════════════════
+#  ИМТ С ДИНАМИКОЙ
+# ══════════════════════════════════════════════════════
+def build_bmi_report(uid):
+    profile = get_profile(uid)
+    if not profile or not profile.get("height"):
+        return "📐 Укажи рост в настройках профиля."
+    h = float(profile["height"]) / 100
+    wd = get_weights(uid)
+    if not wd:
+        return "📐 Нет данных о весе."
+    lines = ["📐 *ИМТ — ДИНАМИКА*\n"]
+    for w, d, *_ in wd[-5:]:
+        bmi = round(w / (h * h), 1)
+        if bmi < 18.5:   cat = "Дефицит"
+        elif bmi < 25:   cat = "Норма ✅"
+        elif bmi < 30:   cat = "Избыток"
+        else:            cat = "Ожирение"
+        lines.append(f"• {d[:10]} — {w} кг → ИМТ *{bmi}* ({cat})")
+    curr_bmi = round(wd[-1][0] / (h * h), 1)
+    normal_w_min = round(18.5 * h * h, 1)
+    normal_w_max = round(24.9 * h * h, 1)
+    lines.append(f"\n🎯 Норма веса для твоего роста: *{normal_w_min}–{normal_w_max} кг*")
+    return "\n".join(lines)
+
+
+# ══════════════════════════════════════════════════════
+#  СЧЁТЧИК КОФЕИНА
+# ══════════════════════════════════════════════════════
+CAFFEINE_DB = {
+    "кофе": 80, "эспрессо": 60, "американо": 70, "капучино": 60,
+    "латте": 60, "чай чёрный": 40, "чай зелёный": 25,
+    "энергетик": 80, "кока-кола": 35, "pepsi": 35,
+    "предтреник": 150, "матча": 35,
+}
+
+def log_caffeine(uid, source, mg):
+    conn = sqlite3.connect("weight_tracker.db")
+    today = now_samara().date().strftime("%Y-%m-%d")
+    conn.execute(
+        "INSERT INTO caffeine_log (user_id, date, source, mg) VALUES (?,?,?,?)",
+        (uid, today, source, mg))
+    conn.commit(); conn.close()
+
+def get_caffeine_today(uid):
+    conn = sqlite3.connect("weight_tracker.db")
+    today = now_samara().date().strftime("%Y-%m-%d")
+    r = conn.execute(
+        "SELECT SUM(mg), GROUP_CONCAT(source, ', ') FROM caffeine_log WHERE user_id=? AND date=?",
+        (uid, today)).fetchone()
+    conn.close()
+    return (r[0] or 0, r[1] or "")
+
+def build_caffeine_today(uid):
+    total, sources = get_caffeine_today(uid)
+    limit = 400
+    pct = min(100, round(total / limit * 100))
+    bar = "█" * (pct // 10) + "░" * (10 - pct // 10)
+    status = "✅ В норме" if total <= limit else "⚠️ Превышена норма!"
+    return (
+        f"☕ *Кофеин сегодня*\n\n"
+        f"[{bar}] *{total} / {limit} мг* — {status}\n\n"
+        f"Источники: {sources or 'нет'}\n\n"
+        f"_Норма: до 400 мг/день (ВОЗ)_"
+    )
+
+
+# ══════════════════════════════════════════════════════
+#  ГЕЙМИФИКАЦИЯ: XP И УРОВНИ
+# ══════════════════════════════════════════════════════
+XP_REWARDS = {
+    "weight_logged":   10,
+    "steps_goal":      20,
+    "water_goal":      10,
+    "kcal_goal":       15,
+    "sleep_logged":    5,
+    "streak_bonus":    5,   # × дни стрика
+    "challenge_done":  50,
+}
+
+LEVELS = [
+    (0,    "🥚 Новичок"),
+    (100,  "🌱 Старательный"),
+    (300,  "💪 Активный"),
+    (600,  "🔥 Спортсмен"),
+    (1000, "⚡ Атлет"),
+    (1500, "🏆 Чемпион"),
+    (2500, "💎 Легенда"),
+    (5000, "🌟 Мастер"),
+]
+
+def add_xp(uid, reason, amount=None):
+    pts = amount if amount is not None else XP_REWARDS.get(reason, 5)
+    conn = sqlite3.connect("weight_tracker.db")
+    conn.execute(
+        "INSERT OR IGNORE INTO user_xp (user_id, total_xp) VALUES (?,0)", (uid,))
+    conn.execute(
+        "UPDATE user_xp SET total_xp = total_xp + ? WHERE user_id=?", (pts, uid))
+    conn.commit()
+    total = conn.execute(
+        "SELECT total_xp FROM user_xp WHERE user_id=?", (uid,)).fetchone()[0]
+    conn.close()
+    return total
+
+def get_xp(uid):
+    conn = sqlite3.connect("weight_tracker.db")
+    conn.execute("INSERT OR IGNORE INTO user_xp (user_id, total_xp) VALUES (?,0)", (uid,))
+    conn.commit()
+    r = conn.execute("SELECT total_xp FROM user_xp WHERE user_id=?", (uid,)).fetchone()
+    conn.close()
+    return r[0] if r else 0
+
+def get_level(xp):
+    level_name = LEVELS[0][1]
+    for min_xp, name in LEVELS:
+        if xp >= min_xp:
+            level_name = name
+    return level_name
+
+def get_next_level(xp):
+    for i, (min_xp, name) in enumerate(LEVELS):
+        if xp < min_xp:
+            return min_xp, name
+    return None, None
+
+def build_xp_card(uid):
+    xp = get_xp(uid)
+    level = get_level(xp)
+    next_xp, next_name = get_next_level(xp)
+    lines = [f"⚡ *МОЙ УРОВЕНЬ*\n", f"Уровень: *{level}*", f"XP: *{xp}*"]
+    if next_xp:
+        need = next_xp - xp
+        pct = max(0, min(100, round((xp - (next_xp - 500)) / 500 * 100))) if next_xp > 500 else round(xp/next_xp*100)
+        bar = "█" * (pct // 10) + "░" * (10 - pct // 10)
+        lines.append(f"[{bar}] до {next_name}: ещё *{need} XP*")
+    else:
+        lines.append("🌟 *Максимальный уровень!*")
+    lines.append(f"\n*Как зарабатывать XP:*")
+    lines.append("• Записать вес — +10 XP")
+    lines.append("• 10 000 шагов — +20 XP")
+    lines.append("• Норма воды — +10 XP")
+    lines.append("• Норма калорий — +15 XP")
+    lines.append("• Трекер сна — +5 XP")
+    return "\n".join(lines)
+
+
+# ══════════════════════════════════════════════════════
+#  ЕЖЕНЕДЕЛЬНЫЕ ЧЕЛЛЕНДЖИ
+# ══════════════════════════════════════════════════════
+WEEKLY_CHALLENGES = [
+    {"id": "steps_plus", "name": "🦶 Шаговый вызов",
+     "desc": "Пройди +1000 шагов сверх своей нормы каждый день недели",
+     "xp": 100},
+    {"id": "water_week", "name": "💧 Водная неделя",
+     "desc": "Выпивай 8+ стаканов каждый день этой недели",
+     "xp": 80},
+    {"id": "no_sugar",  "name": "🚫 Без сахара",
+     "desc": "Не вноси сладкое в дневник питания 5 дней подряд",
+     "xp": 120},
+    {"id": "weigh_daily", "name": "⚖️ Ежедневное взвешивание",
+     "desc": "Взвешивайся каждое утро 7 дней подряд",
+     "xp": 70},
+    {"id": "sleep_7",   "name": "😴 Сонная неделя",
+     "desc": "Спи 7+ часов каждую ночь в течение недели",
+     "xp": 90},
+]
+
+def get_current_challenge(uid):
+    conn = sqlite3.connect("weight_tracker.db")
+    r = conn.execute(
+        "SELECT challenge_id, start_date, completed FROM weekly_challenge "
+        "WHERE user_id=? ORDER BY id DESC LIMIT 1", (uid,)).fetchone()
+    conn.close()
+    return r
+
+def start_challenge(uid, challenge_id):
+    today = now_samara().date().strftime("%Y-%m-%d")
+    conn = sqlite3.connect("weight_tracker.db")
+    conn.execute(
+        "INSERT INTO weekly_challenge (user_id, challenge_id, start_date, completed) VALUES (?,?,?,0)",
+        (uid, challenge_id, today))
+    conn.commit(); conn.close()
+
+def build_challenges_menu(uid):
+    current = get_current_challenge(uid)
+    lines = ["🏆 *ЕЖЕНЕДЕЛЬНЫЕ ЧЕЛЛЕНДЖИ*\n"]
+    if current and not current[2]:
+        ch_id = current[0]
+        ch = next((c for c in WEEKLY_CHALLENGES if c["id"] == ch_id), None)
+        if ch:
+            lines.append(f"🎯 *Текущий челлендж:*\n{ch['name']}\n_{ch['desc']}_\n+{ch['xp']} XP\n")
+    lines.append("*Выбери следующий:*")
+    return "\n".join(lines)
+
+
+# ══════════════════════════════════════════════════════
+#  ДНЕВНИК ТРЕНИРОВОК
+# ══════════════════════════════════════════════════════
+def log_exercise(uid, exercise, weight_kg, sets, reps):
+    conn = sqlite3.connect("weight_tracker.db")
+    today = now_samara().date().strftime("%Y-%m-%d")
+    conn.execute(
+        "INSERT INTO exercise_log (user_id, date, exercise, weight_kg, sets, reps) "
+        "VALUES (?,?,?,?,?,?)",
+        (uid, today, exercise, weight_kg, sets, reps))
+    conn.commit(); conn.close()
+
+def get_exercise_history(uid, exercise, limit=5):
+    conn = sqlite3.connect("weight_tracker.db")
+    rows = conn.execute(
+        "SELECT date, weight_kg, sets, reps FROM exercise_log "
+        "WHERE user_id=? AND exercise=? ORDER BY date DESC LIMIT ?",
+        (uid, exercise, limit)).fetchall()
+    conn.close()
+    return rows
+
+def build_exercise_log_today(uid):
+    conn = sqlite3.connect("weight_tracker.db")
+    today = now_samara().date().strftime("%Y-%m-%d")
+    rows = conn.execute(
+        "SELECT exercise, weight_kg, sets, reps FROM exercise_log "
+        "WHERE user_id=? AND date=? ORDER BY id",
+        (uid, today)).fetchall()
+    conn.close()
+    if not rows:
+        return "🏋️ *Дневник тренировки*\n\nСегодня ничего не записано."
+    lines = [f"🏋️ *Тренировка {today}*\n"]
+    for ex, w, s, r in rows:
+        volume = round(w * s * r, 1) if w else 0
+        lines.append(f"• *{ex}* — {w}кг × {s}×{r} = {volume} кг объём")
+    return "\n".join(lines)
+
+def build_exercise_progression(uid, exercise):
+    rows = get_exercise_history(uid, exercise, 8)
+    if not rows:
+        return f"📈 Нет данных по *{exercise}*"
+    lines = [f"📈 *Прогрессия: {exercise}*\n"]
+    for d, w, s, r in reversed(rows):
+        vol = round(w * s * r, 1) if w else 0
+        lines.append(f"• {d[5:]} — {w}кг × {s}×{r} (объём: {vol})")
+    # Тренд
+    weights = [r[1] for r in rows if r[1]]
+    if len(weights) >= 2:
+        delta = round(weights[0] - weights[-1], 1)
+        if delta < 0:
+            lines.append(f"\n📉 Рабочий вес вырос на *{abs(delta)} кг* за период!")
+        elif delta > 0:
+            lines.append(f"\n📈 Рабочий вес снизился на *{delta} кг*")
+    return "\n".join(lines)
+
+
+# ══════════════════════════════════════════════════════
+#  ПЕРСОНАЛЬНЫЙ ПЛАН ПИТАНИЯ
+# ══════════════════════════════════════════════════════
+def build_nutrition_plan(uid):
+    profile = get_profile(uid)
+    if not profile:
+        return "📋 Сначала настрой профиль (/start)"
+    goal_kcal = get_daily_kcal_goal(uid)
+    # КБЖУ разбивка
+    if profile.get("drying_mode"):
+        protein_pct, fat_pct, carb_pct = 0.40, 0.30, 0.30
+        goal_label = "🔥 Сушка"
+    else:
+        protein_pct, fat_pct, carb_pct = 0.30, 0.25, 0.45
+        goal_label = "📉 Похудение"
+    protein_g = round(goal_kcal * protein_pct / 4)
+    fat_g     = round(goal_kcal * fat_pct     / 9)
+    carb_g    = round(goal_kcal * carb_pct    / 4)
+
+    lines = [
+        f"📋 *ПЕРСОНАЛЬНЫЙ ПЛАН ПИТАНИЯ*\n",
+        f"Цель: {goal_label}",
+        f"Калории: *{goal_kcal} ккал/день*\n",
+        f"🥩 Белки:  *{protein_g} г* ({round(protein_pct*100)}%) — {round(protein_g/4*4)} ккал",
+        f"🥑 Жиры:   *{fat_g} г* ({round(fat_pct*100)}%) — {round(fat_g*9)} ккал",
+        f"🌾 Углеводы: *{carb_g} г* ({round(carb_pct*100)}%) — {round(carb_g*4)} ккал\n",
+        "*Распределение по приёмам пищи:*",
+        f"🌅 Завтрак (25%): {round(goal_kcal*0.25)} ккал",
+        f"🥗 Обед    (35%): {round(goal_kcal*0.35)} ккал",
+        f"🍎 Перекус (10%): {round(goal_kcal*0.10)} ккал",
+        f"🌆 Ужин    (30%): {round(goal_kcal*0.30)} ккал\n",
+        "*Рекомендации:*",
+        f"• Пей *{round(float(profile.get('current_weight') or 75) * 0.033, 1)} л* воды в день",
+        f"• Белка минимум *{round(float(profile.get('current_weight') or 75) * 1.8)} г/день*",
+        "• Последний приём пищи за 2–3 ч до сна",
+        "• Углеводы — в первой половине дня",
+    ]
+    return "\n".join(lines)
+
+
+# ══════════════════════════════════════════════════════
+#  РЕФЕРАЛЬНАЯ СИСТЕМА
+# ══════════════════════════════════════════════════════
+def get_referral_code(uid):
+    return f"FIT{uid}"
+
+def get_referral_count(uid):
+    conn = sqlite3.connect("weight_tracker.db")
+    r = conn.execute(
+        "SELECT COUNT(*) FROM referrals WHERE referrer_id=?", (uid,)).fetchone()
+    conn.close()
+    return r[0] if r else 0
+
+def register_referral(new_uid, ref_code):
+    try:
+        referrer_id = int(ref_code.replace("FIT", ""))
+        if referrer_id == new_uid:
+            return False
+        conn = sqlite3.connect("weight_tracker.db")
+        existing = conn.execute(
+            "SELECT id FROM referrals WHERE new_user_id=?", (new_uid,)).fetchone()
+        if not existing:
+            conn.execute(
+                "INSERT INTO referrals (referrer_id, new_user_id, date) VALUES (?,?,?)",
+                (referrer_id, new_uid, now_samara().date().strftime("%Y-%m-%d")))
+            conn.commit()
+            # Бонус XP
+            add_xp(referrer_id, "referral", 100)
+        conn.close()
+        return True
+    except Exception:
+        return False
+
+def build_referral_info(uid):
+    code = get_referral_code(uid)
+    count = get_referral_count(uid)
+    bot_name = "your_fitness_bot"  # будет заменён
+    link = f"https://t.me/{bot_name}?start={code}"
+    return (
+        f"👥 *РЕФЕРАЛЬНАЯ ПРОГРАММА*\n\n"
+        f"Приглашай друзей и получай *+100 XP* за каждого!\n\n"
+        f"🔗 Твоя ссылка:\n`{link}`\n\n"
+        f"👤 Приглашено друзей: *{count}*\n"
+        f"⚡ Заработано XP: *{count * 100}*\n\n"
+        f"_Поделись ссылкой — друг получит бота, ты — XP!_"
+    )
+
+
+# ══════════════════════════════════════════════════════
+#  ЭКСПОРТ ДАННЫХ В JSON (бэкап)
+# ══════════════════════════════════════════════════════
+def export_full_json(uid):
+    import json as _json
+    conn = sqlite3.connect("weight_tracker.db")
+    data = {}
+    tables = [
+        ("weights", "SELECT date, weight FROM weights WHERE user_id=? ORDER BY date"),
+        ("steps",   "SELECT date, step_count FROM steps WHERE user_id=? ORDER BY date"),
+        ("food_diary", "SELECT date, food_name, calories FROM food_diary WHERE user_id=? ORDER BY date"),
+        ("water_log",  "SELECT date, cups FROM water_log WHERE user_id=? ORDER BY date"),
+        ("sleep_log",  "SELECT date, hours FROM sleep_log WHERE user_id=? ORDER BY date"),
+        ("pressure_log", "SELECT date, systolic, diastolic, pulse FROM pressure_log WHERE user_id=? ORDER BY date"),
+    ]
+    for table, query in tables:
+        try:
+            rows = conn.execute(query, (uid,)).fetchall()
+            data[table] = [list(r) for r in rows]
+        except Exception:
+            data[table] = []
+    profile = get_profile(uid)
+    if profile:
+        data["profile"] = {k: str(v) for k, v in profile.items() if k != "user_id"}
+    data["exported_at"] = now_samara().strftime("%Y-%m-%d %H:%M")
+    conn.close()
+    return _json.dumps(data, ensure_ascii=False, indent=2)
+
+
 def compare_weeks(uid):
     """Сравнивает текущую и прошлую неделю по шагам и весу"""
     wd = get_weights(uid)
