@@ -4632,15 +4632,22 @@ def get_week_schedule(profile, gym_days):
         s = {1:{2:"А"},2:{1:"К",3:"А"},3:{0:"А",2:"К",4:"Б"},
              4:{0:"А",1:"К",3:"Б",4:"К"},5:{0:"А",1:"К",2:"Б",3:"К",4:"В"}}
 
+    # Режим «только домашние» (home_workouts == 2) — зал не нужен вообще
+    if home_mode == 2:
+        home_only_rotation = ["ДА","ДБ","ДК","ДВ","ДА","ДК","ДБ"]
+        schedule = {}
+        for day in range(7):
+            schedule[day] = home_only_rotation[day % len(home_only_rotation)]
+        return schedule
+
     schedule = dict(s.get(gd, s.get(3, {})))
 
-    # Если домашние тренировки включены — добавляем их в свободные дни
-    if home_mode:
+    # Если домашние тренировки включены (home_workouts == 1) — добавляем в дни отдыха
+    if home_mode == 1:
         home_rotation = ["ДА","ДБ","ДВ","ДК"]
         home_idx = 0
         for day in range(7):
             if day not in schedule:
-                # Добавляем домашнюю тренировку через день (не каждый свободный день)
                 if home_idx % 2 == 0:
                     schedule[day] = home_rotation[(home_idx // 2) % len(home_rotation)]
                 home_idx += 1
