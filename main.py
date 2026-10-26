@@ -670,6 +670,13 @@ def init_db():
     c.execute('''CREATE TABLE IF NOT EXISTS medication_log (
         id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER,
         med_id INTEGER, date TEXT)''')
+    c.execute('''CREATE TABLE IF NOT EXISTS user_reminders (
+        id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER,
+        reminder_text TEXT, hour INTEGER, minute INTEGER,
+        repeat_daily INTEGER DEFAULT 1, active INTEGER DEFAULT 1)''')
+    c.execute('''CREATE TABLE IF NOT EXISTS favorite_dishes (
+        user_id INTEGER, dish TEXT,
+        PRIMARY KEY (user_id, dish))''')
     # Миграция
     for col, dflt in [
         ("fatigue","0"), ("last_workout_date","''"), ("next_workout_override","''"),
@@ -3103,6 +3110,525 @@ def export_monthly_report_text(uid):
     return "\n".join(lines)
 
 
+# ══════════════════════════════════════════════════════
+#  ГОЛОСОВОЙ ВВОД
+# ══════════════════════════════════════════════════════
+import subprocess, os
+
+def transcribe_voice_ogg(ogg_path):
+    """Конвертирует ogg→wav и пытается распознать через vosk или возвращает None"""
+    try:
+        wav_path = ogg_path.replace(".ogg", ".wav")
+        subprocess.run(
+            ["ffmpeg", "-y", "-i", ogg_path, "-ar", "16000", "-ac", "1", wav_path],
+            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=10)
+        try:
+            import vosk, json as _json, wave as _wave
+            model_path = "/opt/vosk-model-ru"
+            if not os.path.exists(model_path):
+                return None
+            model = vosk.Model(model_path)
+            wf = _wave.open(wav_path, "rb")
+            rec = vosk.KaldiRecognizer(model, wf.getframerate())
+            result = ""
+            while True:
+                data = wf.readframes(4000)
+                if not data: break
+                if rec.AcceptWaveform(data):
+                    result += _json.loads(rec.Result()).get("text", "")
+            result += _json.loads(rec.FinalResult()).get("text", "")
+            wf.close()
+            return result.strip() if result.strip() else None
+        except ImportError:
+            return None
+    except Exception:
+        return None
+
+def parse_voice_command(text):
+    """Парсит распознанный текст голосовой команды. Возвращает dict или None."""
+    if not text:
+        return None
+    t = text.lower().strip()
+    import re as _re
+    # вес 105.7
+    m = _re.search(r"(?:вес|взвесился|весит?)\s+(\d+[\.,]?\d*)", t)
+    if m:
+        return {"type": "weight", "value": float(m.group(1).replace(",", "."))}
+    # шаги 8500
+    m = _re.search(r"(?:шаги?|прошёл|прошел|ходил)\s+(\d+)", t)
+    if m:
+        return {"type": "steps", "value": int(m.group(1))}
+    # вода 3 / выпил 3 стакана
+    m = _re.search(r"(?:вода|воды|выпил|стакан[аов]*)\s+(\d+)", t)
+    if m:
+        return {"type": "water", "value": int(m.group(1))}
+    # продукт + граммы: гречка 200 грамм
+    m = _re.search(r"([а-яё ]+?)\s+(\d+)\s*(?:грамм|г\b|гр\b)?", t)
+    if m:
+        product = m.group(1).strip()
+        grams = int(m.group(2))
+        if product in KCAL_PER_100G and 10 <= grams <= 2000:
+            return {"type": "food", "product": product, "grams": grams}
+    return None
+
+
+# ══════════════════════════════════════════════════════
+#  ПОЛЬЗОВАТЕЛЬСКИЕ НАПОМИНАНИЯ
+# ══════════════════════════════════════════════════════
+def save_user_reminder(uid, text, hour, minute, repeat_daily=True):
+    conn = sqlite3.connect("weight_tracker.db")
+    conn.execute(
+        "INSERT INTO user_reminders (user_id, reminder_text, hour, minute, repeat_daily, active) VALUES (?,?,?,?,?,1)",
+        (uid, text, hour, minute, 1 if repeat_daily else 0))
+    conn.commit(); conn.close()
+
+def get_user_reminders(uid):
+    conn = sqlite3.connect("weight_tracker.db")
+    rows = conn.execute(
+        "SELECT id, reminder_text, hour, minute FROM user_reminders WHERE user_id=? AND active=1",
+        (uid,)).fetchall()
+    conn.close()
+    return rows
+
+def delete_user_reminder(uid, rid):
+    conn = sqlite3.connect("weight_tracker.db")
+    conn.execute("UPDATE user_reminders SET active=0 WHERE id=? AND user_id=?", (rid, uid))
+    conn.commit(); conn.close()
+
+def build_reminders_list(uid):
+    rows = get_user_reminders(uid)
+    if not rows:
+        return ("⏰ *Мои напоминания*\n\nНапоминаний нет.\n\n"
+                "Добавь через кнопку ниже.\nПример: *«Взвеситься»* в 8:00")
+    lines = ["⏰ *Мои напоминания:*\n"]
+    for rid, text, hour, minute in rows:
+        lines.append(f"• {hour:02d}:{minute:02d} — {text}")
+    return "\n".join(lines)
+
+
+# ══════════════════════════════════════════════════════
+#  АНТИПЛАТО (детектор + план)
+# ══════════════════════════════════════════════════════
+def detect_plateau(uid):
+    """Возвращает кол-во дней плато если оно есть, иначе 0"""
+    wd = get_weights(uid)
+    if len(wd) < 5:
+        return 0
+    recent = [w[0] for w in wd[-10:]]
+    max_diff = max(recent) - min(recent)
+    if max_diff < 0.5 and len(recent) >= 5:
+        return len(recent)
+    return 0
+
+def build_plateau_plan():
+    return (
+        "🚨 *Обнаружено ПЛАТО!* Вес стоит на месте.\n\n"
+        "*5 способов выйти из плато:*\n\n"
+        "1️⃣ *Зигзаг калорий*\n"
+        "   Пн-Ср-Пт: −200 ккал от нормы\n"
+        "   Вт-Чт-Сб: +200 ккал от нормы\n"
+        "   Вс: норма\n\n"
+        "2️⃣ *Смени тип кардио*\n"
+        "   Если бегал — пересядь на велосипед\n"
+        "   Если ходил — добавь интервалы\n\n"
+        "3️⃣ *Рефид-день*\n"
+        "   1 день +500 ккал углеводами (не жирами)\n"
+        "   Это поднимает лептин и «перезапускает» метаболизм\n\n"
+        "4️⃣ *Проверь воду и соль*\n"
+        "   Задержка воды маскирует потерю жира\n"
+        "   Уменьши соль на 3 дня, пей больше воды\n\n"
+        "5️⃣ *Сделай перерыв*\n"
+        "   2–3 дня на поддерживающем калораже\n"
+        "   Снижает кортизол и помогает организму перестроиться\n\n"
+        "_Плато — нормальная часть пути. Это не остановка, это перегруппировка! 💪_"
+    )
+
+
+# ══════════════════════════════════════════════════════
+#  ИНФОГРАФИКА ПРОГРЕССА
+# ══════════════════════════════════════════════════════
+def build_progress_infographic(uid):
+    profile = get_profile(uid)
+    if not profile:
+        return "📊 Сначала настрой профиль."
+    wd = get_weights(uid)
+    if not wd:
+        return "📊 Нет данных о весе."
+
+    start_w = wd[0][0]
+    curr_w  = wd[-1][0]
+    target  = profile.get("target_weight") or 70.0
+    total_need = round(start_w - target, 1)
+    lost = round(start_w - curr_w, 1)
+    remain = round(curr_w - target, 1)
+    pct = max(0, min(100, round(lost / total_need * 100) if total_need > 0 else 0))
+
+    # Прогресс-бар
+    filled = pct // 5
+    bar = "█" * filled + "░" * (20 - filled)
+
+    # Дней в пути
+    try:
+        start_date = datetime.strptime(wd[0][1][:10], "%Y-%m-%d").date()
+        days_in = (now_samara().date() - start_date).days
+    except Exception:
+        days_in = len(wd)
+
+    streak_cur, streak_best = get_streak(uid)
+
+    # Средний темп
+    if len(wd) >= 2 and days_in > 0:
+        rate_per_week = round(lost / (days_in / 7), 2) if days_in >= 7 else lost
+    else:
+        rate_per_week = 0
+
+    lines = [
+        "📊 *МОЙ ПРОГРЕСС*\n",
+        f"⚖️  Старт:   *{start_w} кг*",
+        f"📍  Сейчас: *{curr_w} кг*",
+        f"🎯  Цель:   *{target} кг*\n",
+        f"[{bar}] *{pct}%*\n",
+        f"📉 Сброшено:  *{lost} кг*",
+        f"📌 Осталось: *{remain} кг*",
+        f"📅 Дней в пути: *{days_in}*",
+        f"🔥 Стрик: *{streak_cur} дн.* (рекорд: {streak_best})",
+    ]
+    if rate_per_week > 0:
+        lines.append(f"📈 Темп: *{rate_per_week} кг/нед*")
+
+    return "\n".join(lines)
+
+
+# ══════════════════════════════════════════════════════
+#  ПРОГНОЗ ПО НЕДЕЛЯМ (таблица)
+# ══════════════════════════════════════════════════════
+def build_weekly_forecast(uid):
+    profile = get_profile(uid)
+    if not profile:
+        return "📅 Сначала настрой профиль."
+    wd = get_weights(uid)
+    if len(wd) < 2:
+        return "📅 Нужно минимум 2 записи веса для прогноза."
+
+    curr_w = wd[-1][0]
+    target = profile.get("target_weight") or 70.0
+
+    # Средний темп за последние записи
+    try:
+        n = min(len(wd), 8)
+        days_span = (datetime.strptime(wd[-1][1][:10], "%Y-%m-%d") -
+                     datetime.strptime(wd[-n][1][:10], "%Y-%m-%d")).days
+        lost_span = wd[-n][0] - wd[-1][0]
+        if days_span > 0 and lost_span > 0:
+            rate_per_week = lost_span / (days_span / 7)
+        else:
+            rate_per_week = 0.3
+    except Exception:
+        rate_per_week = 0.3
+
+    if rate_per_week <= 0:
+        return "📅 Нет устойчивого тренда снижения для прогноза."
+
+    lines = [f"📅 *Прогноз по неделям* (темп: {round(rate_per_week, 2)} кг/нед)\n"]
+    w = curr_w
+    today = now_samara().date()
+    for week in range(1, 13):
+        w = round(w - rate_per_week, 1)
+        date = today + timedelta(weeks=week)
+        marker = " ← 🎯 ЦЕЛЬ!" if w <= target and (w + rate_per_week) > target else ""
+        lines.append(f"Нед. {week:2d} ({date.strftime('%d.%m')}) → *{max(w, target):.1f} кг*{marker}")
+        if w <= target:
+            break
+
+    return "\n".join(lines)
+
+
+# ══════════════════════════════════════════════════════
+#  МЕНЮ НА НЕДЕЛЮ
+# ══════════════════════════════════════════════════════
+WEEK_MENU_TEMPLATE = {
+    "Пн": {
+        "🌅 Завтрак": ("овсянка", 80, "яйцо", 2, "яблоко", 150),
+        "🥗 Обед":    ("куриная грудка", 200, "бурый рис", 100, "огурец", 150),
+        "🌆 Ужин":    ("говядина", 150, "гречка", 80, "помидор", 150),
+    },
+    "Вт": {
+        "🌅 Завтрак": ("творог", 200, "банан", 120, None, 0),
+        "🥗 Обед":    ("индейка", 200, "макароны", 100, "брокколи", 150),
+        "🌆 Ужин":    ("куриное бедро", 150, "булгур", 80, "огурец", 150),
+    },
+    "Ср": {
+        "🌅 Завтрак": ("гречка", 80, "яйцо", 2, "помидор", 150),
+        "🥗 Обед":    ("куриная грудка", 200, "овощной суп", 300, None, 0),
+        "🌆 Ужин":    ("рыба", 200, "бурый рис", 80, "стручковая фасоль", 150),
+    },
+    "Чт": {
+        "🌅 Завтрак": ("овсянка", 80, "яблоко", 150, None, 0),
+        "🥗 Обед":    ("говядина", 180, "гречка", 100, "брокколи", 150),
+        "🌆 Ужин":    ("куриная грудка", 180, "булгур", 80, "шпинат", 100),
+    },
+    "Пт": {
+        "🌅 Завтрак": ("творог", 200, "груша", 130, None, 0),
+        "🥗 Обед":    ("индейка", 200, "бурый рис", 100, "огурец", 150),
+        "🌆 Ужин":    ("рыба", 200, "гречка", 80, "помидор", 150),
+    },
+    "Сб": {
+        "🌅 Завтрак": ("яйцо", 3, "овсянка", 60, "банан", 120),
+        "🥗 Обед":    ("куриная грудка", 250, "макароны", 120, "стручковая фасоль", 150),
+        "🌆 Ужин":    ("говядина", 200, "булгур", 100, "огурец", 150),
+    },
+    "Вс": {
+        "🌅 Завтрак": ("гречка", 100, "яйцо", 2, "яблоко", 150),
+        "🥗 Обед":    ("куриное бедро", 200, "бурый рис", 120, "помидор", 150),
+        "🌆 Ужин":    ("индейка", 180, "овощной суп", 250, None, 0),
+    },
+}
+
+def build_week_menu(uid):
+    profile = get_profile(uid)
+    goal_kcal = get_daily_kcal_goal(uid) if profile else 2000
+    lines = [f"📅 *МЕНЮ НА НЕДЕЛЮ* (~{goal_kcal} ккал/день)\n"]
+    for day, meals in WEEK_MENU_TEMPLATE.items():
+        day_kcal = 0
+        lines.append(f"*{day}*")
+        for slot, items in meals.items():
+            slot_kcal = 0
+            foods = []
+            for i in range(0, len(items), 2):
+                prod = items[i]; grams = items[i+1]
+                if prod:
+                    k = round(KCAL_PER_100G.get(prod, 0) * grams / 100)
+                    slot_kcal += k
+                    foods.append(f"{prod} {grams}г")
+            day_kcal += slot_kcal
+            lines.append(f"  {slot}: {', '.join(foods)} — {slot_kcal} ккал")
+        lines.append(f"  *Итого: {day_kcal} ккал*\n")
+    return "\n".join(lines)
+
+def build_shopping_list_from_menu():
+    """Список покупок на неделю из меню"""
+    from collections import defaultdict
+    totals = defaultdict(float)
+    for day, meals in WEEK_MENU_TEMPLATE.items():
+        for slot, items in meals.items():
+            for i in range(0, len(items), 2):
+                prod = items[i]; grams = items[i+1]
+                if prod:
+                    totals[prod] += grams
+    lines = ["🛒 *Список покупок на неделю:*\n"]
+    categories = {
+        "🥩 Мясо/рыба": ["куриная грудка","куриное бедро","говядина","индейка","рыба"],
+        "🥚 Молочное/яйца": ["яйцо","творог","молоко","йогурт"],
+        "🌾 Крупы": ["гречка","бурый рис","булгур","овсянка","макароны"],
+        "🥦 Овощи": ["брокколи","огурец","помидор","шпинат","стручковая фасоль","морковь"],
+        "🍎 Фрукты": ["яблоко","банан","груша","апельсин"],
+        "🍲 Прочее": ["овощной суп"],
+    }
+    categorized = set()
+    for cat, products in categories.items():
+        cat_items = []
+        for p in products:
+            if p in totals:
+                cat_items.append(f"  • {p.capitalize()} — {round(totals[p])} г")
+                categorized.add(p)
+        if cat_items:
+            lines.append(cat)
+            lines.extend(cat_items)
+            lines.append("")
+    other = [(p, g) for p, g in totals.items() if p not in categorized]
+    if other:
+        lines.append("📦 Остальное")
+        for p, g in other:
+            lines.append(f"  • {p.capitalize()} — {round(g)} г")
+    return "\n".join(lines)
+
+
+# ══════════════════════════════════════════════════════
+#  ИЗБРАННЫЕ БЛЮДА
+# ══════════════════════════════════════════════════════
+def add_favorite_dish(uid, dish):
+    conn = sqlite3.connect("weight_tracker.db")
+    conn.execute("INSERT OR IGNORE INTO favorite_dishes (user_id, dish) VALUES (?,?)", (uid, dish))
+    conn.commit(); conn.close()
+
+def remove_favorite_dish(uid, dish):
+    conn = sqlite3.connect("weight_tracker.db")
+    conn.execute("DELETE FROM favorite_dishes WHERE user_id=? AND dish=?", (uid, dish))
+    conn.commit(); conn.close()
+
+def get_favorite_dishes(uid):
+    conn = sqlite3.connect("weight_tracker.db")
+    rows = conn.execute("SELECT dish FROM favorite_dishes WHERE user_id=?", (uid,)).fetchall()
+    conn.close()
+    return [r[0] for r in rows]
+
+def build_favorites_menu(uid):
+    favs = get_favorite_dishes(uid)
+    if not favs:
+        return "⭐ *Избранные блюда*\n\nПусто. Нажми ⭐ рядом с блюдом чтобы добавить."
+    lines = ["⭐ *Мои избранные блюда:*\n"]
+    for dish in favs:
+        kcal = KCAL_PER_100G.get(dish, 0)
+        portion = DEFAULT_PORTIONS.get(dish, 100)
+        lines.append(f"• {dish.capitalize()} — {portion}г / {round(kcal*portion/100)} ккал")
+    return "\n".join(lines)
+
+
+# ══════════════════════════════════════════════════════
+#  СУПЕР-СЕТЫ
+# ══════════════════════════════════════════════════════
+SUPERSETS = {
+    "💪 Грудь + трицепс": [
+        ("Жим лёжа", 4, 10, "https://youtu.be/rT7DgCr-3pg"),
+        ("Разводка гантелей", 3, 12, "https://youtu.be/eozdVDA78K0"),
+        ("Отжимания узким хватом", 3, 15, None),
+        ("Французский жим", 3, 12, "https://youtu.be/d_KZxkY_0cM"),
+    ],
+    "🏋️ Спина + бицепс": [
+        ("Тяга штанги в наклоне", 4, 10, "https://youtu.be/G8l_8chR5BE"),
+        ("Подтягивания", 4, "макс", None),
+        ("Тяга гантели одной рукой", 3, 12, "https://youtu.be/pYcpY20QaE8"),
+        ("Сгибание на бицепс", 3, 12, "https://youtu.be/ykJmrZ5v0Oo"),
+    ],
+    "🦵 Ноги": [
+        ("Приседания со штангой", 4, 10, "https://youtu.be/ultWZbUMPL8"),
+        ("Жим ногами", 4, 12, "https://youtu.be/IZxyjW7MPJQ"),
+        ("Румынская тяга", 3, 12, "https://youtu.be/jEy_czb3RKA"),
+        ("Выпады с гантелями", 3, 12, None),
+        ("Подъёмы на икры", 4, 20, None),
+    ],
+    "🔥 Всё тело (круговая)": [
+        ("Берпи", 3, 10, None),
+        ("Приседания", 3, 15, None),
+        ("Отжимания", 3, 15, None),
+        ("Скалолаз", 3, 20, None),
+        ("Планка", 3, "45 сек", None),
+    ],
+}
+
+WARMUP_BY_MUSCLE = {
+    "💪 Грудь + трицепс": [
+        "Вращение плечами назад 20 раз",
+        "Разведение рук в стороны 15 раз",
+        "Отжимания от стены 15 раз",
+        "Растяжка груди у стены 30 сек × 2",
+    ],
+    "🏋️ Спина + бицепс": [
+        "Круговые движения руками 20 раз",
+        "Наклоны вперёд без веса 10 раз",
+        "Тяга резинки 15 раз",
+        "Вис на перекладине 20 сек",
+    ],
+    "🦵 Ноги": [
+        "Ходьба на месте с высоким подъёмом колен 30 сек",
+        "Приседания без веса 15 раз",
+        "Выпады без веса 10 раз каждая нога",
+        "Боковые выпады 10 раз каждая нога",
+        "Вращение коленей 10 раз",
+    ],
+    "🔥 Всё тело (круговая)": [
+        "Прыжки на месте 30 сек",
+        "Бег на месте 30 сек",
+        "Приседания без веса 10 раз",
+        "Отжимания облегчённые 10 раз",
+    ],
+}
+
+def build_superset_text(name):
+    exercises = SUPERSETS.get(name)
+    if not exercises:
+        return "Не найдено."
+    warmup = WARMUP_BY_MUSCLE.get(name, [])
+    lines = [f"*{name}*\n"]
+    if warmup:
+        lines.append("🔥 *Разминка (5 мин):*")
+        for w in warmup:
+            lines.append(f"  • {w}")
+        lines.append("")
+    lines.append("💪 *Упражнения:*")
+    for i, (ex, sets, reps, url) in enumerate(exercises, 1):
+        link = f" [▶️]({url})" if url else ""
+        lines.append(f"  {i}. {ex} — {sets}×{reps}{link}")
+    lines.append("\n⏱️ Отдых между суперсетами: 90–120 сек")
+    return "\n".join(lines)
+
+
+# ══════════════════════════════════════════════════════
+#  ВИРТУАЛЬНЫЙ ТРЕНЕР + ЦИТАТА ДНЯ
+# ══════════════════════════════════════════════════════
+MORNING_QUOTES = [
+    "☀️ Каждое утро — новый шанс стать лучше вчерашнего себя.",
+    "💪 Дисциплина — это выбор между тем, чего ты хочешь сейчас, и тем, чего ты хочешь больше всего.",
+    "🔥 Боль от тренировки проходит. Гордость остаётся навсегда.",
+    "🏆 Ты не должен быть великим чтобы начать, но ты должен начать чтобы стать великим.",
+    "⚡ Тело достигает того, во что верит разум.",
+    "🎯 Прогресс, а не совершенство. Каждый шаг вперёд имеет значение.",
+    "🌟 Сложнее всего начать. Всё остальное — просто продолжение.",
+    "💎 Трудности делают тебя сильнее. Принимай их как топливо.",
+    "🚀 Сегодня ты сделаешь то, что другие не хотят, чтобы завтра иметь то, чего другие не могут.",
+    "🧠 Разум сдаётся раньше тела. Держись ещё чуть-чуть.",
+    "🌅 Новый день — чистый лист. Напиши что-то достойное.",
+    "💫 Маленькие ежедневные улучшения приводят к потрясающим результатам.",
+    "🏃 Единственная плохая тренировка — та, которой не было.",
+    "⚖️ Весы показывают вес, но не показывают твою силу воли.",
+]
+
+def get_quote_of_day():
+    day_num = now_samara().timetuple().tm_yday
+    return MORNING_QUOTES[day_num % len(MORNING_QUOTES)]
+
+def build_trainer_message(uid):
+    """Виртуальный тренер — анализирует активность и реагирует"""
+    conn = sqlite3.connect("weight_tracker.db")
+    today = now_samara().date()
+    # Последняя запись веса
+    last_weight = conn.execute(
+        "SELECT date FROM weights WHERE user_id=? ORDER BY id DESC LIMIT 1", (uid,)).fetchone()
+    # Последние шаги
+    last_steps_row = conn.execute(
+        "SELECT step_count, date FROM steps WHERE user_id=? ORDER BY id DESC LIMIT 1", (uid,)).fetchone()
+    conn.close()
+
+    messages = []
+
+    if last_weight:
+        try:
+            lw_date = datetime.strptime(last_weight[0][:10], "%Y-%m-%d").date()
+            days_ago = (today - lw_date).days
+            if days_ago >= 3:
+                messages.append(f"😤 Эй! Ты не взвешивался уже *{days_ago} дня(-ей)*!\nВзвесься сегодня утром — без данных нельзя анализировать прогресс.")
+            elif days_ago == 0:
+                messages.append("✅ Молодец, сегодня уже взвесился!")
+        except Exception:
+            pass
+
+    if last_steps_row:
+        try:
+            steps, sdate = last_steps_row
+            sd = datetime.strptime(sdate[:10], "%Y-%m-%d").date()
+            days_ago = (today - sd).days
+            if days_ago >= 2:
+                messages.append(f"🦥 Шаги не вносились *{days_ago} дня(-ей)*. Даже прогулка на 20 минут — это уже 2000 шагов!")
+            elif steps < 5000:
+                messages.append(f"🔴 Вчера было только *{steps:,} шагов*. Сегодня постарайся дойти до 8000+!".replace(",", " "))
+            elif steps >= 12000:
+                messages.append(f"🔥 *{steps:,} шагов* вчера — это огонь! Так держать!".replace(",", " "))
+        except Exception:
+            pass
+
+    streak_cur, streak_best = get_streak(uid)
+    if streak_cur >= 7:
+        messages.append(f"🏆 *{streak_cur} дней подряд* с активностью! Рекорд под угрозой — не останавливайся!")
+    elif streak_cur == 0:
+        messages.append("💤 Стрик сброшен. Начни заново — первый шаг сделай сегодня!")
+
+    if not messages:
+        messages.append("👍 Всё идёт по плану. Продолжай в том же духе!")
+
+    messages.append(f"\n_{get_quote_of_day()}_")
+    return "🤖 *Твой тренер:*\n\n" + "\n\n".join(messages)
+
+
 def compare_weeks(uid):
     """Сравнивает текущую и прошлую неделю по шагам и весу"""
     wd = get_weights(uid)
@@ -5092,6 +5618,21 @@ def main_menu(uid=None):
         types.KeyboardButton("📊 Отчёт за неделю"),
         types.KeyboardButton("🔬 Корреляции"),
     )
+    m.add(
+        types.KeyboardButton("📈 Инфографика"),
+        types.KeyboardButton("📅 Прогноз по неделям"),
+        types.KeyboardButton("🗓️ Меню на неделю"),
+    )
+    m.add(
+        types.KeyboardButton("🛒 Список покупок"),
+        types.KeyboardButton("⭐ Избранные блюда"),
+        types.KeyboardButton("⏰ Напоминания"),
+    )
+    m.add(
+        types.KeyboardButton("💪 Супер-сеты"),
+        types.KeyboardButton("🤖 Тренер"),
+        types.KeyboardButton("💬 Цитата дня"),
+    )
     return m
 
 def cancel_menu():
@@ -5456,8 +5997,117 @@ def handle_callback(call):
             f"📏 *{label}*\n\nВведи значение в сантиметрах:",
             parse_mode="Markdown", reply_markup=cancel_menu())
 
+    # ── Супер-сет выбор ──
+    elif data.startswith("superset:"):
+        name = data[9:]
+        bot.answer_callback_query(call.id)
+        text_ss = build_superset_text(name)
+        # Кнопка добавить в избранное
+        kb_ss = types.InlineKeyboardMarkup()
+        bot.send_message(cid, text_ss, parse_mode="Markdown", reply_markup=kb_ss,
+                         disable_web_page_preview=True)
+
+    # ── Напоминания: добавить ──
+    elif data == "reminder_add":
+        bot.answer_callback_query(call.id)
+        set_state(cid, "reminder_add_text")
+        bot.send_message(cid,
+            "⏰ *Новое напоминание*\n\nВведи текст напоминания\n(например: *Взвеситься*):",
+            parse_mode="Markdown", reply_markup=cancel_menu())
+
+    # ── Напоминания: удалить ──
+    elif data.startswith("reminder_del:"):
+        rid = int(data.split(":")[1])
+        delete_user_reminder(cid, rid)
+        bot.answer_callback_query(call.id, "Напоминание удалено")
+        rows = get_user_reminders(cid)
+        kb_rem = types.InlineKeyboardMarkup()
+        kb_rem.add(types.InlineKeyboardButton("➕ Добавить напоминание", callback_data="reminder_add"))
+        for r_id, rtxt, rh, rm in rows:
+            kb_rem.add(types.InlineKeyboardButton(
+                f"🗑 {rh:02d}:{rm:02d} {rtxt}", callback_data=f"reminder_del:{r_id}"))
+        bot.edit_message_text(build_reminders_list(cid), cid, call.message.message_id,
+                              parse_mode="Markdown", reply_markup=kb_rem)
+
+    # ── Плато-советы ──
+    elif data == "plateau_tips":
+        bot.answer_callback_query(call.id)
+        bot.send_message(cid, build_plateau_plan(), parse_mode="Markdown")
+
+    # ── Добавить в избранное (из калькулятора) ──
+    elif data.startswith("fav_add:"):
+        dish = data[8:]
+        add_favorite_dish(cid, dish)
+        bot.answer_callback_query(call.id, f"⭐ {dish} добавлен в избранное!")
+
     else:
         bot.answer_callback_query(call.id)
+
+@bot.message_handler(content_types=['voice'])
+def handle_voice(message):
+    cid = message.chat.id
+    try:
+        file_info = bot.get_file(message.voice.file_id)
+        import tempfile, requests as _requests
+        token = bot.token
+        url = f"https://api.telegram.org/file/bot{token}/{file_info.file_path}"
+        r = _requests.get(url, timeout=15)
+        with tempfile.NamedTemporaryFile(suffix=".ogg", delete=False) as f:
+            f.write(r.content)
+            ogg_path = f.name
+        recognized = transcribe_voice_ogg(ogg_path)
+        try: os.unlink(ogg_path)
+        except: pass
+        if not recognized:
+            bot.send_message(cid,
+                "🎤 *Голосовой ввод*\n\n"
+                "Распознавание речи недоступно на этом сервере.\n\n"
+                "💡 *Используй быстрые команды:*\n"
+                "`/w 105.7` — вес\n"
+                "`/s 8500` — шаги\n"
+                "`/water 2` — вода (стаканы)\n"
+                "Или просто напиши: `гречка 200`",
+                parse_mode="Markdown")
+            return
+        # Распознано — парсим
+        parsed = parse_voice_command(recognized)
+        if parsed:
+            ptype = parsed["type"]
+            if ptype == "weight":
+                w = parsed["value"]
+                add_weight(cid, w)
+                save_profile(cid, current_weight=w)
+                bot.send_message(cid, f"✅ *Вес {w} кг* — записан! (голосовой ввод 🎤)",
+                                 parse_mode="Markdown", reply_markup=main_menu(cid))
+            elif ptype == "steps":
+                s = parsed["value"]
+                log_steps(cid, s)
+                bot.send_message(cid, f"✅ *{s:,} шагов* — записано! (голосовой ввод 🎤)".replace(",", " "),
+                                 parse_mode="Markdown", reply_markup=main_menu(cid))
+            elif ptype == "water":
+                cups = parsed["value"]
+                log_water(cid, cups)
+                bot.send_message(cid, f"✅ *{cups} стакан(а) воды* — записано! (голосовой ввод 🎤)",
+                                 parse_mode="Markdown", reply_markup=main_menu(cid))
+            elif ptype == "food":
+                prod = parsed["product"]
+                grams = parsed["grams"]
+                kcal = round(KCAL_PER_100G[prod] * grams / 100)
+                kb_v = types.InlineKeyboardMarkup()
+                kb_v.add(types.InlineKeyboardButton("📝 Добавить в дневник",
+                    callback_data=f"add_to_diary:{prod}:{grams}"))
+                bot.send_message(cid,
+                    f"🎤 *{prod}* {grams}г = *{kcal} ккал*\n\nДобавить в дневник питания?",
+                    parse_mode="Markdown", reply_markup=kb_v)
+        else:
+            bot.send_message(cid,
+                f"🎤 Распознано: «{recognized}»\n\n"
+                "Не смог понять команду. Попробуй:\n"
+                "• «Вес 105»\n• «Прошёл 8000 шагов»\n• «Выпил 3 стакана»\n• «Гречка 200»",
+                parse_mode="Markdown")
+    except Exception as e:
+        bot.send_message(cid, "🎤 Не удалось обработать голосовое сообщение. Попробуй текстом.")
+
 
 @bot.message_handler(func=lambda m: True)
 def router(message):
@@ -6051,6 +6701,35 @@ def router(message):
                 parse_mode="Markdown", reply_markup=main_menu(cid))
         except Exception:
             bot.send_message(cid, "Введи значение в сантиметрах, например: *85.5*", parse_mode="Markdown")
+        return
+
+    # ── Напоминания: ввод текста ──
+    if state == "reminder_add_text":
+        if text:
+            set_state(cid, "reminder_add_time", extra=text)
+            bot.send_message(cid,
+                f"⏰ Напоминание: *«{text}»*\n\nТеперь введи время в формате *ЧЧ:ММ*\n(например: *08:00*)",
+                parse_mode="Markdown", reply_markup=cancel_menu())
+        else:
+            bot.send_message(cid, "Введи текст напоминания.")
+        return
+
+    # ── Напоминания: ввод времени ──
+    if state == "reminder_add_time":
+        import re as _re
+        m2 = _re.match(r"^(\d{1,2}):(\d{2})$", text.strip())
+        if m2:
+            hour, minute = int(m2.group(1)), int(m2.group(2))
+            if 0 <= hour <= 23 and 0 <= minute <= 59:
+                reminder_text = extra or "Напоминание"
+                save_user_reminder(cid, reminder_text, hour, minute)
+                set_state(cid, "idle")
+                bot.send_message(cid,
+                    f"✅ Напоминание *«{reminder_text}»* в *{hour:02d}:{minute:02d}* сохранено!\n\n"
+                    "_Бот пришлёт уведомление в нужное время._",
+                    parse_mode="Markdown", reply_markup=main_menu(cid))
+                return
+        bot.send_message(cid, "Введи время в формате ЧЧ:ММ, например: *08:00*", parse_mode="Markdown")
         return
 
     # ── Настроение: шаг 1 — оценка настроения ──
@@ -6736,6 +7415,57 @@ def router(message):
         kb2 = types.InlineKeyboardMarkup().add(
             types.InlineKeyboardButton("➕ Внести обхваты", callback_data="measure_add"))
         bot.send_message(cid, summary, parse_mode="Markdown", reply_markup=kb2)
+
+    # ── Инфографика прогресса ──
+    elif text == "📈 Инфографика":
+        bot.send_message(cid, build_progress_infographic(cid), parse_mode="Markdown")
+
+    # ── Прогноз по неделям ──
+    elif text == "📅 Прогноз по неделям":
+        bot.send_message(cid, build_weekly_forecast(cid), parse_mode="Markdown")
+
+    # ── Меню на неделю ──
+    elif text == "🗓️ Меню на неделю":
+        bot.send_message(cid, build_week_menu(cid), parse_mode="Markdown")
+
+    # ── Список покупок ──
+    elif text == "🛒 Список покупок":
+        bot.send_message(cid, build_shopping_list_from_menu(), parse_mode="Markdown")
+
+    # ── Избранные блюда ──
+    elif text == "⭐ Избранные блюда":
+        bot.send_message(cid, build_favorites_menu(cid), parse_mode="Markdown")
+
+    # ── Напоминания ──
+    elif text == "⏰ Напоминания":
+        rows = get_user_reminders(cid)
+        kb_rem = types.InlineKeyboardMarkup()
+        kb_rem.add(types.InlineKeyboardButton("➕ Добавить напоминание", callback_data="reminder_add"))
+        for rid, rtxt, rh, rm in rows:
+            kb_rem.add(types.InlineKeyboardButton(
+                f"🗑 {rh:02d}:{rm:02d} {rtxt}", callback_data=f"reminder_del:{rid}"))
+        msg = build_reminders_list(cid)
+        # Плато-проверка
+        plateau_days = detect_plateau(cid)
+        if plateau_days:
+            msg += f"\n\n⚠️ *Обнаружено плато ({plateau_days} записей)*\nНажми кнопку для советов:"
+            kb_rem.add(types.InlineKeyboardButton("🚨 Советы по выходу из плато", callback_data="plateau_tips"))
+        bot.send_message(cid, msg, parse_mode="Markdown", reply_markup=kb_rem)
+
+    # ── Супер-сеты ──
+    elif text == "💪 Супер-сеты":
+        kb_ss = types.InlineKeyboardMarkup()
+        for name in SUPERSETS:
+            kb_ss.add(types.InlineKeyboardButton(name, callback_data=f"superset:{name}"))
+        bot.send_message(cid, "💪 *Выбери группу мышц:*", parse_mode="Markdown", reply_markup=kb_ss)
+
+    # ── Виртуальный тренер ──
+    elif text == "🤖 Тренер":
+        bot.send_message(cid, build_trainer_message(cid), parse_mode="Markdown")
+
+    # ── Цитата дня ──
+    elif text == "💬 Цитата дня":
+        bot.send_message(cid, get_quote_of_day(), parse_mode="Markdown")
 
     # ── Расписание
     elif text=="🕐 Расписание дня":
@@ -7620,14 +8350,19 @@ def router(message):
                             kcal_p = KCAL_PER_100G[product]
                     if kcal_p:
                         kcal = round(kcal_p * grams / 100)
+                        is_fav = product in get_favorite_dishes(cid)
+                        kb_calc = types.InlineKeyboardMarkup()
+                        kb_calc.add(
+                            types.InlineKeyboardButton("✅ Записать", callback_data=f"add_to_diary:{product}:{int(grams)}"),
+                            types.InlineKeyboardButton("❌ Нет", callback_data="close")
+                        )
+                        if not is_fav:
+                            kb_calc.add(types.InlineKeyboardButton(
+                                "⭐ В избранное", callback_data=f"fav_add:{product}"))
                         bot.send_message(cid,
                             f"🧮 *{product.capitalize()}* {grams}г = *{kcal} ккал*\n\n"
                             f"Записать в дневник питания?",
-                            parse_mode="Markdown",
-                            reply_markup=types.InlineKeyboardMarkup().add(
-                                types.InlineKeyboardButton("✅ Записать", callback_data=f"add_to_diary:{product}:{int(grams)}"),
-                                types.InlineKeyboardButton("❌ Нет", callback_data="close")
-                            ))
+                            parse_mode="Markdown", reply_markup=kb_calc)
                         return
             except Exception:
                 pass
