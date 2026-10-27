@@ -703,6 +703,27 @@ def init_db():
     c.execute('''CREATE TABLE IF NOT EXISTS referrals (
         id INTEGER PRIMARY KEY AUTOINCREMENT, referrer_id INTEGER,
         new_user_id INTEGER, date TEXT)''')
+    c.execute('''CREATE TABLE IF NOT EXISTS water_ml_log (
+        id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER,
+        date TEXT, ml INTEGER)''')
+    c.execute('''CREATE TABLE IF NOT EXISTS stress_log (
+        id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER,
+        date TEXT, level INTEGER, note TEXT)''')
+    c.execute('''CREATE TABLE IF NOT EXISTS cycle_log (
+        id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER,
+        period_start TEXT, period_end TEXT, cycle_len INTEGER)''')
+    c.execute('''CREATE TABLE IF NOT EXISTS hrv_log (
+        id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER,
+        date TEXT, hrv INTEGER, resting_pulse INTEGER)''')
+    c.execute('''CREATE TABLE IF NOT EXISTS body_photos (
+        id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER,
+        date TEXT, file_id TEXT, note TEXT)''')
+    c.execute('''CREATE TABLE IF NOT EXISTS one_rm_log (
+        id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER,
+        exercise TEXT, weight_kg REAL, reps INTEGER, one_rm REAL, date TEXT)''')
+    c.execute('''CREATE TABLE IF NOT EXISTS health_import_log (
+        id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER,
+        source TEXT, imported_at TEXT, records INTEGER)''')
     # Миграция
     for col, dflt in [
         ("fatigue","0"), ("last_workout_date","''"), ("next_workout_override","''"),
@@ -4787,6 +4808,480 @@ def build_partner_comparison(uid):
         f"_Удачи вам обоим! Вместе проще! 💪_"
     )
 
+
+# ─────────────────────────────────────────
+#  ВОДА В МЛ
+# ─────────────────────────────────────────
+
+def add_water_ml(uid, ml):
+    today = now_samara().strftime("%Y-%m-%d")
+    conn = sqlite3.connect("weight_tracker.db")
+    ex = conn.execute("SELECT id, ml FROM water_ml_log WHERE user_id=? AND date=?", (uid, today)).fetchone()
+    if ex:
+        conn.execute("UPDATE water_ml_log SET ml=? WHERE id=?", (ex[1]+ml, ex[0]))
+    else:
+        conn.execute("INSERT INTO water_ml_log (user_id,date,ml) VALUES (?,?,?)", (uid, today, ml))
+    conn.commit(); conn.close()
+
+def get_water_ml_today(uid):
+    today = now_samara().strftime("%Y-%m-%d")
+    conn = sqlite3.connect("weight_tracker.db")
+    row = conn.execute("SELECT ml FROM water_ml_log WHERE user_id=? AND date=?", (uid, today)).fetchone()
+    conn.close()
+    return row[0] if row else 0
+
+def build_water_ml_status(uid):
+    ml = get_water_ml_today(uid)
+    goal_ml = 2500
+    pct = min(100, round(ml / goal_ml * 100))
+    filled = round(pct / 10)
+    bar = "💧" * filled + "⬜" * (10 - filled)
+    return (f"💧 *Вода сегодня*\n\n"
+            f"{bar}\n"
+            f"*{ml} мл* из {goal_ml} мл ({pct}%)\n\n"
+            f"{'✅ Норма выполнена!' if ml >= goal_ml else f'Осталось: {goal_ml-ml} мл'}")
+
+# ─────────────────────────────────────────
+#  ШТРИХКОД → Open Food Facts
+# ─────────────────────────────────────────
+
+def lookup_barcode(barcode: str):
+    """Запрос к Open Food Facts по штрихкоду. Возвращает dict или None."""
+    try:
+        import urllib.request, json as _json
+        url = f"https://world.openfoodfacts.org/api/v0/product/{barcode}.json"
+        req = urllib.request.Request(url, headers={"User-Agent": "FitnessBot/1.0"})
+        with urllib.request.urlopen(req, timeout=8) as r:
+            data = _json.loads(r.read().decode())
+        if data.get("status") != 1:
+            return None
+        prod = data["product"]
+        n = prod.get("nutriments", {})
+        return {
+            "name":     prod.get("product_name", "Продукт"),
+            "brand":    prod.get("brands", ""),
+            "kcal":     round(n.get("energy-kcal_100g") or n.get("energy_100g", 0) / 4.184 or 0),
+            "protein":  round(n.get("proteins_100g", 0), 1),
+            "fat":      round(n.get("fat_100g", 0), 1),
+            "carbs":    round(n.get("carbohydrates_100g", 0), 1),
+        }
+    except Exception:
+        return None
+
+def build_barcode_result(info, grams=100):
+    """Форматирует результат штрихкода"""
+    factor = grams / 100
+    name = info['name'] + (f" ({info['brand']})" if info['brand'] else "")
+    return (f"📦 *{name}*\n\n"
+            f"На {grams}г:\n"
+            f"🔥 Калории: *{round(info['kcal']*factor)} ккал*\n"
+            f"💪 Белки: *{round(info['protein']*factor,1)}г*\n"
+            f"🥑 Жиры: *{round(info['fat']*factor,1)}г*\n"
+            f"🌾 Углеводы: *{round(info['carbs']*factor,1)}г*")
+
+# ─────────────────────────────────────────
+#  ДНЕВНИК СТРЕССА
+# ─────────────────────────────────────────
+
+def log_stress(uid, level, note=""):
+    today = now_samara().strftime("%Y-%m-%d")
+    conn = sqlite3.connect("weight_tracker.db")
+    conn.execute("INSERT INTO stress_log (user_id,date,level,note) VALUES (?,?,?,?)",
+                 (uid, today, level, note))
+    conn.commit(); conn.close()
+
+def get_stress_history(uid, days=14):
+    conn = sqlite3.connect("weight_tracker.db")
+    rows = conn.execute(
+        "SELECT date, level, note FROM stress_log WHERE user_id=? ORDER BY date DESC LIMIT ?",
+        (uid, days)).fetchall()
+    conn.close()
+    return rows
+
+def build_stress_report(uid):
+    rows = get_stress_history(uid, 14)
+    if not rows:
+        return "📊 Записей стресса пока нет.\n\nОтмечай уровень стресса ежедневно для анализа."
+    avg = round(sum(r[1] for r in rows) / len(rows), 1)
+    emoji_map = {1:"😌",2:"🙂",3:"😐",4:"😟",5:"😰",6:"😣",7:"😤",8:"😡",9:"🤯",10:"💀"}
+    lines = [f"🧠 *Дневник стресса (14 дней)*\n", f"Средний уровень: *{avg}/10*\n"]
+    for date, lvl, note in rows[:7]:
+        em = emoji_map.get(lvl, "😐")
+        d = datetime.strptime(date, "%Y-%m-%d").strftime("%d.%m")
+        lines.append(f"{d}: {em} *{lvl}/10*" + (f" — {note}" if note else ""))
+    return "\n".join(lines)
+
+# ─────────────────────────────────────────
+#  МЕНСТРУАЛЬНЫЙ ЦИКЛ
+# ─────────────────────────────────────────
+
+CYCLE_PHASES = {
+    "менструация":    (1, 5,  "🩸 Фаза: *Менструация* (1-5 день)\n\n💡 Рекомендации:\n• Лёгкие тренировки — йога, ходьба\n• Больше железа: красное мясо, шпинат\n• Снизь интенсивность на 20-30%"),
+    "фолликулярная":  (6, 13, "🌱 Фаза: *Фолликулярная* (6-13 день)\n\n💡 Рекомендации:\n• Отличное время для силовых!\n• Энергия растёт — увеличь нагрузку\n• Углеводы помогут восстановлению"),
+    "овуляция":       (14,16, "🌸 Фаза: *Овуляция* (14-16 день)\n\n💡 Рекомендации:\n• Пик силы и выносливости\n• Подходит для рекордов и HIIT\n• Больше белка для мышц"),
+    "лютеиновая":     (17,28, "🍂 Фаза: *Лютеиновая* (17-28 день)\n\n💡 Рекомендации:\n• Умеренные тренировки\n• Тяга к сладкому — нормально\n• Больше магния: орехи, тёмный шоколад"),
+}
+
+def get_cycle_phase(uid):
+    conn = sqlite3.connect("weight_tracker.db")
+    row = conn.execute(
+        "SELECT period_start FROM cycle_log WHERE user_id=? ORDER BY id DESC LIMIT 1",
+        (uid,)).fetchone()
+    conn.close()
+    if not row:
+        return None
+    try:
+        start = datetime.strptime(row[0], "%Y-%m-%d")
+        day = (now_samara().replace(tzinfo=None) - start).days + 1
+        for phase, (d1, d2, text) in CYCLE_PHASES.items():
+            if d1 <= day <= d2:
+                return day, phase, text
+        return day, "лютеиновая", CYCLE_PHASES["лютеиновая"][2]
+    except Exception:
+        return None
+
+def log_cycle_start(uid):
+    today = now_samara().strftime("%Y-%m-%d")
+    conn = sqlite3.connect("weight_tracker.db")
+    conn.execute("INSERT INTO cycle_log (user_id, period_start) VALUES (?,?)", (uid, today))
+    conn.commit(); conn.close()
+
+# ─────────────────────────────────────────
+#  HRV / ПУЛЬС ПОКОЯ
+# ─────────────────────────────────────────
+
+def log_hrv(uid, hrv=None, pulse=None):
+    today = now_samara().strftime("%Y-%m-%d")
+    conn = sqlite3.connect("weight_tracker.db")
+    conn.execute("INSERT INTO hrv_log (user_id,date,hrv,resting_pulse) VALUES (?,?,?,?)",
+                 (uid, today, hrv or 0, pulse or 0))
+    conn.commit(); conn.close()
+
+def build_hrv_report(uid):
+    conn = sqlite3.connect("weight_tracker.db")
+    rows = conn.execute(
+        "SELECT date, hrv, resting_pulse FROM hrv_log WHERE user_id=? ORDER BY date DESC LIMIT 14",
+        (uid,)).fetchall()
+    conn.close()
+    if not rows:
+        return "💓 Данных HRV/пульса пока нет.\n\nВведи данные через кнопку *HRV / Пульс покоя*."
+    lines = ["💓 *HRV и пульс покоя (14 дней)*\n"]
+    for date, hrv, pulse in rows[:7]:
+        d = datetime.strptime(date, "%Y-%m-%d").strftime("%d.%m")
+        parts = []
+        if hrv: parts.append(f"HRV: *{hrv}*")
+        if pulse: parts.append(f"Пульс: *{pulse} уд/мин*")
+        lines.append(f"{d}: {', '.join(parts)}")
+    avg_pulse = round(sum(r[2] for r in rows if r[2]) / max(1, sum(1 for r in rows if r[2])))
+    if avg_pulse:
+        status = "🟢 Отлично" if avg_pulse < 60 else ("🟡 Норма" if avg_pulse < 75 else "🔴 Повышен")
+        lines.append(f"\nСредний пульс покоя: *{avg_pulse} уд/мин* {status}")
+    return "\n".join(lines)
+
+# ─────────────────────────────────────────
+#  ФОТО-ПРОГРЕСС
+# ─────────────────────────────────────────
+
+def save_body_photo(uid, file_id, note=""):
+    today = now_samara().strftime("%Y-%m-%d")
+    conn = sqlite3.connect("weight_tracker.db")
+    conn.execute("INSERT INTO body_photos (user_id,date,file_id,note) VALUES (?,?,?,?)",
+                 (uid, today, file_id, note))
+    conn.commit(); conn.close()
+
+def get_body_photos(uid, limit=10):
+    conn = sqlite3.connect("weight_tracker.db")
+    rows = conn.execute(
+        "SELECT date, file_id, note FROM body_photos WHERE user_id=? ORDER BY date DESC LIMIT ?",
+        (uid, limit)).fetchall()
+    conn.close()
+    return rows
+
+def build_body_photos_menu(uid):
+    photos = get_body_photos(uid, 5)
+    if not photos:
+        return "📷 *Фото-прогресс*\n\nФотографий пока нет.\n\nОтправь фото с подписью *#прогресс* чтобы сохранить."
+    lines = ["📷 *Фото-прогресс*\n\nПоследние фото:\n"]
+    for date, fid, note in photos:
+        d = datetime.strptime(date, "%Y-%m-%d").strftime("%d.%m.%Y")
+        lines.append(f"📅 {d}" + (f" — {note}" if note else ""))
+    lines.append("\n💡 Отправь фото с подписью *#прогресс* для новой записи")
+    return "\n".join(lines)
+
+# ─────────────────────────────────────────
+#  1RM — МАКСИМАЛЬНЫЙ ВЕС
+# ─────────────────────────────────────────
+
+def calculate_1rm(weight_kg, reps):
+    """Формула Эпли: 1RM = вес × (1 + повторения/30)"""
+    if reps == 1:
+        return weight_kg
+    return round(weight_kg * (1 + reps / 30), 1)
+
+def log_1rm(uid, exercise, weight_kg, reps):
+    one_rm = calculate_1rm(weight_kg, reps)
+    today = now_samara().strftime("%Y-%m-%d")
+    conn = sqlite3.connect("weight_tracker.db")
+    conn.execute("INSERT INTO one_rm_log (user_id,exercise,weight_kg,reps,one_rm,date) VALUES (?,?,?,?,?,?)",
+                 (uid, exercise.lower(), weight_kg, reps, one_rm, today))
+    conn.commit(); conn.close()
+    return one_rm
+
+def get_1rm_history(uid, exercise):
+    conn = sqlite3.connect("weight_tracker.db")
+    rows = conn.execute(
+        "SELECT date, weight_kg, reps, one_rm FROM one_rm_log WHERE user_id=? AND exercise=? ORDER BY date DESC LIMIT 10",
+        (uid, exercise.lower())).fetchall()
+    conn.close()
+    return rows
+
+def build_1rm_report(uid):
+    conn = sqlite3.connect("weight_tracker.db")
+    rows = conn.execute(
+        "SELECT exercise, MAX(one_rm), MAX(date) FROM one_rm_log WHERE user_id=? GROUP BY exercise ORDER BY MAX(date) DESC LIMIT 10",
+        (uid,)).fetchall()
+    conn.close()
+    if not rows:
+        return ("🏋️ *Рекорды (1RM)*\n\nЗаписей пока нет.\n\n"
+                "Введи: /1rm *жим лёжа* 100 5\n(упражнение, вес кг, повторений)")
+    lines = ["🏋️ *Мои рекорды (1RM)*\n"]
+    for ex, orm, date in rows:
+        d = datetime.strptime(date, "%Y-%m-%d").strftime("%d.%m.%Y")
+        lines.append(f"• {ex.capitalize()}: *{orm} кг* ({d})")
+    return "\n".join(lines)
+
+# ─────────────────────────────────────────
+#  8-НЕДЕЛЬНАЯ ПРОГРАММА ТРЕНИРОВОК
+# ─────────────────────────────────────────
+
+def build_8week_program(uid):
+    profile = get_profile(uid)
+    if not profile:
+        return "⚠️ Сначала настрой профиль."
+    pref = profile.get("workout_pref", "авто")
+    home = int(profile.get("home_workouts", 0))
+    lines = ["📅 *8-недельная программа прогрессии*\n"]
+    if home == 2:
+        lines.append("🏠 Режим: только домашние тренировки\n")
+        phases = [
+            ("Нед 1-2", "Адаптация", "3×12, лёгкий вес / своё тело"),
+            ("Нед 3-4", "Нагрузка",  "4×10, увеличь вес/сложность на 10%"),
+            ("Нед 5-6", "Интенсив",  "4×8, добавь HIIT 2 раза в неделю"),
+            ("Нед 7",   "Перегрузка","5×6, максимальная интенсивность"),
+            ("Нед 8",   "Разгрузка", "3×12, лёгкий вес — восстановление"),
+        ]
+    else:
+        lines.append("🏋️ Режим: зал\n")
+        phases = [
+            ("Нед 1-2", "Адаптация", "3×12, 60% от 1RM — техника"),
+            ("Нед 3-4", "Нагрузка",  "4×10, 70% от 1RM — объём"),
+            ("Нед 5-6", "Интенсив",  "4×8, 75-80% от 1RM — сила"),
+            ("Нед 7",   "Перегрузка","5×5, 85% от 1RM — максимум"),
+            ("Нед 8",   "Разгрузка", "3×12, 60% — восстановление"),
+        ]
+    for period, name, desc in phases:
+        lines.append(f"*{period}* — {name}\n  ↳ {desc}\n")
+    lines.append("💡 Принцип: каждые 2 недели повышай нагрузку на 5-10%.\n"
+                 "Записывай веса в дневнике упражнений для отслеживания прогрессии.")
+    return "\n".join(lines)
+
+# ─────────────────────────────────────────
+#  ИИ-АНАЛИЗ НЕДЕЛИ
+# ─────────────────────────────────────────
+
+def build_ai_week_analysis(uid):
+    """Собирает данные недели и формирует персональный анализ через Anthropic API"""
+    import os
+    profile = get_profile(uid)
+    if not profile:
+        return "⚠️ Сначала настрой профиль."
+    # Собираем данные
+    wd = get_weights(uid)
+    sd = get_steps(uid, limit=7)
+    today = now_samara().strftime("%Y-%m-%d")
+    week_ago = (now_samara() - timedelta(days=7)).strftime("%Y-%m-%d")
+    conn = sqlite3.connect("weight_tracker.db")
+    kcal_rows = conn.execute(
+        "SELECT SUM(kcal) FROM food_diary WHERE uid=? AND date>=?", (uid, week_ago)).fetchone()
+    workout_rows = conn.execute(
+        "SELECT COUNT(*) FROM workouts WHERE user_id=? AND date>=?", (uid, week_ago)).fetchone()
+    sleep_rows = conn.execute(
+        "SELECT AVG(duration_h) FROM sleep_log WHERE user_id=? AND date>=?", (uid, week_ago)).fetchone()
+    conn.close()
+    avg_kcal = round((kcal_rows[0] or 0) / 7)
+    workouts_count = workout_rows[0] or 0
+    avg_sleep = round(sleep_rows[0] or 0, 1)
+    weight_change = 0
+    if len(wd) >= 2:
+        weight_change = round(wd[-1][1] - wd[-2][1], 1)
+    avg_steps = round(sum(r[1] for r in sd) / max(1, len(sd)))
+    summary = (f"Данные за неделю: вес изменился на {weight_change} кг, "
+               f"среднее потребление {avg_kcal} ккал/день, "
+               f"тренировок {workouts_count}, "
+               f"средний сон {avg_sleep}ч, "
+               f"средние шаги {avg_steps}. "
+               f"Цель: {profile.get('target_weight','не указана')} кг.")
+    api_key = os.environ.get("ANTHROPIC_API_KEY", "")
+    if not api_key:
+        return (f"📊 *Анализ недели (без ИИ)*\n\n"
+                f"⚖️ Изменение веса: *{weight_change:+.1f} кг*\n"
+                f"🔥 Среднее ккал/день: *{avg_kcal}*\n"
+                f"🏋️ Тренировок: *{workouts_count}*\n"
+                f"😴 Средний сон: *{avg_sleep}ч*\n"
+                f"👣 Средние шаги: *{avg_steps}*\n\n"
+                f"💡 Добавь ANTHROPIC_API_KEY для ИИ-анализа")
+    try:
+        import anthropic as _anthropic
+        client = _anthropic.Anthropic(api_key=api_key)
+        resp = client.messages.create(
+            model="claude-opus-4-5",
+            max_tokens=400,
+            messages=[{"role": "user", "content":
+                f"Ты персональный фитнес-тренер. Дай краткий анализ недели и 3 конкретных совета. "
+                f"{summary} Отвечай на русском, кратко, с эмодзи, без воды."}]
+        )
+        ai_text = resp.content[0].text
+        return f"🤖 *ИИ-анализ недели*\n\n{ai_text}"
+    except Exception as e:
+        return f"⚠️ ИИ временно недоступен.\n\n📊 Данные недели:\n{summary}"
+
+# ─────────────────────────────────────────
+#  ПРОГНОЗ «ЧТО БУДЕТ ЕСЛИ»
+# ─────────────────────────────────────────
+
+def build_scenario_forecast(uid, scenario: str):
+    profile = get_profile(uid)
+    wd = get_weights(uid)
+    if not profile or not wd:
+        return "⚠️ Недостаточно данных для прогноза."
+    current_w = wd[-1][1]
+    target_w  = profile.get("target_weight", current_w - 10)
+    plan = get_user_plan(uid, profile)
+    weekly_loss = plan.get("weekly_loss", 0.3)
+    lines = [f"🔮 *Прогноз: «{scenario}»*\n"]
+    if "пропущу" in scenario.lower() or "пропуск" in scenario.lower():
+        missed = 3
+        extra_weeks = round(missed * 0.2, 1)
+        new_date_days = int((current_w - target_w) / max(0.01, weekly_loss) * 7) + int(extra_weeks * 7)
+        lines.append(f"❌ При пропуске {missed} тренировок:\n"
+                     f"• Потеря темпа: +{extra_weeks} нед к сроку\n"
+                     f"• Риск потери мышц: минимальный (до 5 дней)\n"
+                     f"• Срок цели сдвигается на ~{int(extra_weeks*7)} дней\n\n"
+                     f"💡 Замени тренировку прогулкой — это лучше, чем ничего.")
+    elif "лишн" in scenario.lower() or "500 ккал" in scenario.lower() or "переел" in scenario.lower():
+        extra_kcal = 500
+        extra_fat_g = round(extra_kcal / 7.7, 1)
+        lines.append(f"🍕 При лишних {extra_kcal} ккал в день (7 дней):\n"
+                     f"• Лишних калорий: +{extra_kcal*7} ккал\n"
+                     f"• Возможный набор: ~{extra_fat_g*7/1000:.2f} кг жира\n"
+                     f"• Отработка: +1 тренировка или -500 ккал/день\n\n"
+                     f"💡 Один плохой день не испортит прогресс — важна неделя в целом.")
+    elif "буду" in scenario.lower() or "каждый день" in scenario.lower():
+        bonus_weeks = round(weekly_loss * 1.3, 2)
+        days_saved = int((current_w - target_w) / max(0.01, bonus_weeks) * 7)
+        lines.append(f"✅ При ежедневной активности (+10% нагрузки):\n"
+                     f"• Темп потери: ~{bonus_weeks} кг/нед\n"
+                     f"• До цели: ~{days_saved} дней\n"
+                     f"• Экономия времени: ~{int((current_w-target_w)/max(0.01,weekly_loss)*7)-days_saved} дней\n\n"
+                     f"💡 Постоянство важнее интенсивности!")
+    else:
+        lines.append(f"Текущий темп: *{weekly_loss} кг/нед*\n"
+                     f"До цели: *{round((current_w-target_w)/max(0.01,weekly_loss))} нед*\n\n"
+                     f"Попробуй сценарии:\n• /прогноз пропущу 3 тренировки\n"
+                     f"• /прогноз съем лишние 500 ккал\n• /прогноз буду тренироваться каждый день")
+    return "\n".join(lines)
+
+# ─────────────────────────────────────────
+#  ИМПОРТ Apple Health / Google Fit (CSV)
+# ─────────────────────────────────────────
+
+def import_health_csv(uid, file_bytes: bytes, source: str = "apple"):
+    """Парсит CSV из Apple Health или Google Fit и импортирует шаги/вес"""
+    import csv as _csv, io as _io
+    try:
+        text = file_bytes.decode("utf-8", errors="ignore")
+        reader = _csv.DictReader(_io.StringIO(text))
+        imported = 0
+        for row in reader:
+            # Apple Health export
+            keys = {k.lower().strip(): v for k, v in row.items()}
+            date_val = keys.get("date") or keys.get("startdate") or keys.get("creation_date", "")
+            date_str = date_val[:10] if date_val else ""
+            if not date_str:
+                continue
+            # Шаги
+            steps_val = keys.get("steps") or keys.get("step count") or keys.get("value", "")
+            type_val = keys.get("type", "").lower()
+            if steps_val and ("step" in type_val or "шаги" in type_val or source == "google_steps"):
+                try:
+                    steps = int(float(steps_val))
+                    conn = sqlite3.connect("weight_tracker.db")
+                    ex = conn.execute("SELECT id FROM steps WHERE user_id=? AND date=?", (uid, date_str)).fetchone()
+                    if not ex:
+                        conn.execute("INSERT INTO steps (user_id,steps,date) VALUES (?,?,?)", (uid, steps, date_str))
+                        conn.commit(); imported += 1
+                    conn.close()
+                except Exception:
+                    pass
+            # Вес
+            weight_val = keys.get("weight") or keys.get("body mass") or ""
+            if weight_val and ("weight" in type_val or "mass" in type_val or source == "google_weight"):
+                try:
+                    w = float(weight_val)
+                    if 30 < w < 300:
+                        conn = sqlite3.connect("weight_tracker.db")
+                        ex = conn.execute("SELECT id FROM weights WHERE user_id=? AND date=?", (uid, date_str)).fetchone()
+                        if not ex:
+                            conn.execute("INSERT INTO weights (user_id,weight,date) VALUES (?,?,?)", (uid, w, date_str))
+                            conn.commit(); imported += 1
+                        conn.close()
+                except Exception:
+                    pass
+        # Запишем лог
+        conn = sqlite3.connect("weight_tracker.db")
+        conn.execute("INSERT INTO health_import_log (user_id,source,imported_at,records) VALUES (?,?,?,?)",
+                     (uid, source, now_samara().strftime("%Y-%m-%d %H:%M"), imported))
+        conn.commit(); conn.close()
+        return imported
+    except Exception as e:
+        return 0
+
+# ─────────────────────────────────────────
+#  МИНИ-ИГРА: угадай калорийность
+# ─────────────────────────────────────────
+
+KCAL_QUIZ_ITEMS = [
+    ("🍌 Банан (1 шт, 120г)", 107, [80, 107, 150, 200]),
+    ("🍕 Пицца Маргарита (1 кусок 100г)", 266, [180, 220, 266, 320]),
+    ("🥚 Яйцо варёное (1 шт)", 78, [55, 78, 100, 130]),
+    ("🍚 Варёный рис (200г)", 260, [180, 220, 260, 340]),
+    ("🥑 Авокадо (100г)", 160, [100, 130, 160, 210]),
+    ("🍫 Шоколад молочный (30г)", 158, [100, 130, 158, 190]),
+    ("🥗 Греческий салат (200г)", 120, [80, 120, 160, 200]),
+    ("🍗 Куриная грудка варёная (150г)", 165, [120, 165, 200, 240]),
+    ("🥤 Кока-кола (330мл банка)", 139, [80, 110, 139, 180]),
+    ("🥜 Миндаль (30г)", 173, [120, 150, 173, 210]),
+    ("🍳 Яичница из 2 яиц на масле", 210, [150, 180, 210, 260]),
+    ("🥛 Молоко 3.2% (200мл)", 124, [80, 100, 124, 160]),
+]
+
+def get_kcal_quiz_question():
+    item = random.choice(KCAL_QUIZ_ITEMS)
+    name, correct, options = item
+    opts = list(options)
+    random.shuffle(opts)
+    return name, correct, opts
+
+def build_kcal_quiz_message(uid=None):
+    name, correct, opts = get_kcal_quiz_question()
+    kb = types.InlineKeyboardMarkup()
+    for opt in opts:
+        mark = "✅" if opt == correct else ""
+        kb.add(types.InlineKeyboardButton(
+            f"{opt} ккал {mark}",
+            callback_data=f"quiz_ans:{opt}:{correct}"
+        ))
+    return f"🎮 *Угадай калорийность!*\n\n{name}\n\nСколько калорий?", kb
 
 def compare_weeks(uid):
     """Сравнивает текущую и прошлую неделю по шагам и весу"""
