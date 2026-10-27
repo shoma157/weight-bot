@@ -6728,111 +6728,102 @@ def handle_onboarding(cid, state, text, extra):
 # ─────────────────────────────────────────
 
 def main_menu(uid=None):
+    """Главное меню — 6 категорий + быстрые действия"""
     m = types.ReplyKeyboardMarkup(resize_keyboard=True, row_width=2)
     profile = get_profile(uid) if uid else None
+    # Быстрые действия (топ)
     if profile and profile.get("is_sick"):
         m.add(types.KeyboardButton("💊 Режим болезни"), types.KeyboardButton("✅ Я выздоровел"))
     else:
-        m.add(types.KeyboardButton("🤒 Я заболел"))
-    m.add(
-        types.KeyboardButton("🟢 Тренировка сегодня"),
-        types.KeyboardButton("✅ Тренировка завершена"),
-        types.KeyboardButton("🍽️ Рацион сегодня"),
-        types.KeyboardButton("🍴 Выбрать блюдо"),
-        types.KeyboardButton("📊 Дневник питания"),
-        types.KeyboardButton("📅 Рацион на завтра"),
-        types.KeyboardButton("🥩 Полуфабрикаты"),
-        types.KeyboardButton("🍕 Читмил"),
-        types.KeyboardButton("🔄 Заменить блюдо"),
-        types.KeyboardButton("⚖️ Внести вес"),
-        types.KeyboardButton("👟 Внести шаги"),
-        types.KeyboardButton("💧 Внести воду"),
-        types.KeyboardButton("📈 Мой прогресс"),
-        types.KeyboardButton("📊 График веса"),
-        types.KeyboardButton("👣 Мои шаги"),
-        types.KeyboardButton("📬 Отчёт за неделю"),
-        types.KeyboardButton("💪 Прогресс упражнений"),
-        types.KeyboardButton("💊 Мои добавки"),
-        types.KeyboardButton("😊 Самочувствие"),
-        types.KeyboardButton("🏆 Мои ачивки"),
-        types.KeyboardButton("🍽️ Калории сегодня"),
-        types.KeyboardButton("📅 Фаза тренировок"),
-        types.KeyboardButton("🕐 Расписание дня"),
-        types.KeyboardButton("🍫 Сладкое"),
-        types.KeyboardButton("🔥 Жиросжигающие"),
-        types.KeyboardButton("💪 Спортпит"),
-        types.KeyboardButton("🍓 Фрукты"),
-        types.KeyboardButton("👤 Мой профиль"),
-        types.KeyboardButton("⚙️ Изменить профиль"),
-        types.KeyboardButton("🔔 Напоминания"),
-        types.KeyboardButton("🏥 Мои ограничения"),
-        types.KeyboardButton("🏆 Режим сушки"),
-        types.KeyboardButton("⏱️ Таймер отдыха"),
-        types.KeyboardButton("🏅 Мои достижения"),
-        types.KeyboardButton("📏 Обхват талии"),
-        types.KeyboardButton("📋 Загрузить InBody"),
-        types.KeyboardButton("📊 История InBody"),
-        types.KeyboardButton("🏠 Тренировка дома"),
-        types.KeyboardButton("🔥 Разминка"),
-        types.KeyboardButton("🧘 Заминка"),
-        types.KeyboardButton("🛁 Расслабляющая ванна"),
-        types.KeyboardButton("🍝 Рецепты блюд"),
-        types.KeyboardButton("📓 Дневник питания"),
-        types.KeyboardButton("🧮 Калькулятор ккал"),
-        types.KeyboardButton("🏋️ Журнал весов"),
-        types.KeyboardButton("🛒 Список покупок"),
-        types.KeyboardButton("😊 Самочувствие"),
-        types.KeyboardButton("🎯 Прогноз цели"),
-        types.KeyboardButton("🔥 Серия дней"),
-        types.KeyboardButton("❤️ Заменить кардио"),
-        types.KeyboardButton("😴 Лечь спать"),
-        types.KeyboardButton("⏰ Проснулся"),
-        types.KeyboardButton("💤 История сна"),
-        types.KeyboardButton("🤖 Совет на день"),
-        types.KeyboardButton("📊 Макронутриенты"),
-        types.KeyboardButton("🩺 Давление/пульс"),
-        types.KeyboardButton("💊 Лекарства"),
-        types.KeyboardButton("📤 Экспорт CSV"),
-        types.KeyboardButton("📋 Отчёт за месяц"),
-        types.KeyboardButton("🍎 ГИ продукта"),
-        types.KeyboardButton("📏 Обхваты"),
-        types.KeyboardButton("📊 Отчёт за неделю"),
-        types.KeyboardButton("🔬 Корреляции"),
-    )
-    m.add(
-        types.KeyboardButton("📈 Инфографика"),
-        types.KeyboardButton("📅 Прогноз по неделям"),
-        types.KeyboardButton("🗓️ Меню на неделю"),
-    )
-    m.add(
-        types.KeyboardButton("🛒 Список покупок"),
-        types.KeyboardButton("⭐ Избранные блюда"),
-        types.KeyboardButton("⏰ Напоминания"),
-    )
-    m.add(
-        types.KeyboardButton("💪 Супер-сеты"),
-        types.KeyboardButton("🤖 Тренер"),
-        types.KeyboardButton("💬 Цитата дня"),
-    )
-    m.add(
-        types.KeyboardButton("📋 Сводка за день"),
-        types.KeyboardButton("⚖️ Баланс калорий"),
-        types.KeyboardButton("💪 Восстановление"),
-    )
-    m.add(
-        types.KeyboardButton("📋 Шаблоны еды"),
-        types.KeyboardButton("🏃 Кардио таймер"),
-        types.KeyboardButton("📸 Карточка прогресса"),
-    )
-    m.add(
-        types.KeyboardButton("👫 Партнёр"),
-        types.KeyboardButton("⚡ Мой уровень XP"),
-        types.KeyboardButton("🏆 Челленджи"),
-    )
-    m.add(
-        types.KeyboardButton("🏠 Домашние тренировки"),
-    )
+        m.add(types.KeyboardButton("🟢 Тренировка сегодня"), types.KeyboardButton("✅ Тренировка завершена"))
+    m.add(types.KeyboardButton("⚖️ Внести вес"), types.KeyboardButton("📋 Сводка за день"))
+    # Категории
+    m.add(types.KeyboardButton("🍽️ Питание"), types.KeyboardButton("🏋️ Тренировки"))
+    m.add(types.KeyboardButton("📊 Моё тело"), types.KeyboardButton("📈 Аналитика"))
+    m.add(types.KeyboardButton("😴 Здоровье"), types.KeyboardButton("⚙️ Настройки"))
     return m
+
+def menu_pitanie():
+    """Подменю — Питание"""
+    m = types.ReplyKeyboardMarkup(resize_keyboard=True, row_width=2)
+    m.add(types.KeyboardButton("🍽️ Рацион сегодня"), types.KeyboardButton("📅 Рацион на завтра"))
+    m.add(types.KeyboardButton("🍴 Выбрать блюдо"), types.KeyboardButton("🔄 Заменить блюдо"))
+    m.add(types.KeyboardButton("📓 Дневник питания"), types.KeyboardButton("➕ Записать приём пищи"))
+    m.add(types.KeyboardButton("🍽️ Калории сегодня"), types.KeyboardButton("⚖️ Баланс калорий"))
+    m.add(types.KeyboardButton("🥩 Полуфабрикаты"), types.KeyboardButton("🍝 Рецепты блюд"))
+    m.add(types.KeyboardButton("🍕 Читмил"), types.KeyboardButton("🧮 Калькулятор ккал"))
+    m.add(types.KeyboardButton("🍫 Сладкое"), types.KeyboardButton("🍓 Фрукты"))
+    m.add(types.KeyboardButton("🔥 Жиросжигающие"), types.KeyboardButton("💪 Спортпит"))
+    m.add(types.KeyboardButton("🗓️ Меню на неделю"), types.KeyboardButton("🛒 Список покупок"))
+    m.add(types.KeyboardButton("⭐ Избранные блюда"), types.KeyboardButton("📋 Шаблоны еды"))
+    m.add(types.KeyboardButton("📊 Макронутриенты"), types.KeyboardButton("🍎 ГИ продукта"))
+    m.add(types.KeyboardButton("💊 Мои добавки"), types.KeyboardButton("💊 Лекарства"))
+    m.add(types.KeyboardButton("🏆 Режим сушки"), types.KeyboardButton("🏋️ Журнал весов"))
+    m.add(types.KeyboardButton("🏠 Главное меню"))
+    return m
+
+def menu_trenirovki():
+    """Подменю — Тренировки"""
+    m = types.ReplyKeyboardMarkup(resize_keyboard=True, row_width=2)
+    m.add(types.KeyboardButton("🟢 Тренировка сегодня"), types.KeyboardButton("✅ Тренировка завершена"))
+    m.add(types.KeyboardButton("📅 Фаза тренировок"), types.KeyboardButton("🕐 Расписание дня"))
+    m.add(types.KeyboardButton("🏠 Тренировка дома"), types.KeyboardButton("🏠 Домашние тренировки"))
+    m.add(types.KeyboardButton("🔥 Разминка"), types.KeyboardButton("🧘 Заминка"))
+    m.add(types.KeyboardButton("💪 Супер-сеты"), types.KeyboardButton("❤️ Заменить кардио"))
+    m.add(types.KeyboardButton("⏱️ Таймер отдыха"), types.KeyboardButton("🏃 Кардио таймер"))
+    m.add(types.KeyboardButton("💪 Прогресс упражнений"), types.KeyboardButton("➕ Добавить упражнение"))
+    m.add(types.KeyboardButton("🛁 Расслабляющая ванна"), types.KeyboardButton("💪 Восстановление"))
+    m.add(types.KeyboardButton("🤖 Тренер"), types.KeyboardButton("💬 Цитата дня"))
+    m.add(types.KeyboardButton("🏠 Главное меню"))
+    return m
+
+def menu_telo():
+    """Подменю — Моё тело"""
+    m = types.ReplyKeyboardMarkup(resize_keyboard=True, row_width=2)
+    m.add(types.KeyboardButton("⚖️ Внести вес"), types.KeyboardButton("📈 Мой прогресс"))
+    m.add(types.KeyboardButton("📊 График веса"), types.KeyboardButton("👟 Внести шаги"))
+    m.add(types.KeyboardButton("👣 Мои шаги"), types.KeyboardButton("💧 Внести воду"))
+    m.add(types.KeyboardButton("📏 Обхват талии"), types.KeyboardButton("📏 Обхваты"))
+    m.add(types.KeyboardButton("📋 Загрузить InBody"), types.KeyboardButton("📊 История InBody"))
+    m.add(types.KeyboardButton("😊 Самочувствие"), types.KeyboardButton("🩺 Давление/пульс"))
+    m.add(types.KeyboardButton("🏥 Мои ограничения"), types.KeyboardButton("🏆 Мои ачивки"))
+    m.add(types.KeyboardButton("🏅 Мои достижения"), types.KeyboardButton("🔥 Серия дней"))
+    m.add(types.KeyboardButton("📸 Карточка прогресса"), types.KeyboardButton("👫 Партнёр"))
+    m.add(types.KeyboardButton("🏠 Главное меню"))
+    return m
+
+def menu_analitika():
+    """Подменю — Аналитика"""
+    m = types.ReplyKeyboardMarkup(resize_keyboard=True, row_width=2)
+    m.add(types.KeyboardButton("📈 Инфографика"), types.KeyboardButton("📅 Прогноз по неделям"))
+    m.add(types.KeyboardButton("🎯 Прогноз цели"), types.KeyboardButton("🔬 Корреляции"))
+    m.add(types.KeyboardButton("📬 Отчёт за неделю"), types.KeyboardButton("📋 Отчёт за месяц"))
+    m.add(types.KeyboardButton("⚡ Мой уровень XP"), types.KeyboardButton("🏆 Челленджи"))
+    m.add(types.KeyboardButton("📤 Экспорт CSV"), types.KeyboardButton("🤖 Совет на день"))
+    m.add(types.KeyboardButton("🏠 Главное меню"))
+    return m
+
+def menu_zdorovie():
+    """Подменю — Здоровье"""
+    m = types.ReplyKeyboardMarkup(resize_keyboard=True, row_width=2)
+    m.add(types.KeyboardButton("😴 Лечь спать"), types.KeyboardButton("⏰ Проснулся"))
+    m.add(types.KeyboardButton("💤 История сна"), types.KeyboardButton("😊 Самочувствие"))
+    m.add(types.KeyboardButton("🩺 Давление/пульс"), types.KeyboardButton("🏥 Мои ограничения"))
+    m.add(types.KeyboardButton("🤒 Я заболел"), types.KeyboardButton("⏰ Напоминания"))
+    m.add(types.KeyboardButton("🔔 Напоминания"), types.KeyboardButton("🏠 Главное меню"))
+    return m
+
+def menu_nastroyki():
+    """Подменю — Настройки"""
+    m = types.ReplyKeyboardMarkup(resize_keyboard=True, row_width=2)
+    m.add(types.KeyboardButton("👤 Мой профиль"), types.KeyboardButton("⚙️ Изменить профиль"))
+    m.add(types.KeyboardButton("⏰ Напоминания"), types.KeyboardButton("🔔 Напоминания"))
+    m.add(types.KeyboardButton("🏠 Домашние тренировки"), types.KeyboardButton("👫 Партнёр"))
+    m.add(types.KeyboardButton("📤 Экспорт CSV"), types.KeyboardButton("🏠 Главное меню"))
+    return m
+
+# Набор всех кнопок-категорий для роутинга
+MENU_CATEGORIES = {"🍽️ Питание", "🏋️ Тренировки", "📊 Моё тело", "📈 Аналитика", "😴 Здоровье", "⚙️ Настройки"}
 
 def cancel_menu():
     m = types.ReplyKeyboardMarkup(resize_keyboard=True)
@@ -7492,6 +7483,32 @@ def router(message):
     if text == "❌ Отмена":
         set_state(cid, "idle")
         bot.send_message(cid, "Отменено.", reply_markup=main_menu(cid))
+        return
+
+    # Кнопка возврата в главное меню из подменю
+    if text == "🏠 Главное меню":
+        set_state(cid, "idle")
+        bot.send_message(cid, "Главное меню:", reply_markup=main_menu(cid))
+        return
+
+    # Категории главного меню → открываем подменю
+    if text == "🍽️ Питание":
+        bot.send_message(cid, "🍽️ *Питание* — выбери раздел:", parse_mode="Markdown", reply_markup=menu_pitanie())
+        return
+    if text == "🏋️ Тренировки":
+        bot.send_message(cid, "🏋️ *Тренировки* — выбери раздел:", parse_mode="Markdown", reply_markup=menu_trenirovki())
+        return
+    if text == "📊 Моё тело":
+        bot.send_message(cid, "📊 *Моё тело* — выбери раздел:", parse_mode="Markdown", reply_markup=menu_telo())
+        return
+    if text == "📈 Аналитика":
+        bot.send_message(cid, "📈 *Аналитика* — выбери раздел:", parse_mode="Markdown", reply_markup=menu_analitika())
+        return
+    if text == "😴 Здоровье":
+        bot.send_message(cid, "😴 *Здоровье* — выбери раздел:", parse_mode="Markdown", reply_markup=menu_zdorovie())
+        return
+    if text == "⚙️ Настройки":
+        bot.send_message(cid, "⚙️ *Настройки* — выбери раздел:", parse_mode="Markdown", reply_markup=menu_nastroyki())
         return
 
     # Онбординг
