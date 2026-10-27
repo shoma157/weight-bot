@@ -677,6 +677,32 @@ def init_db():
     c.execute('''CREATE TABLE IF NOT EXISTS favorite_dishes (
         user_id INTEGER, dish TEXT,
         PRIMARY KEY (user_id, dish))''')
+    c.execute('''CREATE TABLE IF NOT EXISTS meal_templates (
+        user_id INTEGER, name TEXT, items_json TEXT,
+        PRIMARY KEY (user_id, name))''')
+    c.execute('''CREATE TABLE IF NOT EXISTS sleep_log (
+        id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER,
+        date TEXT, hours REAL)''')
+    c.execute('''CREATE TABLE IF NOT EXISTS caffeine_log (
+        id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER,
+        date TEXT, source TEXT, mg INTEGER)''')
+    c.execute('''CREATE TABLE IF NOT EXISTS user_xp (
+        user_id INTEGER PRIMARY KEY, total_xp INTEGER DEFAULT 0)''')
+    c.execute('''CREATE TABLE IF NOT EXISTS weekly_challenge (
+        id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER,
+        challenge_id TEXT, start_date TEXT, completed INTEGER DEFAULT 0)''')
+    c.execute('''CREATE TABLE IF NOT EXISTS exercise_log (
+        id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER,
+        date TEXT, exercise TEXT, weight_kg REAL, sets INTEGER, reps INTEGER)''')
+    c.execute('''CREATE TABLE IF NOT EXISTS cardio_sessions (
+        id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER,
+        start_time TEXT, end_time TEXT, kcal INTEGER)''')
+    c.execute('''CREATE TABLE IF NOT EXISTS partner_links (
+        user_id INTEGER, partner_id INTEGER,
+        PRIMARY KEY (user_id, partner_id))''')
+    c.execute('''CREATE TABLE IF NOT EXISTS referrals (
+        id INTEGER PRIMARY KEY AUTOINCREMENT, referrer_id INTEGER,
+        new_user_id INTEGER, date TEXT)''')
     # Миграция
     for col, dflt in [
         ("fatigue","0"), ("last_workout_date","''"), ("next_workout_override","''"),
@@ -4246,6 +4272,522 @@ def export_full_json(uid):
     return _json.dumps(data, ensure_ascii=False, indent=2)
 
 
+# ══════════════════════════════════════════════════════
+#  АНАЛИЗ ФОТО ЕДЫ / ЧЕКА ЧЕРЕЗ ANTHROPIC VISION
+# ══════════════════════════════════════════════════════
+def analyze_food_photo(image_bytes, mime_type="image/jpeg"):
+    """Отправляет фото еды в Anthropic Vision API, получает оценку КБЖУ"""
+    try:
+        import anthropic, base64
+        client = anthropic.Anthropic()
+        b64 = base64.standard_b64encode(image_bytes).decode("utf-8")
+        msg = client.messages.create(
+            model="claude-opus-4-5",
+            max_tokens=512,
+            messages=[{
+                "role": "user",
+                "content": [
+                    {"type": "image", "source": {"type": "base64",
+                                                  "media_type": mime_type,
+                                                  "data": b64}},
+                    {"type": "text", "text": (
+                        "Ты нутрициолог. Посмотри на фото еды и оцени примерное содержание "
+                        "КБЖУ (калории, белки, жиры, углеводы) для этой порции.\n\n"
+                        "Ответь строго в формате:\n"
+                        "🍽️ Блюдо: [название]\n"
+                        "📏 Порция: ~[вес] г\n"
+                        "🔥 Калории: ~[ккал] ккал\n"
+                        "🥩 Белки: ~[г] г\n"
+                        "🥑 Жиры: ~[г] г\n"
+                        "🌾 Углеводы: ~[г] г\n\n"
+                        "Затем 1-2 строки: что здесь полезного и что стоит учесть. "
+                        "Отвечай по-русски, коротко."
+                    )}
+                ]
+            }]
+        )
+        return msg.content[0].text
+    except ImportError:
+        return None
+    except Exception as e:
+        return None
+
+def analyze_receipt_photo(image_bytes, mime_type="image/jpeg"):
+    """Разбирает фото чека из магазина → список продуктов с калориями"""
+    try:
+        import anthropic, base64
+        client = anthropic.Anthropic()
+        b64 = base64.standard_b64encode(image_bytes).decode("utf-8")
+        msg = client.messages.create(
+            model="claude-opus-4-5",
+            max_tokens=800,
+            messages=[{
+                "role": "user",
+                "content": [
+                    {"type": "image", "source": {"type": "base64",
+                                                  "media_type": mime_type,
+                                                  "data": b64}},
+                    {"type": "text", "text": (
+                        "Это фото кассового чека из магазина. "
+                        "Найди все продукты питания (игнорируй бытовую химию, непродукты). "
+                        "Для каждого съедобного продукта укажи примерную калорийность на 100г.\n\n"
+                        "Формат ответа:\n"
+                        "🛒 Продукты из чека:\n"
+                        "• [название] — ~[ккал]/100г\n"
+                        "• ...\n\n"
+                        "Если не видно чека — скажи об этом. Отвечай по-русски."
+                    )}
+                ]
+            }]
+        )
+        return msg.content[0].text
+    except Exception:
+        return None
+
+
+# ══════════════════════════════════════════════════════
+#  ШАБЛОНЫ ПРИЁМОВ ПИЩИ
+# ══════════════════════════════════════════════════════
+def save_meal_template(uid, name, items):
+    """items = [(food_name, calories), ...]"""
+    import json as _json
+    conn = sqlite3.connect("weight_tracker.db")
+    conn.execute(
+        "INSERT OR REPLACE INTO meal_templates (user_id, name, items_json) VALUES (?,?,?)",
+        (uid, name, _json.dumps(items, ensure_ascii=False)))
+    conn.commit(); conn.close()
+
+def get_meal_templates(uid):
+    import json as _json
+    conn = sqlite3.connect("weight_tracker.db")
+    rows = conn.execute(
+        "SELECT name, items_json FROM meal_templates WHERE user_id=? ORDER BY name",
+        (uid,)).fetchall()
+    conn.close()
+    result = []
+    for name, items_json in rows:
+        try:
+            items = _json.loads(items_json)
+        except Exception:
+            items = []
+        result.append((name, items))
+    return result
+
+def delete_meal_template(uid, name):
+    conn = sqlite3.connect("weight_tracker.db")
+    conn.execute("DELETE FROM meal_templates WHERE user_id=? AND name=?", (uid, name))
+    conn.commit(); conn.close()
+
+def apply_meal_template(uid, name):
+    """Вносит все позиции шаблона в дневник питания сегодня"""
+    templates = get_meal_templates(uid)
+    for tname, items in templates:
+        if tname == name:
+            today = now_samara().date().strftime("%Y-%m-%d")
+            conn = sqlite3.connect("weight_tracker.db")
+            for food_name, calories in items:
+                conn.execute(
+                    "INSERT INTO food_diary (user_id, date, food_name, calories) VALUES (?,?,?,?)",
+                    (uid, today, food_name, calories))
+            conn.commit(); conn.close()
+            total = sum(c for _, c in items)
+            return total
+    return 0
+
+def build_templates_menu(uid):
+    templates = get_meal_templates(uid)
+    if not templates:
+        return ("📋 *Шаблоны приёмов пищи*\n\nПусто.\n\n"
+                "💡 Как создать шаблон:\n"
+                "1. Открой 📓 Дневник питания\n"
+                "2. Внеси приём пищи\n"
+                "3. Нажми *«💾 Сохранить как шаблон»*")
+    lines = ["📋 *Мои шаблоны:*\n"]
+    for name, items in templates:
+        total = sum(c for _, c in items)
+        foods = ", ".join(f[0] for f in items[:3])
+        if len(items) > 3:
+            foods += f" +{len(items)-3}"
+        lines.append(f"• *{name}* — {total} ккал\n  _{foods}_")
+    return "\n".join(lines)
+
+
+# ══════════════════════════════════════════════════════
+#  СВОДКА ЗА СЕГОДНЯ (/summary)
+# ══════════════════════════════════════════════════════
+def build_today_summary(uid):
+    today = now_samara().date().strftime("%Y-%m-%d")
+    conn = sqlite3.connect("weight_tracker.db")
+
+    # Вес
+    w_row = conn.execute(
+        "SELECT weight FROM weights WHERE user_id=? AND date LIKE ? ORDER BY id DESC LIMIT 1",
+        (uid, today+"%")).fetchone()
+    # Шаги
+    s_row = conn.execute(
+        "SELECT step_count FROM steps WHERE user_id=? AND date=?", (uid, today)).fetchone()
+    # Ккал
+    k_row = conn.execute(
+        "SELECT SUM(calories), COUNT(*) FROM food_diary WHERE user_id=? AND date=?",
+        (uid, today)).fetchone()
+    # Вода
+    wt_row = conn.execute(
+        "SELECT SUM(cups) FROM water_log WHERE user_id=? AND date=?", (uid, today)).fetchone()
+    # Сон
+    sl_row = conn.execute(
+        "SELECT hours FROM sleep_log WHERE user_id=? AND date=?", (uid, today)).fetchone()
+    # Кофеин
+    cf_row = conn.execute(
+        "SELECT SUM(mg) FROM caffeine_log WHERE user_id=? AND date=?", (uid, today)).fetchone()
+    conn.close()
+
+    profile = get_profile(uid)
+    goal_kcal  = get_daily_kcal_goal(uid) if profile else 2000
+    goal_steps = 10000
+    goal_water = 8
+
+    weight  = w_row[0] if w_row else None
+    steps   = s_row[0] if s_row else 0
+    kcal    = int(k_row[0]) if k_row and k_row[0] else 0
+    meals   = k_row[1] if k_row else 0
+    water   = wt_row[0] if wt_row and wt_row[0] else 0
+    sleep_h = sl_row[0] if sl_row else None
+    caffeine= int(cf_row[0]) if cf_row and cf_row[0] else 0
+
+    def pct_bar(val, goal, width=8):
+        p = min(100, round(val / goal * 100)) if goal else 0
+        filled = round(p / 100 * width)
+        return "█"*filled + "░"*(width-filled), p
+
+    s_bar, s_pct = pct_bar(steps, goal_steps)
+    k_bar, k_pct = pct_bar(kcal,  goal_kcal)
+    w_bar, w_pct = pct_bar(water, goal_water)
+
+    now_h = now_samara().strftime("%H:%M")
+    lines = [f"📋 *СВОДКА ЗА СЕГОДНЯ* ({now_h})\n"]
+
+    if weight:
+        lines.append(f"⚖️ Вес: *{weight} кг*")
+    else:
+        lines.append("⚖️ Вес: *не взвешивался*")
+
+    lines.append(f"🦶 Шаги:  [{s_bar}] *{steps:,}/{goal_steps:,}* ({s_pct}%)".replace(",", " "))
+    lines.append(f"🔥 Ккал:  [{k_bar}] *{kcal}/{goal_kcal}* ({k_pct}%) — {meals} приёмов")
+    lines.append(f"💧 Вода:  [{w_bar}] *{int(water)}/{goal_water}* ст. ({w_pct}%)")
+
+    if sleep_h:
+        sleep_emoji = "✅" if sleep_h >= 7 else ("⚠️" if sleep_h >= 6 else "🔴")
+        lines.append(f"😴 Сон:   *{sleep_h} ч* {sleep_emoji}")
+
+    if caffeine:
+        cf_emoji = "✅" if caffeine <= 400 else "⚠️"
+        lines.append(f"☕ Кофеин: *{caffeine} мг* {cf_emoji}")
+
+    # Итоговый балл
+    score = round((s_pct + k_pct + w_pct) / 3)
+    score_emoji = "🟩" if score >= 80 else ("🟨" if score >= 50 else "🟥")
+    lines.append(f"\n{score_emoji} Балл дня: *{score}%*")
+
+    # Мотивация
+    if score >= 90:
+        lines.append("🏆 Отличный день! Так держать!")
+    elif score >= 70:
+        lines.append("💪 Хороший день. Ещё чуть-чуть!")
+    elif score >= 40:
+        lines.append("🔄 День ещё не закончен — догони норму!")
+    else:
+        lines.append("💡 Начни с малого: выпей стакан воды прямо сейчас.")
+
+    return "\n".join(lines)
+
+
+# ══════════════════════════════════════════════════════
+#  БАЛАНС КАЛОРИЙ: потрачено vs съедено
+# ══════════════════════════════════════════════════════
+def estimate_calories_burned(steps, workout_done=False, weight_kg=80):
+    """Примерный расход калорий по шагам + базовый метаболизм"""
+    bmr_per_hour = weight_kg * 1.0  # ~1 ккал/кг/час в покое
+    bmr_day = round(bmr_per_hour * 24)
+    steps_kcal = round(steps * 0.04)   # ~0.04 ккал/шаг
+    workout_kcal = 300 if workout_done else 0
+    return bmr_day + steps_kcal + workout_kcal
+
+def build_calorie_balance(uid):
+    today = now_samara().date().strftime("%Y-%m-%d")
+    conn = sqlite3.connect("weight_tracker.db")
+    kcal_eaten = conn.execute(
+        "SELECT SUM(calories) FROM food_diary WHERE user_id=? AND date=?",
+        (uid, today)).fetchone()
+    steps_row = conn.execute(
+        "SELECT step_count FROM steps WHERE user_id=? AND date=?",
+        (uid, today)).fetchone()
+    conn.close()
+
+    profile = get_profile(uid)
+    weight  = float(profile.get("current_weight") or 80) if profile else 80
+    eaten   = int(kcal_eaten[0]) if kcal_eaten and kcal_eaten[0] else 0
+    steps   = steps_row[0] if steps_row else 0
+    burned  = estimate_calories_burned(steps, weight_kg=weight)
+    balance = eaten - burned
+
+    bar_val = min(abs(balance), 1000)
+    bar_len = round(bar_val / 1000 * 10)
+    if balance < 0:
+        bar = "🟩" * bar_len + "░" * (10 - bar_len)
+        status = f"дефицит *{abs(balance)} ккал* 📉"
+    elif balance == 0:
+        bar = "🟨" * 10
+        status = "баланс ±0 ➡️"
+    else:
+        bar = "🟥" * bar_len + "░" * (10 - bar_len)
+        status = f"профицит *{balance} ккал* 📈"
+
+    return (
+        f"⚖️ *КАЛОРИЙНЫЙ БАЛАНС СЕГОДНЯ*\n\n"
+        f"🔥 Съедено:   *{eaten} ккал*\n"
+        f"🏃 Потрачено: *{burned} ккал*\n"
+        f"   (базал. {round(weight*24)} + шаги {round(steps*0.04)})\n\n"
+        f"[{bar}]\n{status}\n\n"
+        f"{'✅ Ты в дефиците — жир горит!' if balance < -100 else ''}"
+        f"{'⚠️ Небольшой профицит — следи за ккал' if 0 < balance < 300 else ''}"
+        f"{'🔴 Большой профицит — пересмотри питание' if balance >= 300 else ''}"
+    )
+
+
+# ══════════════════════════════════════════════════════
+#  КАЛЬКУЛЯТОР ВОССТАНОВЛЕНИЯ МЫШЦ
+# ══════════════════════════════════════════════════════
+MUSCLE_RECOVERY_HOURS = {
+    "Грудь":      48,
+    "Спина":      48,
+    "Ноги":       72,
+    "Плечи":      48,
+    "Бицепс":     36,
+    "Трицепс":    36,
+    "Пресс":      24,
+    "Ягодицы":    72,
+}
+
+WORKOUT_MUSCLES = {
+    "А":  ["Грудь", "Спина", "Бицепс"],
+    "Б":  ["Ноги", "Плечи", "Трицепс"],
+    "В":  ["Спина", "Пресс"],
+    "ДА": ["Грудь", "Трицепс", "Пресс"],
+    "ДБ": ["Ноги", "Ягодицы", "Спина"],
+    "ДВ": ["Грудь", "Ноги", "Пресс", "Плечи"],
+    "К":  [],
+    "ДК": [],
+}
+
+def build_muscle_recovery(uid):
+    """Показывает готовность мышц к тренировке"""
+    conn = sqlite3.connect("weight_tracker.db")
+    # Последние 5 тренировок
+    rows = conn.execute(
+        "SELECT date, exercise FROM exercise_log WHERE user_id=? "
+        "ORDER BY date DESC LIMIT 20", (uid,)).fetchall()
+    conn.close()
+
+    # Собираем последнюю дату нагрузки на каждую мышцу
+    profile = get_profile(uid)
+    last_trained = {}
+    # Из журнала тренировок
+    weekday = now_samara().weekday()
+    gym_days = int(profile.get("gym_days") or 3) if profile else 3
+    schedule = get_week_schedule(profile, gym_days) if profile else {}
+    for i in range(1, 8):
+        day = (weekday - i) % 7
+        wkey = schedule.get(day)
+        if wkey and wkey in WORKOUT_MUSCLES:
+            for muscle in WORKOUT_MUSCLES[wkey]:
+                if muscle not in last_trained:
+                    last_trained[muscle] = i * 24  # часов назад примерно
+
+    now_dt = now_samara()
+    lines = ["💪 *ВОССТАНОВЛЕНИЕ МЫШЦ*\n"]
+    for muscle, recovery_h in MUSCLE_RECOVERY_HOURS.items():
+        trained_h = last_trained.get(muscle, 999)
+        rest_h = recovery_h - trained_h
+        if rest_h <= 0:
+            status = "✅ Готова"
+            bar = "█████"
+        else:
+            pct = max(0, min(100, round((1 - rest_h/recovery_h) * 100)))
+            filled = pct // 20
+            bar = "█"*filled + "░"*(5-filled)
+            if rest_h < 12:
+                status = f"⚠️ ещё ~{int(rest_h)}ч"
+            else:
+                status = f"🔴 ещё ~{int(rest_h//24)}д {int(rest_h%24)}ч"
+        lines.append(f"{muscle:<10} [{bar}] {status}")
+
+    lines.append("\n_Данные приблизительные, основаны на расписании_")
+    return "```\n" + "\n".join(lines) + "\n```"
+
+
+# ══════════════════════════════════════════════════════
+#  ТАЙМЕР КАРДИО
+# ══════════════════════════════════════════════════════
+def start_cardio_timer(uid):
+    conn = sqlite3.connect("weight_tracker.db")
+    now_str = now_samara().strftime("%Y-%m-%d %H:%M:%S")
+    conn.execute(
+        "INSERT OR REPLACE INTO cardio_sessions (user_id, start_time, end_time, kcal) "
+        "VALUES (?,?,NULL,NULL)", (uid, now_str))
+    conn.commit(); conn.close()
+
+def stop_cardio_timer(uid):
+    conn = sqlite3.connect("weight_tracker.db")
+    row = conn.execute(
+        "SELECT id, start_time FROM cardio_sessions WHERE user_id=? AND end_time IS NULL "
+        "ORDER BY id DESC LIMIT 1", (uid,)).fetchone()
+    if not row:
+        conn.close()
+        return None
+    session_id, start_str = row
+    end_dt = now_samara()
+    start_dt = datetime.strptime(start_str, "%Y-%m-%d %H:%M:%S")
+    minutes = round((end_dt - start_dt).total_seconds() / 60)
+    profile = get_profile(uid)
+    weight = float(profile.get("current_weight") or 80) if profile else 80
+    kcal = round(minutes * weight * 0.1)  # ~0.1 ккал/кг/мин для умеренного кардио
+    conn.execute(
+        "UPDATE cardio_sessions SET end_time=?, kcal=? WHERE id=?",
+        (end_dt.strftime("%Y-%m-%d %H:%M:%S"), kcal, session_id))
+    # Записываем в дневник
+    today = end_dt.date().strftime("%Y-%m-%d")
+    conn.execute(
+        "INSERT INTO food_diary (user_id, date, food_name, calories) VALUES (?,?,?,?)",
+        (uid, today, f"Кардио {minutes} мин", -kcal))
+    conn.commit(); conn.close()
+    return minutes, kcal
+
+
+# ══════════════════════════════════════════════════════
+#  КАРТОЧКА ПРОГРЕССА ДЛЯ STORIES
+# ══════════════════════════════════════════════════════
+def build_stories_card(uid):
+    profile = get_profile(uid)
+    wd = get_weights(uid)
+    if not wd or not profile:
+        return "📸 Нет данных для карточки."
+
+    start_w  = wd[0][0]
+    curr_w   = wd[-1][0]
+    target_w = profile.get("target_weight") or 70.0
+    lost     = round(start_w - curr_w, 1)
+    remain   = round(curr_w - target_w, 1)
+    total    = round(start_w - target_w, 1)
+    pct      = max(0, min(100, round(lost / total * 100))) if total > 0 else 0
+
+    try:
+        start_date = datetime.strptime(wd[0][1][:10], "%Y-%m-%d").date()
+        days = (now_samara().date() - start_date).days
+    except Exception:
+        days = len(wd)
+
+    streak_cur, _ = get_streak(uid)
+    xp = get_xp(uid)
+    level = get_level(xp)
+
+    bar_filled = pct // 5
+    bar = "▓" * bar_filled + "░" * (20 - bar_filled)
+
+    card = [
+        "╔══════════════════════════╗",
+        "║   💪 МОЙ ФИТНЕС-ПРОГРЕСС  ║",
+        "╠══════════════════════════╣",
+        f"║  📅 В пути: {days} дн.".ljust(27) + "║",
+        f"║  ⚖️  {start_w} → {curr_w} кг".ljust(27) + "║",
+        f"║  📉 Минус: {lost} кг".ljust(27) + "║",
+        f"║  🎯 До цели: {remain} кг".ljust(27) + "║",
+        "║                          ║",
+        f"║ [{bar}]║",
+        f"║  Прогресс: {pct}%".ljust(27) + "║",
+        "║                          ║",
+        f"║  🔥 Стрик: {streak_cur} дн.".ljust(27) + "║",
+        f"║  {level}".ljust(27) + "║",
+        "╚══════════════════════════╝",
+    ]
+    return "```\n" + "\n".join(card) + "\n```"
+
+
+# ══════════════════════════════════════════════════════
+#  ПАРНЫЙ РЕЖИМ
+# ══════════════════════════════════════════════════════
+def link_partner(uid, partner_code):
+    """Связывает двух пользователей как партнёров"""
+    try:
+        partner_id = int(partner_code.replace("PAIR", ""))
+        if partner_id == uid:
+            return False, "Нельзя добавить себя"
+        conn = sqlite3.connect("weight_tracker.db")
+        # Проверяем что partner_id существует
+        exists = conn.execute(
+            "SELECT user_id FROM user_profile WHERE user_id=?", (partner_id,)).fetchone()
+        if not exists:
+            conn.close()
+            return False, "Пользователь не найден. Убедись что код верный."
+        conn.execute(
+            "INSERT OR REPLACE INTO partner_links (user_id, partner_id) VALUES (?,?)",
+            (uid, partner_id))
+        conn.execute(
+            "INSERT OR REPLACE INTO partner_links (user_id, partner_id) VALUES (?,?)",
+            (partner_id, uid))
+        conn.commit(); conn.close()
+        return True, partner_id
+    except Exception:
+        return False, "Неверный код партнёра"
+
+def get_partner(uid):
+    conn = sqlite3.connect("weight_tracker.db")
+    r = conn.execute(
+        "SELECT partner_id FROM partner_links WHERE user_id=?", (uid,)).fetchone()
+    conn.close()
+    return r[0] if r else None
+
+def build_partner_comparison(uid):
+    partner_id = get_partner(uid)
+    if not partner_id:
+        my_code = f"PAIR{uid}"
+        return (
+            "👫 *ПАРНЫЙ РЕЖИМ*\n\n"
+            "Партнёр не подключён.\n\n"
+            f"🔗 Твой код: `{my_code}`\n\n"
+            "Отправь этот код партнёру. "
+            "Он должен нажать кнопку *«👫 Подключить партнёра»* и ввести твой код."
+        )
+
+    my_wd = get_weights(uid)
+    pr_wd = get_weights(partner_id)
+    my_streak, _ = get_streak(uid)
+    pr_streak, _ = get_streak(partner_id)
+    my_xp = get_xp(uid)
+    pr_xp = get_xp(partner_id)
+
+    my_lost  = round(my_wd[0][0] - my_wd[-1][0], 1) if len(my_wd) >= 2 else 0
+    pr_lost  = round(pr_wd[0][0] - pr_wd[-1][0], 1) if len(pr_wd) >= 2 else 0
+
+    def medal(a, b):
+        if a > b: return "🥇", "🥈"
+        if a < b: return "🥈", "🥇"
+        return "🤝", "🤝"
+
+    m_l, p_l = medal(my_lost, pr_lost)
+    m_s, p_s = medal(my_streak, pr_streak)
+    m_x, p_x = medal(my_xp, pr_xp)
+
+    return (
+        f"👫 *СОРЕВНОВАНИЕ С ПАРТНЁРОМ*\n\n"
+        f"{'Показатель':<14} {'Ты':>7} {'Партнёр':>9}\n"
+        f"{'─'*32}\n"
+        f"📉 Сброшено    {m_l} {my_lost}кг  {p_l} {pr_lost}кг\n"
+        f"🔥 Стрик       {m_s} {my_streak}дн   {p_s} {pr_streak}дн\n"
+        f"⚡ XP           {m_x} {my_xp}    {p_x} {pr_xp}\n\n"
+        f"_Удачи вам обоим! Вместе проще! 💪_"
+    )
+
+
 def compare_weeks(uid):
     """Сравнивает текущую и прошлую неделю по шагам и весу"""
     wd = get_weights(uid)
@@ -6076,9 +6618,10 @@ ONBOARDING_STEPS = [
                        "2 — Силовые (тренажёры, веса)\n"
                        "3 — Без разницы, пусть бот решает"),
     ("setup_deadline", "📅 За сколько *недель* хочешь достичь цели?\nНапример: `12` (3 месяца)"),
-    ("setup_home",     "🏠 Готов ли ты иногда тренироваться *дома* (без похода в зал)?\n\n"
-                       "1 — Да, иногда хочу тренироваться дома\n"
-                       "2 — Нет, только зал"),
+    ("setup_home",     "🏠 Как ты планируешь тренироваться?\n\n"
+                       "1 — 🏋️ Только зал\n"
+                       "2 — 🏋️🏠 Зал + иногда дома\n"
+                       "3 — 🏠 Только дома (без зала)"),
     ("setup_driver",   "🚗 Ты водитель или работаешь в основном сидя?\n\n1 — Да (водитель, офис)\n2 — Нет, есть физическая активность на работе"),
     ("setup_health",   "🏥 Есть ли у тебя ограничения по здоровью? Бот будет автоматически исключать опасные продукты и упражнения.\n\n"
                        "Выбери цифры через запятую (например: `1,3`) или `0` если ограничений нет:\n\n"
@@ -6118,7 +6661,9 @@ def handle_onboarding(cid, state, text, extra):
         elif state == "setup_deadline":
             v=int(text); assert 1<=v<=104; save_profile(cid,deadline_weeks=v)
         elif state == "setup_home":
-            assert text in ("1","2"); save_profile(cid,home_workouts=1 if text=="1" else 0)
+            assert text in ("1","2","3")
+            hw_map = {"1": 0, "2": 1, "3": 2}
+            save_profile(cid, home_workouts=hw_map[text])
         elif state == "setup_driver":
             assert text in ("1","2"); save_profile(cid,is_driver=1 if text=="1" else 0)
         elif state == "setup_health":
@@ -6136,12 +6681,24 @@ def handle_onboarding(cid, state, text, extra):
         hints = {"setup_weight":"Вес числом: 107","setup_target":"Цель числом: 92",
                  "setup_height":"Рост в см: 194","setup_age":"Возраст: 24",
                  "setup_gymdays":"Число 1-5","setup_pref":"Введи 1, 2 или 3",
-                 "setup_deadline":"Недели: 12","setup_home":"Введи 1 или 2","setup_driver":"Введи 1 или 2",
+                 "setup_deadline":"Недели: 12","setup_home":"Введи 1, 2 или 3","setup_driver":"Введи 1 или 2",
                  "setup_health":"Введи цифры через запятую (1,3) или 0"}
         bot.send_message(cid, f"⚠️ {hints.get(state,'Некорректный ввод')}", reply_markup=cancel_menu())
         return False
     if idx+1 < len(ONBOARDING_STEPS):
         ns,np = ONBOARDING_STEPS[idx+1]
+        # Если выбрали "только дома" — пропускаем setup_gymdays и setup_pref
+        if state == "setup_home" and text == "3":
+            save_profile(cid, gym_days=0)
+            skip_states = {"setup_gymdays", "setup_pref"}
+            next_idx = idx + 1
+            while next_idx < len(ONBOARDING_STEPS) and ONBOARDING_STEPS[next_idx][0] in skip_states:
+                next_idx += 1
+            if next_idx < len(ONBOARDING_STEPS):
+                ns, np = ONBOARDING_STEPS[next_idx]
+                set_state(cid, ns, extra=extra)
+                bot.send_message(cid, np, parse_mode="Markdown", reply_markup=cancel_menu())
+                return False
         set_state(cid, ns, extra=extra)
         bot.send_message(cid, np, parse_mode="Markdown", reply_markup=cancel_menu())
         return False
@@ -6257,6 +6814,24 @@ def main_menu(uid=None):
         types.KeyboardButton("🤖 Тренер"),
         types.KeyboardButton("💬 Цитата дня"),
     )
+    m.add(
+        types.KeyboardButton("📋 Сводка за день"),
+        types.KeyboardButton("⚖️ Баланс калорий"),
+        types.KeyboardButton("💪 Восстановление"),
+    )
+    m.add(
+        types.KeyboardButton("📋 Шаблоны еды"),
+        types.KeyboardButton("🏃 Кардио таймер"),
+        types.KeyboardButton("📸 Карточка прогресса"),
+    )
+    m.add(
+        types.KeyboardButton("👫 Партнёр"),
+        types.KeyboardButton("⚡ Мой уровень XP"),
+        types.KeyboardButton("🏆 Челленджи"),
+    )
+    m.add(
+        types.KeyboardButton("🏠 Домашние тренировки"),
+    )
     return m
 
 def cancel_menu():
@@ -6366,6 +6941,29 @@ def reminder_worker():
 # ─────────────────────────────────────────
 #  ХЭНДЛЕРЫ
 # ─────────────────────────────────────────
+
+@bot.message_handler(commands=['summary', 'today', 'итог'])
+def cmd_summary(message):
+    bot.send_message(message.chat.id, build_today_summary(message.chat.id), parse_mode="Markdown")
+
+@bot.message_handler(commands=['receipt', 'chek'])
+def cmd_receipt(message):
+    set_state(message.chat.id, "waiting_receipt_photo")
+    bot.send_message(message.chat.id,
+        "🧾 *Анализ чека*\n\nОтправь фото кассового чека — распознаю продукты и их калорийность.",
+        parse_mode="Markdown", reply_markup=cancel_menu())
+
+@bot.message_handler(commands=['partner', 'pair'])
+def cmd_partner(message):
+    cid = message.chat.id
+    partner_id = get_partner(cid)
+    kb_pair = types.InlineKeyboardMarkup()
+    if partner_id:
+        kb_pair.add(types.InlineKeyboardButton("🔄 Обновить", callback_data="partner_refresh"))
+        kb_pair.add(types.InlineKeyboardButton("❌ Отвязать", callback_data="partner_unlink"))
+    else:
+        kb_pair.add(types.InlineKeyboardButton("🔗 Подключить партнёра", callback_data="partner_link"))
+    bot.send_message(cid, build_partner_comparison(cid), parse_mode="Markdown", reply_markup=kb_pair)
 
 @bot.message_handler(commands=['w', 'weight', 'ves'])
 def cmd_weight(message):
@@ -6664,8 +7262,161 @@ def handle_callback(call):
         add_favorite_dish(cid, dish)
         bot.answer_callback_query(call.id, f"⭐ {dish} добавлен в избранное!")
 
+    # ── Режим тренировок (домашние) ──
+    elif data.startswith("hw_mode:"):
+        mode = int(data.split(":")[1])
+        save_profile(cid, home_workouts=mode)
+        labels = {0: "🏋️ Только зал", 1: "🏠+🏋️ Зал + домашние", 2: "🏠 Только домашние"}
+        bot.answer_callback_query(call.id, f"✅ {labels[mode]}")
+        kb_hw = types.InlineKeyboardMarkup()
+        kb_hw.add(
+            types.InlineKeyboardButton("🏋️ Только зал" + (" ✅" if mode==0 else ""), callback_data="hw_mode:0"),
+            types.InlineKeyboardButton("🏠+🏋️ Зал + дома" + (" ✅" if mode==1 else ""), callback_data="hw_mode:1"),
+        )
+        kb_hw.add(types.InlineKeyboardButton("🏠 Только дома" + (" ✅" if mode==2 else ""), callback_data="hw_mode:2"))
+        try:
+            bot.edit_message_reply_markup(cid, call.message.message_id, reply_markup=kb_hw)
+        except Exception:
+            pass
+
+    # ── Кардио: старт/стоп ──
+    elif data == "cardio_start":
+        start_cardio_timer(cid)
+        bot.answer_callback_query(call.id, "▶️ Начато!")
+        kb = types.InlineKeyboardMarkup()
+        kb.add(types.InlineKeyboardButton("⏹ Остановить", callback_data="cardio_stop"))
+        bot.edit_message_text("🏃 *Кардио идёт!* Нажми Остановить когда закончишь.",
+                              cid, call.message.message_id, parse_mode="Markdown", reply_markup=kb)
+
+    elif data == "cardio_stop":
+        result = stop_cardio_timer(cid)
+        bot.answer_callback_query(call.id)
+        if result:
+            minutes, kcal = result
+            bot.send_message(cid,
+                f"⏹ *Кардио завершено!*\n\n⏱ Время: *{minutes} мин*\n🔥 Сожжено: *~{kcal} ккал*\n\n"
+                f"_Записано в дневник._",
+                parse_mode="Markdown", reply_markup=main_menu(cid))
+            add_xp(cid, "cardio", 15)
+        else:
+            bot.send_message(cid, "Активной сессии нет.")
+
+    # ── Шаблоны еды ──
+    elif data.startswith("tpl_apply:"):
+        name = data[10:]
+        total = apply_meal_template(cid, name)
+        bot.answer_callback_query(call.id, f"✅ Добавлено!")
+        bot.send_message(cid, f"✅ Шаблон *«{name}»* добавлен в дневник — *{total} ккал*", parse_mode="Markdown")
+
+    elif data.startswith("tpl_del:"):
+        name = data[8:]
+        delete_meal_template(cid, name)
+        bot.answer_callback_query(call.id, "🗑 Удалено")
+        kb_tpl = types.InlineKeyboardMarkup()
+        for tname, items in get_meal_templates(cid):
+            total = sum(c for _, c in items)
+            kb_tpl.add(
+                types.InlineKeyboardButton(f"▶️ {tname} ({total}ккал)", callback_data=f"tpl_apply:{tname}"),
+                types.InlineKeyboardButton("🗑", callback_data=f"tpl_del:{tname}")
+            )
+        kb_tpl.add(types.InlineKeyboardButton("➕ Создать шаблон", callback_data="tpl_create"))
+        try:
+            bot.edit_message_text(build_templates_menu(cid), cid, call.message.message_id,
+                                  parse_mode="Markdown", reply_markup=kb_tpl)
+        except Exception:
+            pass
+
+    elif data == "tpl_create":
+        bot.answer_callback_query(call.id)
+        set_state(cid, "tpl_create_name")
+        bot.send_message(cid, "📋 Введи название шаблона (например: *«Мой завтрак»*):",
+                         parse_mode="Markdown", reply_markup=cancel_menu())
+
+    # ── Партнёр ──
+    elif data == "partner_link":
+        bot.answer_callback_query(call.id)
+        set_state(cid, "partner_link_code")
+        bot.send_message(cid,
+            f"👫 *Подключить партнёра*\n\nТвой код: `PAIR{cid}`\n\nВведи код партнёра:",
+            parse_mode="Markdown", reply_markup=cancel_menu())
+
+    elif data == "partner_refresh":
+        bot.answer_callback_query(call.id)
+        bot.send_message(cid, build_partner_comparison(cid), parse_mode="Markdown")
+
+    elif data == "partner_unlink":
+        conn = sqlite3.connect("weight_tracker.db")
+        conn.execute("DELETE FROM partner_links WHERE user_id=?", (cid,))
+        conn.commit(); conn.close()
+        bot.answer_callback_query(call.id, "Партнёр отвязан")
+        bot.send_message(cid, "👫 Партнёр отвязан.", reply_markup=main_menu(cid))
+
+    # ── Челленджи ──
+    elif data.startswith("challenge_start:"):
+        ch_id = data[16:]
+        start_challenge(cid, ch_id)
+        ch = next((c for c in WEEKLY_CHALLENGES if c["id"] == ch_id), None)
+        bot.answer_callback_query(call.id, "🎯 Начато!")
+        if ch:
+            bot.send_message(cid,
+                f"🏆 *Челлендж начат!*\n\n{ch['name']}\n_{ch['desc']}_\n\n+{ch['xp']} XP по завершению 💪",
+                parse_mode="Markdown")
+
     else:
         bot.answer_callback_query(call.id)
+
+@bot.message_handler(content_types=['photo'])
+def handle_photo(message):
+    cid = message.chat.id
+    state, extra = get_state(cid)
+    try:
+        # Берём фото наилучшего качества
+        photo = message.photo[-1]
+        file_info = bot.get_file(photo.file_id)
+        import requests as _req
+        token = bot.token
+        url = f"https://api.telegram.org/file/bot{token}/{file_info.file_path}"
+        r = _req.get(url, timeout=15)
+        image_bytes = r.content
+
+        caption = (message.caption or "").lower().strip()
+
+        # Режим: чек из магазина
+        if any(w in caption for w in ["чек", "чека", "магазин", "покупки"]) or state == "waiting_receipt_photo":
+            bot.send_message(cid, "🧾 Анализирую чек...", parse_mode="Markdown")
+            result = analyze_receipt_photo(image_bytes)
+            if result:
+                bot.send_message(cid, result, parse_mode="Markdown")
+            else:
+                bot.send_message(cid,
+                    "🧾 Не удалось распознать чек.\n\n"
+                    "💡 Убедись что:\n• Фото чёткое\n• Чек хорошо освещён\n• Текст читаем")
+            set_state(cid, "idle")
+            return
+
+        # Режим: анализ еды (по умолчанию для любого фото)
+        bot.send_message(cid, "🍽️ Анализирую фото еды...", parse_mode="Markdown")
+        result = analyze_food_photo(image_bytes)
+        if result:
+            # Пытаемся вытащить ккал из ответа для кнопки "добавить в дневник"
+            import re as _re
+            kcal_match = _re.search(r"Калории.*?~?(\d+)", result)
+            kb_photo = types.InlineKeyboardMarkup()
+            if kcal_match:
+                kcal_val = int(kcal_match.group(1))
+                kb_photo.add(types.InlineKeyboardButton(
+                    f"📝 Записать ~{kcal_val} ккал в дневник",
+                    callback_data=f"add_to_diary:фото еды:{kcal_val}"))
+            bot.send_message(cid, result, parse_mode="Markdown", reply_markup=kb_photo)
+        else:
+            bot.send_message(cid,
+                "🍽️ *Анализ фото еды*\n\n"
+                "Сервис недоступен. Убедись что переменная `ANTHROPIC_API_KEY` настроена.\n\n"
+                "💡 Пока можешь вводить вручную: *гречка 200*",
+                parse_mode="Markdown")
+    except Exception as e:
+        bot.send_message(cid, "Не удалось обработать фото. Попробуй ещё раз.")
+
 
 @bot.message_handler(content_types=['voice'])
 def handle_voice(message):
@@ -7325,6 +8076,48 @@ def router(message):
                 parse_mode="Markdown", reply_markup=main_menu(cid))
         except Exception:
             bot.send_message(cid, "Введи значение в сантиметрах, например: *85.5*", parse_mode="Markdown")
+        return
+
+    # ── Шаблон еды: ввод названия ──
+    if state == "tpl_create_name":
+        if text:
+            # Берём последние записи дневника сегодня как содержимое шаблона
+            today = now_samara().date().strftime("%Y-%m-%d")
+            conn = sqlite3.connect("weight_tracker.db")
+            rows = conn.execute(
+                "SELECT food_name, calories FROM food_diary WHERE user_id=? AND date=? AND calories > 0 ORDER BY id DESC LIMIT 10",
+                (cid, today)).fetchall()
+            conn.close()
+            if rows:
+                items = [(r[0], r[1]) for r in rows]
+                save_meal_template(cid, text, items)
+                total = sum(r[1] for r in rows)
+                set_state(cid, "idle")
+                bot.send_message(cid,
+                    f"✅ Шаблон *«{text}»* сохранён!\n"
+                    f"Включает {len(items)} позиций — {total} ккал",
+                    parse_mode="Markdown", reply_markup=main_menu(cid))
+            else:
+                set_state(cid, "idle")
+                bot.send_message(cid,
+                    "В дневнике сегодня нет записей для шаблона.\n"
+                    "Сначала внеси приём пищи, потом создавай шаблон.",
+                    reply_markup=main_menu(cid))
+        else:
+            bot.send_message(cid, "Введи название шаблона.")
+        return
+
+    # ── Партнёр: ввод кода ──
+    if state == "partner_link_code":
+        ok, result = link_partner(cid, text.strip())
+        if ok:
+            set_state(cid, "idle")
+            bot.send_message(cid,
+                f"✅ *Партнёр подключён!*\n\nТеперь вы соревнуетесь вместе 💪\n"
+                f"Смотри сравнение в разделе *👫 Партнёр*",
+                parse_mode="Markdown", reply_markup=main_menu(cid))
+        else:
+            bot.send_message(cid, f"❌ {result}\n\nПопробуй ещё раз или нажми ❌ Отмена.")
         return
 
     # ── Напоминания: ввод текста ──
@@ -8090,6 +8883,106 @@ def router(message):
     # ── Цитата дня ──
     elif text == "💬 Цитата дня":
         bot.send_message(cid, get_quote_of_day(), parse_mode="Markdown")
+
+    # ── Сводка за день ──
+    elif text == "📋 Сводка за день":
+        bot.send_message(cid, build_today_summary(cid), parse_mode="Markdown")
+
+    # ── Баланс калорий ──
+    elif text == "⚖️ Баланс калорий":
+        bot.send_message(cid, build_calorie_balance(cid), parse_mode="Markdown")
+
+    # ── Восстановление мышц ──
+    elif text == "💪 Восстановление":
+        bot.send_message(cid, build_muscle_recovery(cid), parse_mode="Markdown")
+
+    # ── Шаблоны еды ──
+    elif text == "📋 Шаблоны еды":
+        templates = get_meal_templates(cid)
+        kb_tpl = types.InlineKeyboardMarkup()
+        for name, items in templates:
+            total = sum(c for _, c in items)
+            kb_tpl.add(
+                types.InlineKeyboardButton(f"▶️ {name} ({total}ккал)", callback_data=f"tpl_apply:{name}"),
+                types.InlineKeyboardButton("🗑", callback_data=f"tpl_del:{name}")
+            )
+        kb_tpl.add(types.InlineKeyboardButton("➕ Создать шаблон из дневника", callback_data="tpl_create"))
+        bot.send_message(cid, build_templates_menu(cid), parse_mode="Markdown", reply_markup=kb_tpl)
+
+    # ── Кардио таймер ──
+    elif text == "🏃 Кардио таймер":
+        # Проверяем есть ли активная сессия
+        conn = sqlite3.connect("weight_tracker.db")
+        active = conn.execute(
+            "SELECT id, start_time FROM cardio_sessions WHERE user_id=? AND end_time IS NULL",
+            (cid,)).fetchone()
+        conn.close()
+        kb_cardio = types.InlineKeyboardMarkup()
+        if active:
+            start_str = active[1]
+            start_dt = datetime.strptime(start_str, "%Y-%m-%d %H:%M:%S")
+            elapsed = round((now_samara() - start_dt).total_seconds() / 60)
+            kb_cardio.add(types.InlineKeyboardButton("⏹ Остановить", callback_data="cardio_stop"))
+            bot.send_message(cid,
+                f"🏃 *Кардио идёт!* ⏱ {elapsed} мин.\n\nНажми Остановить когда закончишь.",
+                parse_mode="Markdown", reply_markup=kb_cardio)
+        else:
+            kb_cardio.add(types.InlineKeyboardButton("▶️ Начать кардио", callback_data="cardio_start"))
+            bot.send_message(cid,
+                "🏃 *Кардио таймер*\n\nНажми кнопку когда начнёшь тренировку.\n"
+                "Бот автоматически посчитает время и примерные ккал.",
+                parse_mode="Markdown", reply_markup=kb_cardio)
+
+    # ── Карточка прогресса ──
+    elif text == "📸 Карточка прогресса":
+        bot.send_message(cid, build_stories_card(cid), parse_mode="Markdown")
+
+    # ── Партнёр ──
+    elif text == "👫 Партнёр":
+        partner_id = get_partner(cid)
+        kb_pair = types.InlineKeyboardMarkup()
+        if partner_id:
+            kb_pair.add(types.InlineKeyboardButton("🔄 Обновить сравнение", callback_data="partner_refresh"))
+            kb_pair.add(types.InlineKeyboardButton("❌ Отвязать партнёра", callback_data="partner_unlink"))
+        else:
+            kb_pair.add(types.InlineKeyboardButton("🔗 Подключить партнёра", callback_data="partner_link"))
+        bot.send_message(cid, build_partner_comparison(cid), parse_mode="Markdown", reply_markup=kb_pair)
+
+    # ── XP и уровень ──
+    elif text == "⚡ Мой уровень XP":
+        bot.send_message(cid, build_xp_card(cid), parse_mode="Markdown")
+
+    # ── Челленджи ──
+    elif text == "🏆 Челленджи":
+        kb_ch = types.InlineKeyboardMarkup()
+        for ch in WEEKLY_CHALLENGES:
+            kb_ch.add(types.InlineKeyboardButton(ch["name"] + f" (+{ch['xp']} XP)",
+                callback_data=f"challenge_start:{ch['id']}"))
+        bot.send_message(cid, build_challenges_menu(cid), parse_mode="Markdown", reply_markup=kb_ch)
+
+    # ── Домашние тренировки — переключатель ──
+    elif text == "🏠 Домашние тренировки":
+        profile = get_profile(cid)
+        current = int(profile.get("home_workouts") or 0) if profile else 0
+        kb_hw = types.InlineKeyboardMarkup()
+        kb_hw.add(
+            types.InlineKeyboardButton("🏋️ Только зал" + (" ✅" if current == 0 else ""),
+                callback_data="hw_mode:0"),
+            types.InlineKeyboardButton("🏠+🏋️ Зал + дома" + (" ✅" if current == 1 else ""),
+                callback_data="hw_mode:1"),
+        )
+        kb_hw.add(
+            types.InlineKeyboardButton("🏠 Только дома" + (" ✅" if current == 2 else ""),
+                callback_data="hw_mode:2"),
+        )
+        modes = {0: "🏋️ Только зал", 1: "🏠+🏋️ Зал + домашние", 2: "🏠 Только домашние"}
+        bot.send_message(cid,
+            f"🏠 *Режим тренировок*\n\n"
+            f"Сейчас: *{modes[current]}*\n\n"
+            "• *Только зал* — стандартные программы А/Б/В\n"
+            "• *Зал + дома* — зал по расписанию + домашние в дни отдыха\n"
+            "• *Только дома* — всё расписание из домашних тренировок, зал не нужен",
+            parse_mode="Markdown", reply_markup=kb_hw)
 
     # ── Расписание
     elif text=="🕐 Расписание дня":
