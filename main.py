@@ -5283,6 +5283,305 @@ def build_kcal_quiz_message(uid=None):
         ))
     return f"🎮 *Угадай калорийность!*\n\n{name}\n\nСколько калорий?", kb
 
+# ─────────────────────────────────────────
+#  ПОМОЩЬ / НАВИГАЦИЯ
+# ─────────────────────────────────────────
+
+HELP_TEXT = """❓ *ПОМОЩЬ И НАВИГАЦИЯ*
+
+Бот разделён на 6 разделов. Нажми нужный в главном меню:
+
+🍽️ *Питание* — рацион, дневник, калории, рецепты, штрихкод, покупки, избранное, шаблоны
+🏋️ *Тренировки* — план тренировок, программа 8 нед, разминка, таймеры, рекорды 1RM
+📊 *Моё тело* — вес, шаги, вода, обхваты, InBody, фото-прогресс, ачивки, партнёр
+📈 *Аналитика* — инфографика, прогнозы, ИИ-анализ, отчёты, XP, челленджи, экспорт
+😴 *Здоровье* — сон, стресс, цикл, HRV, давление, ограничения, импорт Health
+⚙️ *Настройки* — профиль, домашние тренировки, напоминания, партнёр
+
+━━━━━━━━━━━━━━━━━━━
+⚡ *БЫСТРЫЕ КОМАНДЫ*
+
+`/w 105.7` — записать вес (кг)
+`/s 8500` — записать шаги
+`/water 3` — записать воду (стаканы)
+`/hrv 65 55` — HRV и пульс покоя
+`/1rm жим лёжа 100 5` — записать 1RM
+`/summary` — сводка за день
+`/receipt` — анализ чека (фото)
+`/partner` — парный режим
+
+━━━━━━━━━━━━━━━━━━━
+📸 *УМНЫЙ ВВОД*
+
+• *гречка 200* — быстрый расчёт калорий
+• Отправь *фото еды* — ИИ распознает и посчитает ккал
+• Отправь *фото чека* — бот разберёт покупки
+• Отправь *фото с #прогресс* — сохранится в архив
+• Отправь *голосовое* — бот поймёт команду
+• Отправь *CSV-файл* — импорт из Apple Health / Google Fit
+
+━━━━━━━━━━━━━━━━━━━
+💡 *СОВЕТЫ*
+
+• Вноси вес *каждое утро натощак* для точного графика
+• Используй *штрихкод* для точного КБЖУ упакованных продуктов
+• *Серия дней* — главная мотивация: не прерывай её!
+• Подключи *партнёра* — вдвоём придерживаться цели легче
+• *ИИ-анализ недели* — раз в неделю для персональных советов"""
+
+def build_help_message():
+    return HELP_TEXT
+
+# ─────────────────────────────────────────
+#  УМНЫЙ ДНЕВНИК НАСТРОЕНИЯ (расширенный)
+# ─────────────────────────────────────────
+
+MOOD_EMOJIS = {1:"😫",2:"😔",3:"😕",4:"😐",5:"🙂",6:"😊",7:"😀",8:"😄",9:"🤩",10:"🥳"}
+
+def log_mood_full(uid, mood, energy, note=""):
+    """Расширенная версия: настроение + энергия + заметка"""
+    today = now_samara().strftime("%Y-%m-%d")
+    conn = sqlite3.connect("weight_tracker.db")
+    conn.execute("CREATE TABLE IF NOT EXISTS mood_full (id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER, date TEXT, mood INTEGER, energy INTEGER, note TEXT)")
+    ex = conn.execute("SELECT id FROM mood_full WHERE user_id=? AND date=?", (uid, today)).fetchone()
+    if ex:
+        conn.execute("UPDATE mood_full SET mood=?, energy=?, note=? WHERE id=?", (mood, energy, note, ex[0]))
+    else:
+        conn.execute("INSERT INTO mood_full (user_id,date,mood,energy,note) VALUES (?,?,?,?,?)", (uid, today, mood, energy, note))
+    conn.commit(); conn.close()
+
+def build_mood_week(uid):
+    conn = sqlite3.connect("weight_tracker.db")
+    try:
+        conn.execute("CREATE TABLE IF NOT EXISTS mood_full (id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER, date TEXT, mood INTEGER, energy INTEGER, note TEXT)")
+        rows = conn.execute(
+            "SELECT date, mood, energy, note FROM mood_full WHERE user_id=? ORDER BY date DESC LIMIT 7", (uid,)).fetchall()
+    except Exception:
+        rows = []
+    conn.close()
+    if not rows:
+        return "😊 *Дневник настроения*\n\nЗаписей пока нет.\n\nОцени настроение кнопкой *«😊 Самочувствие»*."
+    lines = ["😊 *Дневник настроения (7 дней)*\n"]
+    avg_m = round(sum(r[1] for r in rows)/len(rows),1)
+    avg_e = round(sum(r[2] for r in rows if r[2])/max(1,sum(1 for r in rows if r[2])),1)
+    for date, mood, energy, note in rows:
+        d = datetime.strptime(date, "%Y-%m-%d").strftime("%d.%m")
+        em = MOOD_EMOJIS.get(mood, "😐")
+        en = f"⚡{energy}" if energy else ""
+        lines.append(f"{d}: {em} *{mood}* {en}" + (f" — _{note}_" if note else ""))
+    lines.append(f"\nСредние: настроение *{avg_m}*, энергия *{avg_e}*")
+    return "\n".join(lines)
+
+# ─────────────────────────────────────────
+#  ЛИЧНЫЙ РЕКОРД ВЕСА / ШАГОВ
+# ─────────────────────────────────────────
+
+def build_personal_records(uid):
+    wd = get_weights(uid)
+    sd = get_steps(uid, limit=365)
+    lines = ["🏆 *Личные рекорды*\n"]
+    if wd:
+        min_w = min(wd, key=lambda x: x[1])
+        max_w = max(wd, key=lambda x: x[1])
+        start_w = wd[0][1]
+        cur_w   = wd[-1][1]
+        lost    = round(start_w - cur_w, 1)
+        lines.append(f"⚖️ Стартовый вес: *{start_w} кг*")
+        lines.append(f"⚖️ Минимальный вес: *{min_w[1]} кг* ({min_w[0][:10]})")
+        lines.append(f"📉 Всего сброшено: *{lost} кг* 🎉\n")
+    if sd:
+        best_day = max(sd, key=lambda x: x[1])
+        avg_steps = round(sum(r[1] for r in sd)/len(sd))
+        lines.append(f"👣 Рекорд шагов: *{best_day[1]:,}* ({best_day[0][:10]})".replace(",","_"))
+        lines.append(f"👣 Среднее шагов/день: *{avg_steps:,}*".replace(",","_"))
+    conn = sqlite3.connect("weight_tracker.db")
+    streak_row = conn.execute("SELECT MAX(streak) FROM user_profile WHERE user_id=?", (uid,)).fetchone()
+    cur_streak = conn.execute("SELECT streak FROM user_profile WHERE user_id=?", (uid,)).fetchone()
+    conn.close()
+    if cur_streak and cur_streak[0]:
+        lines.append(f"\n🔥 Текущая серия: *{cur_streak[0]} дней*")
+    return "\n".join(lines)
+
+# ─────────────────────────────────────────
+#  БЫСТРЫЕ ЗАМЕТКИ / TODO
+# ─────────────────────────────────────────
+
+def add_quick_note(uid, text):
+    today = now_samara().strftime("%Y-%m-%d %H:%M")
+    conn = sqlite3.connect("weight_tracker.db")
+    conn.execute("CREATE TABLE IF NOT EXISTS quick_notes (id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER, note TEXT, created TEXT, done INTEGER DEFAULT 0)")
+    conn.execute("INSERT INTO quick_notes (user_id,note,created) VALUES (?,?,?)", (uid, text, today))
+    conn.commit(); conn.close()
+
+def get_quick_notes(uid):
+    conn = sqlite3.connect("weight_tracker.db")
+    conn.execute("CREATE TABLE IF NOT EXISTS quick_notes (id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER, note TEXT, created TEXT, done INTEGER DEFAULT 0)")
+    rows = conn.execute(
+        "SELECT id, note, done, created FROM quick_notes WHERE user_id=? ORDER BY id DESC LIMIT 15", (uid,)).fetchall()
+    conn.close()
+    return rows
+
+def build_notes_menu(uid):
+    rows = get_quick_notes(uid)
+    if not rows:
+        return "📝 *Заметки*\n\nЗаметок пока нет.\n\nНапиши боту `/note текст` чтобы добавить заметку."
+    lines = ["📝 *Мои заметки*\n"]
+    kb = types.InlineKeyboardMarkup(row_width=2)
+    for nid, note, done, created in rows:
+        status = "✅" if done else "⬜"
+        lines.append(f"{status} {note}")
+        if not done:
+            kb.add(types.InlineKeyboardButton(f"✅ {note[:25]}", callback_data=f"note_done:{nid}"))
+    kb.add(types.InlineKeyboardButton("🗑️ Очистить выполненные", callback_data="notes_clear"))
+    return "\n".join(lines), kb
+
+# ─────────────────────────────────────────
+#  КАЛЬКУЛЯТОР НОРМЫ ВОДЫ
+# ─────────────────────────────────────────
+
+def build_water_norm(uid):
+    profile = get_profile(uid)
+    if not profile:
+        return "⚠️ Сначала настрой профиль."
+    weight = profile.get("current_weight", 80)
+    is_driver = int(profile.get("is_driver", 0))
+    # Базовая норма: 35 мл на кг
+    base_ml = round(weight * 35)
+    # +500 мл если активные тренировки
+    gym_days = int(profile.get("gym_days") or 0)
+    if gym_days >= 3:
+        base_ml += 500
+    # -100 мл если сидячая работа
+    if is_driver:
+        base_ml -= 100
+    glasses = round(base_ml / 250)
+    ml_today = get_water_ml_today(uid)
+    water_cups = get_water_today(uid)
+    total_ml = ml_today + water_cups * 250
+    pct = min(100, round(total_ml / base_ml * 100))
+    bar = "💧" * round(pct/10) + "⬜" * (10 - round(pct/10))
+    return (f"💧 *Норма воды*\n\n"
+            f"Твоя норма: *{base_ml} мл* (~{glasses} стаканов)\n"
+            f"Выпито сегодня: *{total_ml} мл*\n\n"
+            f"{bar} {pct}%\n\n"
+            f"{'✅ Норма выполнена!' if total_ml >= base_ml else f'Осталось: {base_ml - total_ml} мл'}\n\n"
+            f"_Расчёт: {weight}кг × 35мл{'+ тренировки' if gym_days>=3 else ''}_")
+
+# ─────────────────────────────────────────
+#  СЧЁТЧИК ПРИВЫЧЕК
+# ─────────────────────────────────────────
+
+DEFAULT_HABITS = [
+    ("💧 Вода 2л+",   "water"),
+    ("🏃 Зарядка",    "morning_exercise"),
+    ("🥗 Овощи",      "vegetables"),
+    ("📵 Без сладкого","no_sugar"),
+    ("😴 Сон 8ч",     "sleep8"),
+    ("🚶 10к шагов",  "steps10k"),
+]
+
+def get_habits_today(uid):
+    today = now_samara().strftime("%Y-%m-%d")
+    conn = sqlite3.connect("weight_tracker.db")
+    conn.execute("CREATE TABLE IF NOT EXISTS habit_log (id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER, date TEXT, habit_key TEXT)")
+    done = {r[0] for r in conn.execute("SELECT habit_key FROM habit_log WHERE user_id=? AND date=?", (uid, today)).fetchall()}
+    conn.close()
+    return done
+
+def toggle_habit(uid, habit_key):
+    today = now_samara().strftime("%Y-%m-%d")
+    conn = sqlite3.connect("weight_tracker.db")
+    conn.execute("CREATE TABLE IF NOT EXISTS habit_log (id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER, date TEXT, habit_key TEXT)")
+    ex = conn.execute("SELECT id FROM habit_log WHERE user_id=? AND date=? AND habit_key=?", (uid, today, habit_key)).fetchone()
+    if ex:
+        conn.execute("DELETE FROM habit_log WHERE id=?", (ex[0],))
+        done = False
+    else:
+        conn.execute("INSERT INTO habit_log (user_id,date,habit_key) VALUES (?,?,?)", (uid, today, habit_key))
+        done = True
+    conn.commit(); conn.close()
+    return done
+
+def build_habits_keyboard(uid):
+    done = get_habits_today(uid)
+    count = len(done)
+    kb = types.InlineKeyboardMarkup(row_width=2)
+    for name, key in DEFAULT_HABITS:
+        status = "✅" if key in done else "⬜"
+        kb.add(types.InlineKeyboardButton(f"{status} {name}", callback_data=f"habit:{key}"))
+    kb.add(types.InlineKeyboardButton(f"📊 Выполнено: {count}/{len(DEFAULT_HABITS)}", callback_data="habits_stats"))
+    return kb
+
+def build_habits_stats(uid):
+    conn = sqlite3.connect("weight_tracker.db")
+    conn.execute("CREATE TABLE IF NOT EXISTS habit_log (id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER, date TEXT, habit_key TEXT)")
+    rows = conn.execute(
+        "SELECT habit_key, COUNT(*) FROM habit_log WHERE user_id=? AND date >= date('now','-30 days') GROUP BY habit_key",
+        (uid,)).fetchall()
+    conn.close()
+    if not rows:
+        return "📊 *Статистика привычек*\n\nПока нет данных за 30 дней."
+    lines = ["📊 *Привычки за 30 дней*\n"]
+    habit_names = {k: n for n, k in DEFAULT_HABITS}
+    for key, count in sorted(rows, key=lambda x: -x[1]):
+        name = habit_names.get(key, key)
+        pct = round(count/30*100)
+        bar = "🟩" * round(pct/10) + "⬜" * (10 - round(pct/10))
+        lines.append(f"{name}: {bar} {pct}%")
+    return "\n".join(lines)
+
+# ─────────────────────────────────────────
+#  КАЛЬКУЛЯТОР БЕЛКА ПО ВЕСУ
+# ─────────────────────────────────────────
+
+def build_protein_calc(uid):
+    profile = get_profile(uid)
+    if not profile:
+        return "⚠️ Сначала настрой профиль."
+    weight = profile.get("current_weight", 80)
+    gym_days = int(profile.get("gym_days") or 0)
+    drying = int(profile.get("drying_mode", 0))
+    # Коэффициент: 1.6–2.2 г/кг в зависимости от активности
+    if drying:
+        coef = 2.2
+        label = "сушка — максимум белка"
+    elif gym_days >= 4:
+        coef = 2.0
+        label = "высокая активность"
+    elif gym_days >= 2:
+        coef = 1.8
+        label = "средняя активность"
+    else:
+        coef = 1.6
+        label = "низкая активность"
+    protein_g = round(weight * coef)
+    # Источники белка на день
+    sources = [
+        ("Куриная грудка", 100, 23),
+        ("Яйца", 1, 6),
+        ("Творог 0%", 100, 18),
+        ("Протеин (порция 30г)", 1, 24),
+        ("Рыба (лосось)", 100, 20),
+    ]
+    lines = [
+        f"💪 *Норма белка*\n",
+        f"Твой вес: *{weight} кг* ({label})",
+        f"Коэффициент: *{coef} г/кг*",
+        f"Норма в день: *{protein_g}г белка*\n",
+        f"Примерный набор:\n"
+    ]
+    remaining = protein_g
+    for src, unit, per_unit in sources:
+        qty = round(remaining / per_unit)
+        if unit == 100:
+            lines.append(f"• {src}: ~{qty*100}г")
+        else:
+            lines.append(f"• {src}: ~{qty} шт/порций")
+        remaining -= qty * per_unit
+        if remaining <= 0:
+            break
+    return "\n".join(lines)
+
 def compare_weeks(uid):
     """Сравнивает текущую и прошлую неделю по шагам и весу"""
     wd = get_weights(uid)
@@ -7236,6 +7535,8 @@ def main_menu(uid=None):
     m.add(types.KeyboardButton("🍽️ Питание"), types.KeyboardButton("🏋️ Тренировки"))
     m.add(types.KeyboardButton("📊 Моё тело"), types.KeyboardButton("📈 Аналитика"))
     m.add(types.KeyboardButton("😴 Здоровье"), types.KeyboardButton("⚙️ Настройки"))
+    # Помощь
+    m.add(types.KeyboardButton("❓ Помощь / команды"))
     return m
 
 def menu_pitanie():
@@ -7455,6 +7756,20 @@ def cmd_partner(message):
     else:
         kb_pair.add(types.InlineKeyboardButton("🔗 Подключить партнёра", callback_data="partner_link"))
     bot.send_message(cid, build_partner_comparison(cid), parse_mode="Markdown", reply_markup=kb_pair)
+
+@bot.message_handler(commands=['note', 'заметка'])
+def cmd_note(message):
+    """/note текст — добавить быструю заметку"""
+    cid = message.chat.id
+    parts = message.text.strip().split(None, 1)
+    if len(parts) < 2:
+        bot.send_message(cid, "📝 Формат: `/note купить протеин`", parse_mode="Markdown")
+        return
+    text_note = parts[1].strip()
+    add_quick_note(cid, text_note)
+    add_xp(cid, 1)
+    bot.send_message(cid, f"📝 Заметка добавлена:\n_{text_note}_\n\nПосмотреть все: *«📝 Заметки»*",
+                     parse_mode="Markdown", reply_markup=main_menu(cid))
 
 @bot.message_handler(commands=['hrv'])
 def cmd_hrv(message):
@@ -8008,6 +8323,101 @@ def handle_callback(call):
         bot.answer_callback_query(call.id)
         msg, kb_quiz = build_kcal_quiz_message(cid)
         bot.send_message(cid, msg, parse_mode="Markdown", reply_markup=kb_quiz)
+
+    # ── Привычки: отметить ──
+    elif data.startswith("habit:"):
+        habit_key = data.split(":", 1)[1]
+        done_flag = toggle_habit(cid, habit_key)
+        bot.answer_callback_query(call.id, "✅ Отмечено!" if done_flag else "↩️ Снято")
+        kb_habits = build_habits_keyboard(cid)
+        done = get_habits_today(cid)
+        try:
+            bot.edit_message_text(
+                f"✔️ *Трекер привычек — сегодня*\n\nВыполнено: *{len(done)}/{len(DEFAULT_HABITS)}*\n\nНажми чтобы отметить:",
+                cid, call.message.message_id, parse_mode="Markdown", reply_markup=kb_habits)
+        except Exception:
+            pass
+
+    # ── Привычки: статистика ──
+    elif data == "habits_stats":
+        bot.answer_callback_query(call.id)
+        bot.send_message(cid, build_habits_stats(cid), parse_mode="Markdown")
+
+    # ── Заметки: выполнено ──
+    elif data.startswith("note_done:"):
+        nid = int(data.split(":")[1])
+        conn = sqlite3.connect("weight_tracker.db")
+        conn.execute("UPDATE quick_notes SET done=1 WHERE id=?", (nid,))
+        conn.commit(); conn.close()
+        bot.answer_callback_query(call.id, "✅ Выполнено!")
+        result = build_notes_menu(cid)
+        if isinstance(result, tuple):
+            txt, kb_notes = result
+            try:
+                bot.edit_message_text(txt, cid, call.message.message_id, parse_mode="Markdown", reply_markup=kb_notes)
+            except Exception:
+                pass
+
+    # ── Заметки: очистить выполненные ──
+    elif data == "notes_clear":
+        conn = sqlite3.connect("weight_tracker.db")
+        conn.execute("DELETE FROM quick_notes WHERE user_id=? AND done=1", (cid,))
+        conn.commit(); conn.close()
+        bot.answer_callback_query(call.id, "🗑️ Очищено")
+        result = build_notes_menu(cid)
+        if isinstance(result, tuple):
+            txt, kb_notes = result
+            try:
+                bot.edit_message_text(txt, cid, call.message.message_id, parse_mode="Markdown", reply_markup=kb_notes)
+            except Exception:
+                pass
+        else:
+            try:
+                bot.edit_message_text(result, cid, call.message.message_id, parse_mode="Markdown")
+            except Exception:
+                pass
+
+    # ── Помощь: раздел ──
+    elif data.startswith("help_section:"):
+        section = data.split(":")[1]
+        bot.answer_callback_query(call.id)
+        section_texts = {
+            "food": ("🍽️ *Питание — что умеет бот*\n\n"
+                     "• Рацион на день и завтра с расчётом КБЖУ\n• Дневник питания — вводи вручную или фото\n"
+                     "• Штрихкод → КБЖУ из Open Food Facts\n• Шаблоны любимых приёмов пищи\n"
+                     "• Меню на неделю + список покупок\n• Избранные блюда\n• Рецепты, полуфабрикаты, читмил\n"
+                     "• Калькулятор КБЖУ: просто напиши `гречка 200`\n• Отслеживание воды в мл"),
+            "workout": ("🏋️ *Тренировки — что умеет бот*\n\n"
+                        "• Персональный план тренировок А/Б/В/К\n• Домашние тренировки (3 режима)\n"
+                        "• 8-недельная программа с прогрессией\n• Разминка и заминка\n• Супер-сеты\n"
+                        "• Таймер отдыха и кардио-таймер\n• Дневник упражнений + прогрессия весов\n"
+                        "• Расчёт 1RM: `/1rm жим лёжа 100 5`\n• Виртуальный тренер с советами"),
+            "body": ("📊 *Тело — что умеет бот*\n\n"
+                     "• График веса с анализом тренда\n• Трекер шагов (ручной ввод или импорт)\n"
+                     "• Вода: стаканы и мл, норма по весу\n• Обхваты тела (талия, грудь, бёдра...)\n"
+                     "• InBody — загрузи PDF, бот разберёт\n• Фото-прогресс (#прогресс в подписи)\n"
+                     "• Ачивки и достижения\n• Серия дней без пропусков\n• Партнёрский режим"),
+            "analytics": ("📈 *Аналитика — что умеет бот*\n\n"
+                          "• Инфографика прогресса (ASCII)\n• Прогноз даты цели\n"
+                          "• Прогноз «Что если» (3 сценария)\n• ИИ-анализ недели (Anthropic API)\n"
+                          "• Корреляции: сон↔вес, шаги↔вес\n• Отчёты за неделю и месяц\n"
+                          "• XP, уровни, еженедельные челленджи\n• Экспорт CSV всех данных"),
+            "health": ("😴 *Здоровье — что умеет бот*\n\n"
+                       "• Трекер сна с анализом качества\n• Дневник стресса 1–10\n"
+                       "• Менструальный цикл и фазы\n• HRV и пульс покоя\n"
+                       "• Давление и пульс\n• Режим болезни\n"
+                       "• Импорт из Apple Health / Google Fit\n• Напоминания по расписанию"),
+            "commands": ("⚡ *Все быстрые команды*\n\n"
+                         "`/w 105.7` — вес\n`/s 8500` — шаги\n`/water 3` — вода\n"
+                         "`/hrv 65 55` — HRV и пульс\n`/1rm жим 100 5` — 1RM\n"
+                         "`/note текст` — заметка\n`/summary` — сводка дня\n"
+                         "`/receipt` — анализ чека\n`/partner` — парный режим\n\n"
+                         "*Умный ввод:*\n`гречка 200` — быстрый калькулятор\n"
+                         "Голосовое → бот поймёт команду\n"
+                         "Фото еды → ИИ считает калории\nФото #прогресс → архив фото"),
+        }
+        text_help = section_texts.get(section, "Раздел не найден")
+        bot.send_message(cid, text_help, parse_mode="Markdown")
 
     else:
         bot.answer_callback_query(call.id)
@@ -10685,6 +11095,48 @@ def router(message):
     elif text == "🎮 Угадай калории":
         msg, kb_quiz = build_kcal_quiz_message(cid)
         bot.send_message(cid, msg, parse_mode="Markdown", reply_markup=kb_quiz)
+
+    # ── Помощь / команды ──
+    elif text == "❓ Помощь / команды":
+        kb_help = types.InlineKeyboardMarkup(row_width=2)
+        kb_help.add(
+            types.InlineKeyboardButton("🍽️ Питание", callback_data="help_section:food"),
+            types.InlineKeyboardButton("🏋️ Тренировки", callback_data="help_section:workout"),
+            types.InlineKeyboardButton("📊 Тело", callback_data="help_section:body"),
+            types.InlineKeyboardButton("📈 Аналитика", callback_data="help_section:analytics"),
+            types.InlineKeyboardButton("😴 Здоровье", callback_data="help_section:health"),
+            types.InlineKeyboardButton("⚡ Команды", callback_data="help_section:commands"),
+        )
+        bot.send_message(cid, build_help_message(), parse_mode="Markdown", reply_markup=kb_help)
+
+    # ── Счётчик привычек ──
+    elif text == "✔️ Привычки":
+        kb_habits = build_habits_keyboard(cid)
+        done = get_habits_today(cid)
+        bot.send_message(cid,
+            f"✔️ *Трекер привычек — сегодня*\n\nВыполнено: *{len(done)}/{len(DEFAULT_HABITS)}*\n\nНажми чтобы отметить:",
+            parse_mode="Markdown", reply_markup=kb_habits)
+
+    # ── Заметки ──
+    elif text == "📝 Заметки":
+        result = build_notes_menu(cid)
+        if isinstance(result, tuple):
+            txt, kb_notes = result
+            bot.send_message(cid, txt, parse_mode="Markdown", reply_markup=kb_notes)
+        else:
+            bot.send_message(cid, result, parse_mode="Markdown")
+
+    # ── Норма воды ──
+    elif text == "💧 Норма воды":
+        bot.send_message(cid, build_water_norm(cid), parse_mode="Markdown")
+
+    # ── Норма белка ──
+    elif text == "💪 Норма белка":
+        bot.send_message(cid, build_protein_calc(cid), parse_mode="Markdown")
+
+    # ── Личные рекорды ──
+    elif text == "🏆 Личные рекорды":
+        bot.send_message(cid, build_personal_records(cid), parse_mode="Markdown")
 
     else:
         # Умный fallback: пробуем распознать "продукт граммы" (напр. "гречка 200")
