@@ -7245,6 +7245,7 @@ def menu_pitanie():
     m.add(types.KeyboardButton("🍴 Выбрать блюдо"), types.KeyboardButton("🔄 Заменить блюдо"))
     m.add(types.KeyboardButton("📓 Дневник питания"), types.KeyboardButton("➕ Записать приём пищи"))
     m.add(types.KeyboardButton("🍽️ Калории сегодня"), types.KeyboardButton("⚖️ Баланс калорий"))
+    m.add(types.KeyboardButton("💧 Вода (мл)"), types.KeyboardButton("📦 Штрихкод"))
     m.add(types.KeyboardButton("🥩 Полуфабрикаты"), types.KeyboardButton("🍝 Рецепты блюд"))
     m.add(types.KeyboardButton("🍕 Читмил"), types.KeyboardButton("🧮 Калькулятор ккал"))
     m.add(types.KeyboardButton("🍫 Сладкое"), types.KeyboardButton("🍓 Фрукты"))
@@ -7253,7 +7254,7 @@ def menu_pitanie():
     m.add(types.KeyboardButton("⭐ Избранные блюда"), types.KeyboardButton("📋 Шаблоны еды"))
     m.add(types.KeyboardButton("📊 Макронутриенты"), types.KeyboardButton("🍎 ГИ продукта"))
     m.add(types.KeyboardButton("💊 Мои добавки"), types.KeyboardButton("💊 Лекарства"))
-    m.add(types.KeyboardButton("🏆 Режим сушки"), types.KeyboardButton("🏋️ Журнал весов"))
+    m.add(types.KeyboardButton("🏆 Режим сушки"), types.KeyboardButton("🎮 Угадай калории"))
     m.add(types.KeyboardButton("🏠 Главное меню"))
     return m
 
@@ -7261,12 +7262,13 @@ def menu_trenirovki():
     """Подменю — Тренировки"""
     m = types.ReplyKeyboardMarkup(resize_keyboard=True, row_width=2)
     m.add(types.KeyboardButton("🟢 Тренировка сегодня"), types.KeyboardButton("✅ Тренировка завершена"))
-    m.add(types.KeyboardButton("📅 Фаза тренировок"), types.KeyboardButton("🕐 Расписание дня"))
-    m.add(types.KeyboardButton("🏠 Тренировка дома"), types.KeyboardButton("🏠 Домашние тренировки"))
-    m.add(types.KeyboardButton("🔥 Разминка"), types.KeyboardButton("🧘 Заминка"))
-    m.add(types.KeyboardButton("💪 Супер-сеты"), types.KeyboardButton("❤️ Заменить кардио"))
-    m.add(types.KeyboardButton("⏱️ Таймер отдыха"), types.KeyboardButton("🏃 Кардио таймер"))
-    m.add(types.KeyboardButton("💪 Прогресс упражнений"), types.KeyboardButton("➕ Добавить упражнение"))
+    m.add(types.KeyboardButton("📅 Фаза тренировок"), types.KeyboardButton("📅 Программа на 8 нед"))
+    m.add(types.KeyboardButton("🕐 Расписание дня"), types.KeyboardButton("🏠 Тренировка дома"))
+    m.add(types.KeyboardButton("🏠 Домашние тренировки"), types.KeyboardButton("🔥 Разминка"))
+    m.add(types.KeyboardButton("🧘 Заминка"), types.KeyboardButton("💪 Супер-сеты"))
+    m.add(types.KeyboardButton("❤️ Заменить кардио"), types.KeyboardButton("⏱️ Таймер отдыха"))
+    m.add(types.KeyboardButton("🏃 Кардио таймер"), types.KeyboardButton("💪 Прогресс упражнений"))
+    m.add(types.KeyboardButton("➕ Добавить упражнение"), types.KeyboardButton("🏆 Рекорды (1RM)"))
     m.add(types.KeyboardButton("🛁 Расслабляющая ванна"), types.KeyboardButton("💪 Восстановление"))
     m.add(types.KeyboardButton("🤖 Тренер"), types.KeyboardButton("💬 Цитата дня"))
     m.add(types.KeyboardButton("🏠 Главное меню"))
@@ -7280,18 +7282,19 @@ def menu_telo():
     m.add(types.KeyboardButton("👣 Мои шаги"), types.KeyboardButton("💧 Внести воду"))
     m.add(types.KeyboardButton("📏 Обхват талии"), types.KeyboardButton("📏 Обхваты"))
     m.add(types.KeyboardButton("📋 Загрузить InBody"), types.KeyboardButton("📊 История InBody"))
+    m.add(types.KeyboardButton("📷 Фото-прогресс"), types.KeyboardButton("📸 Карточка прогресса"))
     m.add(types.KeyboardButton("😊 Самочувствие"), types.KeyboardButton("🩺 Давление/пульс"))
     m.add(types.KeyboardButton("🏥 Мои ограничения"), types.KeyboardButton("🏆 Мои ачивки"))
     m.add(types.KeyboardButton("🏅 Мои достижения"), types.KeyboardButton("🔥 Серия дней"))
-    m.add(types.KeyboardButton("📸 Карточка прогресса"), types.KeyboardButton("👫 Партнёр"))
-    m.add(types.KeyboardButton("🏠 Главное меню"))
+    m.add(types.KeyboardButton("👫 Партнёр"), types.KeyboardButton("🏠 Главное меню"))
     return m
 
 def menu_analitika():
     """Подменю — Аналитика"""
     m = types.ReplyKeyboardMarkup(resize_keyboard=True, row_width=2)
     m.add(types.KeyboardButton("📈 Инфографика"), types.KeyboardButton("📅 Прогноз по неделям"))
-    m.add(types.KeyboardButton("🎯 Прогноз цели"), types.KeyboardButton("🔬 Корреляции"))
+    m.add(types.KeyboardButton("🎯 Прогноз цели"), types.KeyboardButton("🔮 Прогноз «Что если»"))
+    m.add(types.KeyboardButton("🤖 ИИ-анализ недели"), types.KeyboardButton("🔬 Корреляции"))
     m.add(types.KeyboardButton("📬 Отчёт за неделю"), types.KeyboardButton("📋 Отчёт за месяц"))
     m.add(types.KeyboardButton("⚡ Мой уровень XP"), types.KeyboardButton("🏆 Челленджи"))
     m.add(types.KeyboardButton("📤 Экспорт CSV"), types.KeyboardButton("🤖 Совет на день"))
@@ -7303,9 +7306,11 @@ def menu_zdorovie():
     m = types.ReplyKeyboardMarkup(resize_keyboard=True, row_width=2)
     m.add(types.KeyboardButton("😴 Лечь спать"), types.KeyboardButton("⏰ Проснулся"))
     m.add(types.KeyboardButton("💤 История сна"), types.KeyboardButton("😊 Самочувствие"))
-    m.add(types.KeyboardButton("🩺 Давление/пульс"), types.KeyboardButton("🏥 Мои ограничения"))
+    m.add(types.KeyboardButton("🧠 Стресс"), types.KeyboardButton("🩸 Цикл"))
+    m.add(types.KeyboardButton("💓 HRV / Пульс"), types.KeyboardButton("🩺 Давление/пульс"))
+    m.add(types.KeyboardButton("🏥 Мои ограничения"), types.KeyboardButton("💊 Лекарства"))
     m.add(types.KeyboardButton("🤒 Я заболел"), types.KeyboardButton("⏰ Напоминания"))
-    m.add(types.KeyboardButton("🔔 Напоминания"), types.KeyboardButton("🏠 Главное меню"))
+    m.add(types.KeyboardButton("📥 Импорт Health/Fit"), types.KeyboardButton("🏠 Главное меню"))
     return m
 
 def menu_nastroyki():
@@ -7451,6 +7456,50 @@ def cmd_partner(message):
         kb_pair.add(types.InlineKeyboardButton("🔗 Подключить партнёра", callback_data="partner_link"))
     bot.send_message(cid, build_partner_comparison(cid), parse_mode="Markdown", reply_markup=kb_pair)
 
+@bot.message_handler(commands=['hrv'])
+def cmd_hrv(message):
+    """/hrv 65 55 — записать HRV и пульс покоя"""
+    cid = message.chat.id
+    parts = message.text.strip().split()
+    if len(parts) >= 2:
+        try:
+            hrv = int(parts[1]) if len(parts) > 1 else 0
+            pulse = int(parts[2]) if len(parts) > 2 else 0
+            log_hrv(cid, hrv, pulse)
+            bot.send_message(cid,
+                f"💓 Записано: HRV *{hrv}*, пульс покоя *{pulse} уд/мин*",
+                parse_mode="Markdown", reply_markup=main_menu(cid))
+        except Exception:
+            bot.send_message(cid, "⚠️ Формат: /hrv 65 55\n(HRV и пульс покоя)", reply_markup=main_menu(cid))
+    else:
+        set_state(cid, "waiting_hrv")
+        bot.send_message(cid, "💓 Введи HRV и пульс покоя через пробел:\nНапример: `65 55`",
+                         parse_mode="Markdown", reply_markup=cancel_menu())
+
+@bot.message_handler(commands=['1rm', 'orm'])
+def cmd_1rm(message):
+    """/1rm жим лёжа 100 5 — записать 1RM"""
+    cid = message.chat.id
+    parts = message.text.strip().split()
+    if len(parts) >= 4:
+        try:
+            # /1rm жим лёжа 100 5
+            reps = int(parts[-1])
+            weight = float(parts[-2])
+            exercise = " ".join(parts[1:-2])
+            one_rm = log_1rm(cid, exercise, weight, reps)
+            bot.send_message(cid,
+                f"🏋️ *{exercise.capitalize()}*\n"
+                f"{weight}кг × {reps} повт.\n"
+                f"Расчётный 1RM: *{one_rm} кг* 💪",
+                parse_mode="Markdown", reply_markup=main_menu(cid))
+        except Exception:
+            bot.send_message(cid, "⚠️ Формат: /1rm жим лёжа 100 5\n(упражнение, вес кг, повторений)")
+    else:
+        bot.send_message(cid,
+            "🏋️ *Расчёт 1RM*\n\nФормат: `/1rm жим лёжа 100 5`\n_(упражнение, вес кг, кол-во повторений)_",
+            parse_mode="Markdown")
+
 @bot.message_handler(commands=['w', 'weight', 'ves'])
 def cmd_weight(message):
     """Быстрая команда /w 105.7"""
@@ -7545,10 +7594,42 @@ def handle_document(message):
     cid = message.chat.id
     state, extra = get_state(cid)
 
+    # ── Импорт Apple Health / Google Fit CSV ──
+    if state == "waiting_health_import":
+        doc = message.document
+        if not doc.file_name.lower().endswith(".csv"):
+            bot.send_message(cid, "⚠️ Нужен CSV-файл. Попробуй ещё раз или нажми ❌ Отмена.",
+                             reply_markup=cancel_menu())
+            return
+        bot.send_message(cid, "⏳ Импортирую данные...")
+        try:
+            file_info = bot.get_file(doc.file_id)
+            file_bytes = bot.download_file(file_info.file_path)
+            fname = doc.file_name.lower()
+            source = "apple" if "apple" in fname or "export" in fname else "google"
+            imported = import_health_csv(cid, file_bytes, source)
+            set_state(cid, "idle")
+            if imported > 0:
+                bot.send_message(cid,
+                    f"✅ *Импорт завершён!*\n\nЗагружено записей: *{imported}*\n"
+                    f"Источник: {'Apple Health' if source=='apple' else 'Google Fit'}\n\n"
+                    f"Данные появятся в разделах «Шаги» и «График веса».",
+                    parse_mode="Markdown", reply_markup=main_menu(cid))
+            else:
+                bot.send_message(cid,
+                    "⚠️ Не удалось импортировать данные.\n\n"
+                    "Убедись что файл из Apple Health (Экспорт данных) или Google Fit (Google Takeout).",
+                    reply_markup=main_menu(cid))
+        except Exception as e:
+            set_state(cid, "idle")
+            bot.send_message(cid, f"❌ Ошибка импорта. Попробуй ещё раз.", reply_markup=main_menu(cid))
+        return
+
     if state != "waiting_inbody_pdf":
         bot.send_message(cid,
             "📎 Файл получен, но я не ожидаю документ сейчас.\n\n"
-            "Если это отчёт InBody — нажми сначала *«📋 Загрузить InBody»*.",
+            "Если это отчёт InBody — нажми сначала *«📋 Загрузить InBody»*.\n"
+            "Для импорта Health/Fit — нажми *«📥 Импорт Health/Fit»*.",
             parse_mode="Markdown", reply_markup=main_menu(cid))
         return
 
@@ -7848,6 +7929,86 @@ def handle_callback(call):
                 f"🏆 *Челлендж начат!*\n\n{ch['name']}\n_{ch['desc']}_\n\n+{ch['xp']} XP по завершению 💪",
                 parse_mode="Markdown")
 
+    # ── Вода в мл (кнопки) ──
+    elif data.startswith("water_ml:"):
+        val = data.split(":")[1]
+        bot.answer_callback_query(call.id)
+        if val == "custom":
+            set_state(cid, "waiting_water_ml")
+            bot.send_message(cid, "💧 Введи количество мл (например: `350`):",
+                             parse_mode="Markdown", reply_markup=cancel_menu())
+        else:
+            ml = int(val)
+            add_water_ml(cid, ml)
+            bot.edit_message_text(build_water_ml_status(cid) + f"\n\n✅ +{ml} мл добавлено",
+                                  cid, call.message.message_id, parse_mode="Markdown")
+
+    # ── Штрихкод: добавить в дневник ──
+    elif data.startswith("barcode_add:"):
+        parts = data.split(":")
+        grams = int(parts[2])
+        name  = parts[3]
+        kcal_per100 = int(parts[4])
+        kcal = round(kcal_per100 * grams / 100)
+        add_food_diary(cid, name, grams, kcal)
+        update_streak(cid)
+        add_xp(cid, XP_REWARDS.get("log_food", 2))
+        bot.answer_callback_query(call.id, f"✅ {name} {grams}г = {kcal} ккал записано!")
+        bot.edit_message_text(f"✅ *{name}* {grams}г = *{kcal} ккал* — записано в дневник!",
+                              cid, call.message.message_id, parse_mode="Markdown")
+
+    # ── Стресс: выбор уровня ──
+    elif data.startswith("stress_log:"):
+        level = int(data.split(":")[1])
+        bot.answer_callback_query(call.id)
+        set_state(cid, "waiting_stress_note", extra=str(level))
+        emoji_stress = "😌" if level <= 3 else ("😐" if level <= 6 else "😰")
+        bot.send_message(cid,
+            f"{emoji_stress} Уровень стресса *{level}/10* выбран.\n\nДобавь заметку (или отправь «-» чтобы пропустить):",
+            parse_mode="Markdown", reply_markup=cancel_menu())
+
+    # ── Цикл: начало ──
+    elif data == "cycle_start":
+        bot.answer_callback_query(call.id)
+        log_cycle_start(cid)
+        result = get_cycle_phase(cid)
+        if result:
+            day, phase, text_phase = result
+            bot.send_message(cid, f"🩸 Начало цикла отмечено!\n\n*День 1*\n\n{text_phase}",
+                             parse_mode="Markdown")
+        else:
+            bot.send_message(cid, "🩸 Начало цикла записано!")
+
+    # ── Сценарий прогноза ──
+    elif data.startswith("scenario:"):
+        scenario = data.split(":", 1)[1]
+        bot.answer_callback_query(call.id)
+        bot.send_message(cid, build_scenario_forecast(cid, scenario), parse_mode="Markdown")
+
+    # ── Мини-игра: ответ ──
+    elif data.startswith("quiz_ans:"):
+        parts = data.split(":")
+        chosen = int(parts[1])
+        correct = int(parts[2])
+        bot.answer_callback_query(call.id)
+        if chosen == correct:
+            add_xp(cid, 5)
+            bot.send_message(cid, f"✅ *Правильно!* {correct} ккал\n\n+5 XP 🎉\n\nЕщё раз?",
+                             parse_mode="Markdown",
+                             reply_markup=types.InlineKeyboardMarkup().add(
+                                 types.InlineKeyboardButton("🎮 Новый вопрос", callback_data="quiz_new")))
+        else:
+            bot.send_message(cid, f"❌ Неверно! Правильный ответ: *{correct} ккал*\n\nПопробуй ещё!",
+                             parse_mode="Markdown",
+                             reply_markup=types.InlineKeyboardMarkup().add(
+                                 types.InlineKeyboardButton("🎮 Новый вопрос", callback_data="quiz_new")))
+
+    # ── Мини-игра: новый вопрос ──
+    elif data == "quiz_new":
+        bot.answer_callback_query(call.id)
+        msg, kb_quiz = build_kcal_quiz_message(cid)
+        bot.send_message(cid, msg, parse_mode="Markdown", reply_markup=kb_quiz)
+
     else:
         bot.answer_callback_query(call.id)
 
@@ -7866,6 +8027,17 @@ def handle_photo(message):
         image_bytes = r.content
 
         caption = (message.caption or "").lower().strip()
+
+        # Режим: сохранение фото-прогресса
+        if "#прогресс" in caption or "#progress" in caption or state == "waiting_body_photo":
+            note = caption.replace("#прогресс","").replace("#progress","").strip()
+            save_body_photo(cid, photo.file_id, note)
+            set_state(cid, "idle")
+            photos = get_body_photos(cid, 2)
+            count_msg = f"\n\nВсего фото: {len(get_body_photos(cid, 100))}"
+            bot.send_message(cid, f"📷 Фото прогресса сохранено!" + (f"\nЗаметка: _{note}_" if note else "") + count_msg,
+                             parse_mode="Markdown", reply_markup=main_menu(cid))
+            return
 
         # Режим: чек из магазина
         if any(w in caption for w in ["чек", "чека", "магазин", "покупки"]) or state == "waiting_receipt_photo":
@@ -8729,6 +8901,67 @@ def router(message):
                 parse_mode="Markdown",reply_markup=main_menu(cid))
         except Exception:
             bot.send_message(cid,"Введи число стаканов (1-8)")
+        return
+
+    # ── Штрихкод ──
+    if state == "waiting_barcode":
+        barcode = text.strip().replace(" ", "")
+        if not barcode.isdigit():
+            bot.send_message(cid, "⚠️ Введи только цифры штрихкода", reply_markup=cancel_menu())
+            return
+        bot.send_message(cid, "🔍 Ищу продукт...")
+        info = lookup_barcode(barcode)
+        if not info:
+            bot.send_message(cid, f"❌ Продукт со штрихкодом *{barcode}* не найден в базе.\n\nПопробуй ввести вручную: `продукт граммы`",
+                             parse_mode="Markdown", reply_markup=main_menu(cid))
+        else:
+            set_state(cid, "barcode_got_grams", extra=barcode + ":" + str(info['kcal']) + ":" + info['name'])
+            kb_bc = types.InlineKeyboardMarkup(row_width=3)
+            for g in [50, 100, 150, 200, 300]:
+                kb_bc.add(types.InlineKeyboardButton(
+                    f"{g}г = {round(info['kcal']*g/100)} ккал",
+                    callback_data=f"barcode_add:{barcode}:{g}:{info['name']}:{info['kcal']}"))
+            bot.send_message(cid, build_barcode_result(info), parse_mode="Markdown", reply_markup=kb_bc)
+        set_state(cid, "idle")
+        return
+
+    # ── Вода в мл (своё значение) ──
+    if state == "waiting_water_ml":
+        try:
+            ml = int(text); assert 50 <= ml <= 3000
+            add_water_ml(cid, ml)
+            set_state(cid, "idle")
+            bot.send_message(cid, build_water_ml_status(cid), parse_mode="Markdown", reply_markup=main_menu(cid))
+        except Exception:
+            bot.send_message(cid, "⚠️ Введи количество мл (50–3000)", reply_markup=cancel_menu())
+        return
+
+    # ── HRV / Пульс покоя (команда /hrv) ──
+    if state == "waiting_hrv":
+        try:
+            parts = text.strip().split()
+            hrv = int(parts[0]) if len(parts) > 0 else 0
+            pulse = int(parts[1]) if len(parts) > 1 else 0
+            log_hrv(cid, hrv, pulse)
+            set_state(cid, "idle")
+            bot.send_message(cid, f"💓 Записано: HRV *{hrv}*, пульс покоя *{pulse} уд/мин*\n\n" + build_hrv_report(cid),
+                             parse_mode="Markdown", reply_markup=main_menu(cid))
+        except Exception:
+            bot.send_message(cid, "⚠️ Формат: HRV пульс, например: `65 55`\nИли только пульс: `60`", reply_markup=cancel_menu())
+        return
+
+    # ── Стресс (заметка после оценки) ──
+    if state == "waiting_stress_note":
+        note = text.strip()
+        level = int(extra) if extra and extra.isdigit() else 5
+        log_stress(cid, level, note)
+        set_state(cid, "idle")
+        bot.send_message(cid, f"🧠 Стресс *{level}/10* записан.\n\n_{note}_", parse_mode="Markdown", reply_markup=main_menu(cid))
+        return
+
+    # ── Импорт Health CSV ──
+    if state == "waiting_health_import":
+        bot.send_message(cid, "⚠️ Пожалуйста, отправь файл (CSV), а не текст.", reply_markup=cancel_menu())
         return
 
     # ── Ввод обхвата талии ──
@@ -10362,6 +10595,96 @@ def router(message):
         bot.send_message(cid,
             "🍴 *УМНЫЙ ВЫБОР БЛЮДА*\n\nВыбери категорию — я сам рассчитаю порцию под твой калораж:",
             parse_mode="Markdown", reply_markup=build_smart_food_menu())
+
+    # ── Вода в мл ──
+    elif text == "💧 Вода (мл)":
+        kb_water = types.InlineKeyboardMarkup(row_width=3)
+        kb_water.add(
+            types.InlineKeyboardButton("200 мл", callback_data="water_ml:200"),
+            types.InlineKeyboardButton("300 мл", callback_data="water_ml:300"),
+            types.InlineKeyboardButton("500 мл", callback_data="water_ml:500"),
+            types.InlineKeyboardButton("750 мл", callback_data="water_ml:750"),
+            types.InlineKeyboardButton("1000 мл", callback_data="water_ml:1000"),
+            types.InlineKeyboardButton("✏️ Своё", callback_data="water_ml:custom"),
+        )
+        bot.send_message(cid, build_water_ml_status(cid) + "\n\nДобавить:", parse_mode="Markdown", reply_markup=kb_water)
+
+    # ── Штрихкод ──
+    elif text == "📦 Штрихкод":
+        set_state(cid, "waiting_barcode")
+        bot.send_message(cid, "📦 *Поиск по штрихкоду*\n\nВведи штрихкод с упаковки (цифры):\nНапример: `4607099494049`",
+                         parse_mode="Markdown", reply_markup=cancel_menu())
+
+    # ── Стресс-дневник ──
+    elif text == "🧠 Стресс":
+        rows = get_stress_history(cid, 7)
+        kb_stress = types.InlineKeyboardMarkup(row_width=5)
+        kb_stress.add(*[types.InlineKeyboardButton(str(i), callback_data=f"stress_log:{i}") for i in range(1, 11)])
+        report = build_stress_report(cid)
+        bot.send_message(cid, report + "\n\nОцени уровень стресса сегодня (1=спокойно, 10=максимум):",
+                         parse_mode="Markdown", reply_markup=kb_stress)
+
+    # ── Цикл ──
+    elif text == "🩸 Цикл":
+        result = get_cycle_phase(cid)
+        kb_cycle = types.InlineKeyboardMarkup()
+        kb_cycle.add(types.InlineKeyboardButton("🩸 Начало цикла сегодня", callback_data="cycle_start"))
+        if result:
+            day, phase, text_phase = result
+            bot.send_message(cid, f"📅 День цикла: *{day}*\n\n{text_phase}", parse_mode="Markdown", reply_markup=kb_cycle)
+        else:
+            bot.send_message(cid, "🩸 *Менструальный цикл*\n\nОтметь начало цикла для персональных рекомендаций по тренировкам и питанию.",
+                             parse_mode="Markdown", reply_markup=kb_cycle)
+
+    # ── HRV / Пульс покоя ──
+    elif text == "💓 HRV / Пульс":
+        bot.send_message(cid, build_hrv_report(cid) + "\n\nВведи данные: /hrv 65 55\n(HRV пульс_покоя)", parse_mode="Markdown")
+
+    # ── Фото-прогресс ──
+    elif text == "📷 Фото-прогресс":
+        bot.send_message(cid, build_body_photos_menu(cid) + "\n\nОтправь фото с подписью *#прогресс*",
+                         parse_mode="Markdown")
+
+    # ── Рекорды 1RM ──
+    elif text == "🏆 Рекорды (1RM)":
+        bot.send_message(cid, build_1rm_report(cid), parse_mode="Markdown")
+
+    # ── 8-недельная программа ──
+    elif text == "📅 Программа на 8 нед":
+        bot.send_message(cid, build_8week_program(cid), parse_mode="Markdown")
+
+    # ── ИИ-анализ недели ──
+    elif text == "🤖 ИИ-анализ недели":
+        bot.send_message(cid, "⏳ Анализирую данные недели...", parse_mode="Markdown")
+        result = build_ai_week_analysis(cid)
+        bot.send_message(cid, result, parse_mode="Markdown")
+
+    # ── Прогноз «что будет если» ──
+    elif text == "🔮 Прогноз «Что если»":
+        kb_scenario = types.InlineKeyboardMarkup(row_width=1)
+        kb_scenario.add(
+            types.InlineKeyboardButton("❌ Пропущу 3 тренировки", callback_data="scenario:пропущу 3 тренировки"),
+            types.InlineKeyboardButton("🍕 Съем лишние 500 ккал/день", callback_data="scenario:съем лишние 500 ккал"),
+            types.InlineKeyboardButton("✅ Буду тренироваться каждый день", callback_data="scenario:буду тренироваться каждый день"),
+        )
+        bot.send_message(cid, "🔮 *Прогноз «Что будет если...»*\n\nВыбери сценарий:",
+                         parse_mode="Markdown", reply_markup=kb_scenario)
+
+    # ── Импорт Apple Health / Google Fit ──
+    elif text == "📥 Импорт Health/Fit":
+        bot.send_message(cid,
+            "📥 *Импорт данных*\n\n"
+            "Отправь CSV-файл из Apple Health или Google Fit.\n\n"
+            "*Apple Health:* Здоровье → Профиль → Экспорт данных\n"
+            "*Google Fit:* takeout.google.com → Google Fit\n\n"
+            "Бот импортирует шаги и вес автоматически.",
+            parse_mode="Markdown")
+        set_state(cid, "waiting_health_import")
+
+    # ── Мини-игра: угадай калорийность ──
+    elif text == "🎮 Угадай калории":
+        msg, kb_quiz = build_kcal_quiz_message(cid)
+        bot.send_message(cid, msg, parse_mode="Markdown", reply_markup=kb_quiz)
 
     else:
         # Умный fallback: пробуем распознать "продукт граммы" (напр. "гречка 200")
