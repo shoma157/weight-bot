@@ -5664,6 +5664,539 @@ def build_biorhythms(uid):
              "\n💡 Биоритмы — ориентировочный инструмент самопознания."]
     return "\n".join(lines)
 
+# ═══════════════════════════════════════════════════════════
+#  TASK #61 — АНАЛИТИКА: ТЕПЛОВАЯ КАРТА, STREAK-ДОСКА, ПРЕДСКАЗАНИЕ ПЛАТО
+# ═══════════════════════════════════════════════════════════
+
+def build_activity_heatmap(uid, weeks=12):
+    """ASCII тепловая карта активности в стиле GitHub"""
+    conn = sqlite3.connect("weight_tracker.db")
+    c = conn.cursor()
+    c.execute("SELECT DISTINCT date FROM workout_log WHERE user_id=? ORDER BY date", (uid,))
+    workout_dates = {r[0] for r in c.fetchall()}
+    c.execute("SELECT date, steps FROM steps_log WHERE user_id=? ORDER BY date", (uid,))
+    steps_rows = {r[0]: r[1] for r in c.fetchall()}
+    conn.close()
+    today = date.today()
+    # Начинаем с воскресенья перед нужным периодом
+    start = today - timedelta(weeks=weeks)
+    lines = ["📊 *Тепловая карта активности*\n"]
+    lines.append("Пн Вт Ср Чт Пт Сб Вс")
+    week_cols = [[] for _ in range(7)]  # пн=0..вс=6
+    cur = start
+    while cur <= today:
+        wd = cur.weekday()  # 0=пн..6=вс
+        d_str = cur.isoformat()
+        if d_str in workout_dates:
+            cell = "🟩"
+        elif steps_rows.get(d_str, 0) >= 8000:
+            cell = "🟦"
+        elif steps_rows.get(d_str, 0) >= 3000:
+            cell = "🟨"
+        elif cur <= today:
+            cell = "⬜"
+        else:
+            cell = "  "
+        week_cols[wd].append(cell)
+        cur += timedelta(days=1)
+    max_len = max(len(col) for col in week_cols)
+    for col in week_cols:
+        while len(col) < max_len:
+            col.append("  ")
+    rows_out = []
+    for row_idx in range(max_len):
+        row_line = " ".join(week_cols[day_idx][row_idx] for day_idx in range(7))
+        rows_out.append(row_line)
+    lines.extend(rows_out[-8:])  # последние 8 недель
+    lines.append("\n🟩 тренировка  🟦 8k+ шагов  🟨 3k+ шагов  ⬜ отдых")
+    return "\n".join(lines)
+
+def build_streak_board(uid):
+    """Топ серий по всем метрикам"""
+    conn = sqlite3.connect("weight_tracker.db")
+    c = conn.cursor()
+    results = {}
+    # Тренировки
+    c.execute("SELECT DISTINCT date FROM workout_log WHERE user_id=? ORDER BY date DESC", (uid,))
+    rows = [r[0] for r in c.fetchall()]
+    results["🏋️ Тренировки"] = _calc_streak(rows)
+    # Вес
+    c.execute("SELECT DISTINCT date FROM weight_log WHERE user_id=? ORDER BY date DESC", (uid,))
+    rows = [r[0] for r in c.fetchall()]
+    results["⚖️ Замеры веса"] = _calc_streak(rows)
+    # Питание
+    c.execute("SELECT DISTINCT date FROM food_log WHERE user_id=? ORDER BY date DESC", (uid,))
+    rows = [r[0] for r in c.fetchall()]
+    results["🍽️ Питание"] = _calc_streak(rows)
+    # Шаги
+    c.execute("SELECT DISTINCT date FROM steps_log WHERE user_id=? ORDER BY date DESC", (uid,))
+    rows = [r[0] for r in c.fetchall()]
+    results["👟 Шаги"] = _calc_streak(rows)
+    # Сон
+    c.execute("SELECT DISTINCT date FROM sleep_log WHERE user_id=? ORDER BY date DESC", (uid,))
+    rows = [r[0] for r in c.fetchall()]
+    results["😴 Сон"] = _calc_streak(rows)
+    conn.close()
+    sorted_res = sorted(results.items(), key=lambda x: x[1], reverse=True)
+    lines = ["🏆 *Streak-доска — серии дней*\n"]
+    medals = ["🥇", "🥈", "🥉", "4️⃣", "5️⃣"]
+    for i, (metric, streak) in enumerate(sorted_res):
+        medal = medals[i] if i < len(medals) else "  "
+        bar = "█" * min(streak, 20)
+        lines.append(f"{medal} {metric}: *{streak}* дн. `{bar}`")
+    return "\n".join(lines)
+
+def _calc_streak(date_list):
+    """Вычислить текущую серию из списка дат (убывающий порядок)"""
+    if not date_list:
+        return 0
+    dates = []
+    for d in date_list:
+        try:
+            dates.append(date.fromisoformat(d))
+        except Exception:
+            pass
+    if not dates:
+        return 0
+    streak = 1
+    for i in range(1, len(dates)):
+        if (dates[i-1] - dates[i]).days == 1:
+            streak += 1
+        else:
+            break
+    return streak
+
+def build_plateau_prediction(uid):
+    """ИИ-предупреждение о плато на основе тренда веса"""
+    wd = get_weights(uid)
+    if len(wd) < 7:
+        return "📉 *Предсказание плато*\n\nНужно минимум 7 замеров веса для анализа."
+    # Берём последние 14 дней
+    recent = wd[-14:]
+    weights = [r[1] for r in recent]
+    if len(weights) < 4:
+        return "📉 Недостаточно данных за последние 2 недели."
+    # Вычисляем изменение за первую и вторую половину
+    mid = len(weights) // 2
+    first_half  = weights[:mid]
+    second_half = weights[mid:]
+    change_first  = first_half[-1]  - first_half[0]   if len(first_half) > 1 else 0
+    change_second = second_half[-1] - second_half[0]  if len(second_half) > 1 else 0
+    total_change  = weights[-1] - weights[0]
+    # Определяем тип
+    goal = get_profile(uid)
+    goal_type = goal.get("goal", "loss") if goal else "loss"
+    lines = ["📉 *Предсказание плато*\n"]
+    lines.append(f"Анализ последних {len(weights)} замеров:")
+    lines.append(f"Изменение: {total_change:+.1f} кг за период")
+    # Признаки плато: темп замедляется
+    if abs(change_second) < abs(change_first) * 0.5 and abs(total_change) < 1.0:
+        lines.append("\n⚠️ *Признаки плато!*")
+        lines.append("Темп изменения веса замедляется.")
+        lines.append("\n💡 *Что делать:*")
+        if goal_type == "loss":
+            lines.extend(["• Пересчитай калорийность (−50 ккал)", "• Добавь 1–2 кардио-сессии в неделю",
+                           "• Попробуй рефид-день (+200 ккал)", "• Проверь скрытые калории (соусы, напитки)"])
+        else:
+            lines.extend(["• Увеличь калорийность на 100–150 ккал", "• Добавь подходы в базовых упражнениях",
+                           "• Убедись что спишь 7–8 часов", "• Проверь белок (≥1.6 г/кг)"])
+    elif abs(total_change) < 0.5:
+        lines.append("\n🟡 Вес стоит на месте.")
+        lines.append("Пока не критично, но стоит следить.")
+    else:
+        direction = "снижается" if total_change < 0 else "растёт"
+        lines.append(f"\n✅ Вес {direction} в нужном направлении. Плато не обнаружено.")
+    return "\n".join(lines)
+
+# ═══════════════════════════════════════════════════════════
+#  TASK #62 — ЗДОРОВЬЕ: МЕДИКАМЕНТЫ, КОФЕИН, ЭНЕРГИЯ ДНЯ, ДНЕВНИК САМОЧУВСТВИЯ
+# ═══════════════════════════════════════════════════════════
+
+# ── Трекер медикаментов ───────────────────────────────────
+def add_medication(uid, name, dose, schedule_time):
+    """Добавить медикамент в трекер"""
+    conn = sqlite3.connect("weight_tracker.db")
+    c = conn.cursor()
+    c.execute('''CREATE TABLE IF NOT EXISTS medications (
+        id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER,
+        name TEXT, dose TEXT, schedule_time TEXT, active INTEGER DEFAULT 1)''')
+    c.execute("INSERT INTO medications (user_id, name, dose, schedule_time) VALUES (?,?,?,?)",
+              (uid, name, dose, schedule_time))
+    conn.commit(); conn.close()
+
+def log_medication_taken(uid, med_id):
+    conn = sqlite3.connect("weight_tracker.db")
+    c = conn.cursor()
+    c.execute('''CREATE TABLE IF NOT EXISTS medication_log (
+        id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER,
+        med_id INTEGER, taken_at TEXT)''')
+    c.execute("INSERT INTO medication_log (user_id, med_id, taken_at) VALUES (?,?,?)",
+              (uid, med_id, datetime.now().strftime("%Y-%m-%d %H:%M:%S")))
+    conn.commit(); conn.close()
+
+def get_medications(uid):
+    conn = sqlite3.connect("weight_tracker.db")
+    c = conn.cursor()
+    c.execute('''CREATE TABLE IF NOT EXISTS medications (
+        id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER,
+        name TEXT, dose TEXT, schedule_time TEXT, active INTEGER DEFAULT 1)''')
+    c.execute("SELECT id, name, dose, schedule_time FROM medications WHERE user_id=? AND active=1", (uid,))
+    rows = c.fetchall(); conn.close()
+    return rows
+
+def get_medications_taken_today(uid):
+    conn = sqlite3.connect("weight_tracker.db")
+    c = conn.cursor()
+    c.execute('''CREATE TABLE IF NOT EXISTS medication_log (
+        id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER,
+        med_id INTEGER, taken_at TEXT)''')
+    today = date.today().isoformat()
+    c.execute("SELECT med_id FROM medication_log WHERE user_id=? AND taken_at LIKE ?",
+              (uid, today + "%"))
+    taken = {r[0] for r in c.fetchall()}
+    conn.close()
+    return taken
+
+def build_medications_menu(uid):
+    meds = get_medications(uid)
+    taken = get_medications_taken_today(uid)
+    if not meds:
+        kb = types.InlineKeyboardMarkup()
+        kb.add(types.InlineKeyboardButton("➕ Добавить медикамент", callback_data="med_add"))
+        return "💊 *Трекер медикаментов*\n\nМедикаменты не добавлены.", kb
+    lines = ["💊 *Трекер медикаментов — сегодня*\n"]
+    kb = types.InlineKeyboardMarkup(row_width=1)
+    for mid, name, dose, sch in meds:
+        status = "✅" if mid in taken else "⬜"
+        lines.append(f"{status} {name} {dose} в {sch}")
+        if mid not in taken:
+            kb.add(types.InlineKeyboardButton(f"✅ Принял {name} {dose}", callback_data=f"med_take:{mid}"))
+    kb.add(types.InlineKeyboardButton("➕ Добавить медикамент", callback_data="med_add"))
+    return "\n".join(lines), kb
+
+# ── Кофеин-трекер ──────────────────────────────────────
+CAFFEINE_ITEMS = {
+    "кофе":         {"mg": 95,  "label": "☕ Кофе (стандартный)"},
+    "эспрессо":     {"mg": 63,  "label": "☕ Эспрессо (1 шот)"},
+    "американо":    {"mg": 95,  "label": "☕ Американо"},
+    "капучино":     {"mg": 63,  "label": "☕ Капучино"},
+    "чёрный чай":   {"mg": 47,  "label": "🍵 Чёрный чай"},
+    "зелёный чай":  {"mg": 28,  "label": "🍵 Зелёный чай"},
+    "энергетик":    {"mg": 80,  "label": "⚡ Энергетик (250мл)"},
+    "pre-workout":  {"mg": 200, "label": "💪 Pre-workout"},
+    "кола":         {"mg": 34,  "label": "🥤 Кола (330мл)"},
+}
+
+def log_caffeine(uid, item_key, qty=1):
+    conn = sqlite3.connect("weight_tracker.db")
+    c = conn.cursor()
+    c.execute('''CREATE TABLE IF NOT EXISTS caffeine_log (
+        id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER,
+        date TEXT, time TEXT, item TEXT, mg INTEGER)''')
+    now = datetime.now()
+    mg = CAFFEINE_ITEMS.get(item_key, {}).get("mg", 50) * qty
+    c.execute("INSERT INTO caffeine_log (user_id, date, time, item, mg) VALUES (?,?,?,?,?)",
+              (uid, now.strftime("%Y-%m-%d"), now.strftime("%H:%M"), item_key, mg))
+    conn.commit(); conn.close()
+    return mg
+
+def get_caffeine_today(uid):
+    conn = sqlite3.connect("weight_tracker.db")
+    c = conn.cursor()
+    c.execute('''CREATE TABLE IF NOT EXISTS caffeine_log (
+        id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER,
+        date TEXT, time TEXT, item TEXT, mg INTEGER)''')
+    today = date.today().isoformat()
+    c.execute("SELECT SUM(mg), MAX(time) FROM caffeine_log WHERE user_id=? AND date=?", (uid, today))
+    row = c.fetchone(); conn.close()
+    return (row[0] or 0, row[1] or "—")
+
+def build_caffeine_menu(uid):
+    total_mg, last_time = get_caffeine_today(uid)
+    MAX_MG = 400  # ВОЗ рекомендация
+    pct = min(100, int(total_mg / MAX_MG * 100))
+    bar_len = 15
+    filled = int(bar_len * pct / 100)
+    bar = "█" * filled + "░" * (bar_len - filled)
+    lines = [f"☕ *Кофеин-трекер*\n",
+             f"Сегодня: *{total_mg} мг* / {MAX_MG} мг",
+             f"`[{bar}]` {pct}%"]
+    if last_time != "—":
+        lines.append(f"Последний приём: {last_time}")
+    # Рекомендация по последнему приёму
+    if last_time != "—":
+        try:
+            last_h = int(last_time.split(":")[0])
+            if last_h >= 15:
+                lines.append("\n⚠️ Последний приём после 15:00 — может ухудшить сон")
+        except Exception:
+            pass
+    if total_mg > MAX_MG:
+        lines.append("\n🔴 Превышен дневной лимит ВОЗ (400 мг)!")
+    lines.append("\nДобавить:")
+    kb = types.InlineKeyboardMarkup(row_width=2)
+    btns = [types.InlineKeyboardButton(v["label"], callback_data=f"caffeine:{k}")
+            for k, v in CAFFEINE_ITEMS.items()]
+    for i in range(0, len(btns), 2):
+        kb.add(*btns[i:i+2])
+    return "\n".join(lines), kb
+
+# ── Энергия дня ──────────────────────────────────────────
+def log_energy(uid, level, period="morning"):
+    """Уровень энергии 1–5, period: morning / evening"""
+    conn = sqlite3.connect("weight_tracker.db")
+    c = conn.cursor()
+    c.execute('''CREATE TABLE IF NOT EXISTS energy_log (
+        id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER,
+        date TEXT, period TEXT, level INTEGER)''')
+    today = date.today().isoformat()
+    c.execute("INSERT OR REPLACE INTO energy_log (user_id, date, period, level) VALUES (?,?,?,?)",
+              (uid, today, period, level))
+    conn.commit(); conn.close()
+
+def build_energy_menu(uid):
+    conn = sqlite3.connect("weight_tracker.db")
+    c = conn.cursor()
+    c.execute('''CREATE TABLE IF NOT EXISTS energy_log (
+        id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER,
+        date TEXT, period TEXT, level INTEGER)''')
+    today = date.today().isoformat()
+    c.execute("SELECT period, level FROM energy_log WHERE user_id=? AND date=?", (uid, today))
+    today_data = {r[0]: r[1] for r in c.fetchall()}
+    # Средняя за неделю
+    c.execute("SELECT AVG(level) FROM energy_log WHERE user_id=? AND date >= date('now','-7 days')", (uid,))
+    avg_row = c.fetchone(); conn.close()
+    avg = round(avg_row[0], 1) if avg_row and avg_row[0] else None
+    ENERGY_LABELS = {1: "😴 Разбит", 2: "😞 Устал", 3: "😐 Норм", 4: "😊 Бодр", 5: "🚀 Энергичен"}
+    lines = ["⚡ *Трекер энергии*\n", "Как твой уровень энергии сегодня?\n"]
+    for period, label in [("morning", "🌅 Утром"), ("evening", "🌙 Вечером")]:
+        val = today_data.get(period)
+        status = ENERGY_LABELS.get(val, "—") if val else "не отмечено"
+        lines.append(f"{label}: {status}")
+    if avg:
+        lines.append(f"\nСредняя за неделю: *{avg}/5*")
+    kb = types.InlineKeyboardMarkup(row_width=5)
+    kb.add(*[types.InlineKeyboardButton(ENERGY_LABELS[i], callback_data=f"energy_m:{i}") for i in range(1, 6)])
+    kb.add(*[types.InlineKeyboardButton(ENERGY_LABELS[i], callback_data=f"energy_e:{i}") for i in range(1, 6)])
+    return "\n".join(lines), kb
+
+# ── Дневник самочувствия ─────────────────────────────────
+WELLBEING_TAGS = ["мигрень", "аллергия", "простуда", "усталость", "боль в спине",
+                  "расстройство желудка", "бессонница", "отёки", "высокое давление", "другое"]
+
+def add_wellbeing_note(uid, text, tags=None):
+    conn = sqlite3.connect("weight_tracker.db")
+    c = conn.cursor()
+    c.execute('''CREATE TABLE IF NOT EXISTS wellbeing_log (
+        id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER,
+        date TEXT, note TEXT, tags TEXT)''')
+    today = date.today().isoformat()
+    tags_str = ",".join(tags) if tags else ""
+    c.execute("INSERT INTO wellbeing_log (user_id, date, note, tags) VALUES (?,?,?,?)",
+              (uid, today, text, tags_str))
+    conn.commit(); conn.close()
+
+def build_wellbeing_log(uid, limit=7):
+    conn = sqlite3.connect("weight_tracker.db")
+    c = conn.cursor()
+    c.execute('''CREATE TABLE IF NOT EXISTS wellbeing_log (
+        id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER,
+        date TEXT, note TEXT, tags TEXT)''')
+    c.execute("SELECT date, note, tags FROM wellbeing_log WHERE user_id=? ORDER BY date DESC LIMIT ?",
+              (uid, limit))
+    rows = c.fetchall(); conn.close()
+    if not rows:
+        return "Дневник самочувствия пуст."
+    lines = ["🩺 *Дневник самочувствия*\n"]
+    for d, note, tags in rows:
+        tag_str = f" [{tags}]" if tags else ""
+        lines.append(f"📅 {d}{tag_str}\n   {note}")
+    return "\n".join(lines)
+
+def build_wellbeing_tags_menu():
+    kb = types.InlineKeyboardMarkup(row_width=2)
+    btns = [types.InlineKeyboardButton(tag, callback_data=f"wb_tag:{tag}") for tag in WELLBEING_TAGS]
+    for i in range(0, len(btns), 2):
+        kb.add(*btns[i:i+2])
+    kb.add(types.InlineKeyboardButton("✅ Готово — сохранить", callback_data="wb_save"))
+    return kb
+
+# ═══════════════════════════════════════════════════════════
+#  TASK #63 — СИСТЕМА: HTML ОТЧЁТ, МУЛЬТИЯЗЫК, РЕЖИМ СОРЕВНОВАНИЯ
+# ═══════════════════════════════════════════════════════════
+
+# ── Мультиязык ───────────────────────────────────────────
+TRANSLATIONS = {
+    "ru": {
+        "greeting": "Привет",
+        "weight_saved": "Вес сохранён",
+        "steps_saved": "Шаги сохранены",
+        "today_summary": "Сводка за сегодня",
+        "goal": "Цель",
+        "progress": "Прогресс",
+        "workout_today": "Тренировка сегодня",
+        "workout_done": "Тренировка завершена",
+    },
+    "en": {
+        "greeting": "Hello",
+        "weight_saved": "Weight saved",
+        "steps_saved": "Steps saved",
+        "today_summary": "Today's summary",
+        "goal": "Goal",
+        "progress": "Progress",
+        "workout_today": "Workout today",
+        "workout_done": "Workout done",
+    }
+}
+
+def get_lang(uid):
+    p = get_profile(uid)
+    return p.get("lang", "ru") if p else "ru"
+
+def t(uid, key):
+    lang = get_lang(uid)
+    return TRANSLATIONS.get(lang, TRANSLATIONS["ru"]).get(key, key)
+
+# ── HTML месячный отчёт ──────────────────────────────────
+def build_monthly_html_report(uid):
+    """Генерирует HTML-отчёт за текущий месяц"""
+    p = get_profile(uid) or {}
+    name = p.get("name", "Пользователь")
+    today = date.today()
+    month_start = today.replace(day=1).isoformat()
+    conn = sqlite3.connect("weight_tracker.db")
+    c = conn.cursor()
+    # Вес
+    c.execute("SELECT date, weight FROM weight_log WHERE user_id=? AND date >= ? ORDER BY date",
+              (uid, month_start))
+    weights = c.fetchall()
+    # Шаги
+    c.execute("SELECT date, steps FROM steps_log WHERE user_id=? AND date >= ? ORDER BY date",
+              (uid, month_start))
+    steps = c.fetchall()
+    # Тренировки
+    c.execute("SELECT COUNT(DISTINCT date) FROM workout_log WHERE user_id=? AND date >= ?",
+              (uid, month_start))
+    workout_days = c.fetchone()[0] or 0
+    # Питание
+    c.execute("SELECT AVG(kcal) FROM (SELECT date, SUM(kcal) as kcal FROM food_log WHERE user_id=? AND date >= ? GROUP BY date)",
+              (uid, month_start))
+    avg_kcal_row = c.fetchone()
+    avg_kcal = round(avg_kcal_row[0]) if avg_kcal_row and avg_kcal_row[0] else 0
+    conn.close()
+    weight_change = round(weights[-1][1] - weights[0][1], 1) if len(weights) >= 2 else 0
+    avg_steps = int(sum(r[1] for r in steps) / len(steps)) if steps else 0
+    # SVG график веса
+    svg_weight = ""
+    if len(weights) >= 2:
+        vals = [r[1] for r in weights]
+        mn = min(vals); mx = max(vals); rng = mx - mn or 1
+        pts = []
+        for i, v in enumerate(vals):
+            x = int(i / (len(vals)-1) * 280) + 10
+            y = int((1 - (v-mn)/rng) * 80) + 10
+            pts.append(f"{x},{y}")
+        polyline = " ".join(pts)
+        svg_weight = f'''<svg width="300" height="100" style="background:#f8f8f8;border-radius:8px">
+  <polyline points="{polyline}" fill="none" stroke="#4CAF50" stroke-width="2"/>
+  <text x="10" y="98" font-size="10" fill="#666">{weights[0][0][5:]}</text>
+  <text x="250" y="98" font-size="10" fill="#666">{weights[-1][0][5:]}</text>
+</svg>'''
+    sign = "+" if weight_change > 0 else ""
+    html = f'''<!DOCTYPE html>
+<html lang="ru">
+<head><meta charset="UTF-8"><title>Отчёт за {today.strftime("%B %Y")}</title>
+<style>
+  body{{font-family:Arial,sans-serif;max-width:600px;margin:0 auto;padding:20px;background:#f5f5f5}}
+  .card{{background:white;border-radius:12px;padding:20px;margin:16px 0;box-shadow:0 2px 8px rgba(0,0,0,.1)}}
+  .stat{{display:inline-block;text-align:center;margin:10px;min-width:120px}}
+  .stat-val{{font-size:2em;font-weight:bold;color:#4CAF50}}
+  .stat-label{{color:#666;font-size:.85em}}
+  h1{{color:#333}}h2{{color:#555;font-size:1.1em}}
+</style></head>
+<body>
+<div class="card">
+  <h1>📊 Отчёт за {today.strftime("%B %Y")}</h1>
+  <p>Привет, <b>{name}</b>! Вот твои результаты за месяц.</p>
+</div>
+<div class="card">
+  <h2>📈 Ключевые показатели</h2>
+  <div class="stat"><div class="stat-val">{sign}{weight_change} кг</div><div class="stat-label">Изменение веса</div></div>
+  <div class="stat"><div class="stat-val">{workout_days}</div><div class="stat-label">Тренировочных дней</div></div>
+  <div class="stat"><div class="stat-val">{avg_steps:,}</div><div class="stat-label">Ср. шагов/день</div></div>
+  <div class="stat"><div class="stat-val">{avg_kcal}</div><div class="stat-label">Ср. ккал/день</div></div>
+</div>
+{f'<div class="card"><h2>⚖️ График веса</h2>{svg_weight}</div>' if svg_weight else ""}
+<div class="card" style="text-align:center;color:#999;font-size:.8em">
+  Создано ботом FitBot · {today.strftime("%d.%m.%Y")}
+</div>
+</body></html>'''
+    return html
+
+# ── Режим соревнования с партнёром ───────────────────────
+def get_competition_status(uid):
+    """Сравнить XP текущего пользователя и партнёра за неделю"""
+    conn = sqlite3.connect("weight_tracker.db")
+    c = conn.cursor()
+    # Партнёр
+    c.execute("SELECT partner_id FROM partner_pairs WHERE user1_id=? OR user2_id=? LIMIT 1",
+              (uid, uid))
+    row = c.fetchone()
+    if not row:
+        conn.close()
+        return None
+    partner_id = row[0] if row[0] != uid else uid
+    # XP за неделю через xp_log (если есть) или user_xp суммарно
+    week_ago = (date.today() - timedelta(days=7)).isoformat()
+    def week_xp(user_id):
+        c.execute("SELECT SUM(amount) FROM xp_log WHERE user_id=? AND date >= ?", (user_id, week_ago))
+        r = c.fetchone()
+        return r[0] or 0 if r else 0
+    c.execute('''CREATE TABLE IF NOT EXISTS xp_log (
+        id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER,
+        date TEXT, amount INTEGER, reason TEXT)''')
+    my_xp = week_xp(uid)
+    partner_xp = week_xp(partner_id)
+    conn.close()
+    return {"my_xp": my_xp, "partner_xp": partner_xp, "partner_id": partner_id}
+
+def build_competition_status(uid):
+    status = get_competition_status(uid)
+    if not status:
+        return ("🏁 *Режим соревнования*\n\nПривяжи партнёра через кнопку 👫 Партнёр, "
+                "чтобы соревноваться по XP за неделю!")
+    my_xp = status["my_xp"]
+    partner_xp = status["partner_xp"]
+    diff = my_xp - partner_xp
+    my_bar  = "█" * min(int(my_xp / 10), 15)
+    p_bar   = "█" * min(int(partner_xp / 10), 15)
+    lines = ["🏁 *Соревнование — XP за неделю*\n",
+             f"👤 Ты:       *{my_xp}* XP `{my_bar}`",
+             f"👥 Партнёр:  *{partner_xp}* XP `{p_bar}`\n"]
+    if diff > 0:
+        lines.append(f"🏆 Ты ведёшь на *{diff} XP*! Продолжай в том же духе!")
+    elif diff < 0:
+        lines.append(f"⚡ Партнёр опережает на *{abs(diff)} XP*. Догоняй!")
+    else:
+        lines.append("🤝 Ничья! Кто добавит XP первым?")
+    lines.append("\n💡 Зарабатывай XP за тренировки, питание, замеры веса и шаги.")
+    return "\n".join(lines)
+
+# Патч add_xp — логируем в xp_log для соревнования
+_orig_add_xp = add_xp
+def add_xp(uid, amount, reason=""):
+    _orig_add_xp(uid, amount)
+    try:
+        conn = sqlite3.connect("weight_tracker.db")
+        conn.execute('''CREATE TABLE IF NOT EXISTS xp_log (
+            id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER,
+            date TEXT, amount INTEGER, reason TEXT)''')
+        conn.execute("INSERT INTO xp_log (user_id, date, amount, reason) VALUES (?,?,?,?)",
+                     (uid, date.today().isoformat(), amount, reason))
+        conn.commit(); conn.close()
+    except Exception:
+        pass
+
 # ─────────────────────────────────────────
 #  ЛИЧНЫЙ РЕКОРД ВЕСА / ШАГОВ
 # ─────────────────────────────────────────
@@ -8157,6 +8690,8 @@ def menu_analitika():
     m.add(types.KeyboardButton("📬 Отчёт за неделю"), types.KeyboardButton("📋 Отчёт за месяц"))
     m.add(types.KeyboardButton("⚡ Мой уровень XP"), types.KeyboardButton("🏆 Челленджи"))
     m.add(types.KeyboardButton("📤 Экспорт CSV"), types.KeyboardButton("🤖 Совет на день"))
+    m.add(types.KeyboardButton("🗺️ Тепловая карта"), types.KeyboardButton("🏆 Streak-доска"))
+    m.add(types.KeyboardButton("📉 Предсказание плато"))
     m.add(types.KeyboardButton("🏠 Главное меню"))
     return m
 
@@ -8169,7 +8704,10 @@ def menu_zdorovie():
     m.add(types.KeyboardButton("💓 HRV / Пульс"), types.KeyboardButton("🩺 Давление/пульс"))
     m.add(types.KeyboardButton("🏥 Мои ограничения"), types.KeyboardButton("💊 Лекарства"))
     m.add(types.KeyboardButton("🤒 Я заболел"), types.KeyboardButton("⏰ Напоминания"))
-    m.add(types.KeyboardButton("📥 Импорт Health/Fit"), types.KeyboardButton("🏠 Главное меню"))
+    m.add(types.KeyboardButton("📥 Импорт Health/Fit"))
+    m.add(types.KeyboardButton("💊 Медикаменты"), types.KeyboardButton("☕ Кофеин"))
+    m.add(types.KeyboardButton("⚡ Энергия дня"), types.KeyboardButton("🩺 Дневник самочувствия"))
+    m.add(types.KeyboardButton("🏠 Главное меню"))
     return m
 
 def menu_nastroyki():
@@ -8178,7 +8716,9 @@ def menu_nastroyki():
     m.add(types.KeyboardButton("👤 Мой профиль"), types.KeyboardButton("⚙️ Изменить профиль"))
     m.add(types.KeyboardButton("⏰ Напоминания"), types.KeyboardButton("🔔 Напоминания"))
     m.add(types.KeyboardButton("🏠 Домашние тренировки"), types.KeyboardButton("👫 Партнёр"))
-    m.add(types.KeyboardButton("📤 Экспорт CSV"), types.KeyboardButton("🏠 Главное меню"))
+    m.add(types.KeyboardButton("📤 Экспорт CSV"), types.KeyboardButton("🌐 Язык / Language"))
+    m.add(types.KeyboardButton("🏁 Соревнование"), types.KeyboardButton("📄 HTML отчёт"))
+    m.add(types.KeyboardButton("🏠 Главное меню"))
     return m
 
 # Набор всех кнопок-категорий для роутинга
@@ -9049,6 +9589,79 @@ def handle_callback(call):
         bot.answer_callback_query(call.id)
         bot.send_message(cid, "Введи пульс покоя (уд/мин), например `58`:", parse_mode="Markdown")
         set_state(cid, "waiting_resting_hr")
+
+    # ── Медикаменты: принял ──
+    elif data.startswith("med_take:"):
+        med_id = int(data.split(":")[1])
+        log_medication_taken(cid, med_id)
+        bot.answer_callback_query(call.id, "✅ Принято!")
+        msg, kb_med = build_medications_menu(cid)
+        try:
+            bot.edit_message_text(msg, cid, call.message.message_id, parse_mode="Markdown", reply_markup=kb_med)
+        except Exception:
+            pass
+
+    elif data == "med_add":
+        bot.answer_callback_query(call.id)
+        bot.send_message(cid, "Введи медикамент в формате:\n`Название Доза Время`\n\nПример: `Витамин D 2000 МЕ 08:00`",
+                         parse_mode="Markdown")
+        set_state(cid, "waiting_med_add")
+
+    # ── Кофеин ──
+    elif data.startswith("caffeine:"):
+        item_key = data.split(":", 1)[1]
+        mg = log_caffeine(cid, item_key)
+        label = CAFFEINE_ITEMS.get(item_key, {}).get("label", item_key)
+        bot.answer_callback_query(call.id, f"☕ +{mg} мг кофеина")
+        msg, kb_caf = build_caffeine_menu(cid)
+        try:
+            bot.edit_message_text(msg, cid, call.message.message_id, parse_mode="Markdown", reply_markup=kb_caf)
+        except Exception:
+            pass
+
+    # ── Энергия утро/вечер ──
+    elif data.startswith("energy_m:") or data.startswith("energy_e:"):
+        parts = data.split(":")
+        period = "morning" if data.startswith("energy_m:") else "evening"
+        level = int(parts[1])
+        log_energy(cid, level, period)
+        period_label = "утром" if period == "morning" else "вечером"
+        bot.answer_callback_query(call.id, f"⚡ Энергия {period_label}: {level}/5")
+        msg, kb_en = build_energy_menu(cid)
+        try:
+            bot.edit_message_text(msg, cid, call.message.message_id, parse_mode="Markdown", reply_markup=kb_en)
+        except Exception:
+            pass
+
+    # ── Дневник самочувствия: теги ──
+    elif data.startswith("wb_tag:"):
+        tag = data.split(":", 1)[1]
+        state, extra = get_state(cid)
+        tags = extra.split(",") if extra else []
+        if tag in tags:
+            tags.remove(tag)
+        else:
+            tags.append(tag)
+        set_state(cid, "waiting_wellbeing_note", extra=",".join(tags))
+        bot.answer_callback_query(call.id, f"Тег '{tag}' {'добавлен' if tag in tags else 'убран'}")
+
+    elif data == "wb_save":
+        state, extra = get_state(cid)
+        tags = extra.split(",") if extra else []
+        today = date.today().isoformat()
+        add_wellbeing_note(cid, f"Запись {today}", tags=tags)
+        bot.answer_callback_query(call.id, "✅ Сохранено!")
+        set_state(cid, "idle")
+        bot.send_message(cid, f"✅ Самочувствие записано. Теги: {', '.join(tags) if tags else 'нет'}",
+                         reply_markup=main_menu(cid))
+
+    # ── Смена языка ──
+    elif data.startswith("set_lang:"):
+        lang = data.split(":")[1]
+        save_profile(cid, lang=lang)
+        lang_label = "🇷🇺 Русский" if lang == "ru" else "🇬🇧 English"
+        bot.answer_callback_query(call.id, f"Язык изменён: {lang_label}")
+        bot.send_message(cid, f"✅ Язык изменён: {lang_label}", reply_markup=main_menu(cid))
 
     else:
         bot.answer_callback_query(call.id)
@@ -9983,6 +10596,33 @@ def router(message):
         except ValueError:
             bot.send_message(cid, "⚠️ Введи число от 30 до 120", reply_markup=cancel_menu())
             return
+        set_state(cid, "idle")
+        return
+
+    if state == "waiting_wellbeing_note":
+        add_wellbeing_note(cid, text.strip())
+        bot.send_message(cid, "✅ Запись в дневник самочувствия сохранена!", reply_markup=main_menu(cid))
+        set_state(cid, "idle")
+        return
+
+    if state == "waiting_med_add":
+        parts = text.strip().split()
+        if len(parts) < 2:
+            bot.send_message(cid, "⚠️ Формат: `Название Доза Время`\nПример: `Витамин D 2000 МЕ 08:00`",
+                             parse_mode="Markdown", reply_markup=cancel_menu())
+            return
+        # Последний элемент — время если похоже на HH:MM
+        schedule_time = "08:00"
+        if len(parts) >= 3 and ":" in parts[-1]:
+            schedule_time = parts[-1]
+            name = parts[0]
+            dose = " ".join(parts[1:-1])
+        else:
+            name = parts[0]
+            dose = " ".join(parts[1:])
+        add_medication(cid, name, dose, schedule_time)
+        bot.send_message(cid, f"✅ Добавлено: *{name}* {dose} в {schedule_time}", parse_mode="Markdown",
+                         reply_markup=main_menu(cid))
         set_state(cid, "idle")
         return
 
@@ -11819,6 +12459,88 @@ def router(message):
             bot.send_message(cid, msg, parse_mode="Markdown", reply_markup=kb_hr)
         else:
             bot.send_message(cid, result, parse_mode="Markdown")
+
+    # ── % Жира ──
+    elif text == "📐 % Жира":
+        _, msg = calculate_body_fat_navy(cid)
+        bot.send_message(cid, msg, parse_mode="Markdown")
+
+    # ── Прогресс обхватов ──
+    elif text == "📊 Прогресс обхватов":
+        bot.send_message(cid, build_measurements_compare(cid), parse_mode="Markdown")
+
+    # ── Дерево достижений ──
+    elif text == "🌳 Дерево достижений":
+        bot.send_message(cid, build_achievement_tree(cid), parse_mode="Markdown")
+
+    # ── Биоритмы ──
+    elif text == "🔮 Биоритмы":
+        bot.send_message(cid, build_biorhythms(cid), parse_mode="Markdown")
+
+    # ── Тепловая карта ──
+    elif text == "🗺️ Тепловая карта":
+        bot.send_message(cid, build_activity_heatmap(cid), parse_mode="Markdown")
+
+    # ── Streak-доска ──
+    elif text == "🏆 Streak-доска":
+        bot.send_message(cid, build_streak_board(cid), parse_mode="Markdown")
+
+    # ── Предсказание плато ──
+    elif text == "📉 Предсказание плато":
+        bot.send_message(cid, build_plateau_prediction(cid), parse_mode="Markdown")
+
+    # ── Медикаменты ──
+    elif text == "💊 Медикаменты":
+        msg, kb_med = build_medications_menu(cid)
+        bot.send_message(cid, msg, parse_mode="Markdown", reply_markup=kb_med)
+
+    # ── Кофеин-трекер ──
+    elif text == "☕ Кофеин":
+        msg, kb_caf = build_caffeine_menu(cid)
+        bot.send_message(cid, msg, parse_mode="Markdown", reply_markup=kb_caf)
+
+    # ── Энергия дня ──
+    elif text == "⚡ Энергия дня":
+        msg, kb_en = build_energy_menu(cid)
+        bot.send_message(cid, msg, parse_mode="Markdown", reply_markup=kb_en)
+
+    # ── Дневник самочувствия ──
+    elif text == "🩺 Дневник самочувствия":
+        bot.send_message(cid, build_wellbeing_log(cid), parse_mode="Markdown")
+        bot.send_message(cid, "Добавить новую запись — напиши что ощущаешь, или выбери тег:",
+                         reply_markup=build_wellbeing_tags_menu())
+        set_state(cid, "waiting_wellbeing_note")
+
+    # ── Язык ──
+    elif text == "🌐 Язык / Language":
+        kb_lang = types.InlineKeyboardMarkup(row_width=2)
+        kb_lang.add(
+            types.InlineKeyboardButton("🇷🇺 Русский", callback_data="set_lang:ru"),
+            types.InlineKeyboardButton("🇬🇧 English", callback_data="set_lang:en"))
+        bot.send_message(cid, "🌐 *Выбери язык / Choose language:*", parse_mode="Markdown",
+                         reply_markup=kb_lang)
+
+    # ── Соревнование ──
+    elif text == "🏁 Соревнование":
+        bot.send_message(cid, build_competition_status(cid), parse_mode="Markdown")
+
+    # ── HTML отчёт ──
+    elif text == "📄 HTML отчёт":
+        bot.send_message(cid, "⏳ Генерирую отчёт за месяц...")
+        html = build_monthly_html_report(cid)
+        import tempfile, os
+        with tempfile.NamedTemporaryFile(mode='w', suffix='.html', delete=False, encoding='utf-8') as f:
+            f.write(html)
+            tmp_path = f.name
+        try:
+            with open(tmp_path, 'rb') as f:
+                bot.send_document(cid, f, caption="📄 Месячный отчёт — открой в браузере",
+                                  visible_file_name=f"report_{date.today().strftime('%Y_%m')}.html")
+        finally:
+            try:
+                os.unlink(tmp_path)
+            except Exception:
+                pass
 
     # ── Помощь / команды ──
     elif text == "❓ Помощь / команды":
