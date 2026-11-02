@@ -7422,6 +7422,941 @@ def build_health_index(uid):
     return "\n".join(lines)
 
 
+
+# ═══════════════════════════════════════════════════════════
+#  TASK #70 — ПИТАНИЕ: ЭТИКЕТКА, ПЛАНИРОВЩИК, ГОЛОД, ХОЛОДИЛЬНИК
+# ═══════════════════════════════════════════════════════════
+
+def analyze_label_photo_ai(uid, image_b64):
+    """Анализ фото этикетки продукта через Vision API."""
+    try:
+        import anthropic as _ac, os
+        client = _ac.Anthropic(api_key=os.environ.get("ANTHROPIC_API_KEY", ""))
+        resp = client.messages.create(
+            model="claude-opus-4-5", max_tokens=800,
+            messages=[{"role": "user", "content": [
+                {"type": "image", "source": {"type": "base64", "media_type": "image/jpeg", "data": image_b64}},
+                {"type": "text", "text": (
+                    "Это фото этикетки продукта. Извлеки КБЖУ на 100г и на порцию.\n"
+                    "Ответь строго в формате:\n"
+                    "Продукт: <название>\n"
+                    "Порция: <вес г>\n"
+                    "На 100г: ккал <N> | Б <N>г | Ж <N>г | У <N>г\n"
+                    "На порцию: ккал <N> | Б <N>г | Ж <N>г | У <N>г\n"
+                    "Состав (кратко): <основные ингредиенты>\n"
+                    "Оценка: <1-10 насколько полезен продукт>"
+                )}
+            ]}]
+        )
+        return resp.content[0].text
+    except Exception as e:
+        return f"❌ Ошибка анализа: {e}"
+
+# ── Планировщик калорий на неделю ────────────────────────
+def build_calorie_week_plan(uid):
+    """Генерирует план калорий на 7 дней вперёд."""
+    p = get_profile(uid)
+    tdee = p.get("tdee") or calculate_tdee(uid)
+    goal = p.get("goal", "похудение")
+
+    if goal in ("похудение", "сушка"):
+        target = int(tdee * 0.85)
+        deficit = tdee - target
+        note = f"Дефицит ~{deficit} ккал/день → ~{deficit*7//7700:.2f} кг/нед"
+    elif goal in ("набор массы", "набор"):
+        target = int(tdee * 1.1)
+        surplus = target - tdee
+        note = f"Профицит ~{surplus} ккал/день → ~{surplus*7//7700:.2f} кг/нед"
+    else:
+        target = tdee
+        note = "Поддержание текущего веса"
+
+    # Макросплит
+    protein_g = int(p.get("weight", 75) * 2.0)
+    fat_g = int(target * 0.25 / 9)
+    carb_g = int((target - protein_g * 4 - fat_g * 9) / 4)
+
+    from datetime import date as _date, timedelta as _td
+    days_ru = ["Пн","Вт","Ср","Чт","Пт","Сб","Вс"]
+    today = _date.today()
+    weekday = today.weekday()
+
+    lines = [f"📅 *План калорий на неделю*", f"_{note}_", ""]
+    lines.append(f"*Цель: {target} ккал/день*")
+    lines.append(f"Б: {protein_g}г | Ж: {fat_g}г | У: {carb_g}г")
+    lines.append("")
+
+    for i in range(7):
+        d = today + _td(days=i)
+        day_name = days_ru[d.weekday()]
+        is_today = " ← сегодня" if i == 0 else ""
+        # Чередуем дни (тренировочные +100 ккал)
+        is_workout = d.weekday() in [0, 2, 4]  # Пн, Ср, Пт
+        day_kcal = target + (100 if is_workout else 0)
+        icon = "🏋️" if is_workout else "🛌"
+        lines.append(f"{icon} *{day_name} {d.strftime('%d.%m')}* — {day_kcal} ккал{is_today}")
+
+    lines.append("")
+    lines.append("💡 _В тренировочные дни +100 ккал для восстановления_")
+    return "\n".join(lines)
+
+# ── Трекер голода ─────────────────────────────────────────
+def init_hunger_table():
+    conn = get_db(); c = conn.cursor()
+    c.execute("""CREATE TABLE IF NOT EXISTS hunger_log (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        uid INTEGER, datetime TEXT, level INTEGER, note TEXT)""")
+    conn.commit(); conn.close()
+
+def log_hunger(uid, level, note=""):
+    init_hunger_table()
+    conn = get_db(); c = conn.cursor()
+    from datetime import datetime as _dt
+    c.execute("INSERT INTO hunger_log (uid, datetime, level, note) VALUES (?,?,?,?)",
+              (uid, str(_dt.now()), level, note))
+    conn.commit(); conn.close()
+
+def build_hunger_menu(uid):
+    init_hunger_table()
+    conn = get_db(); c = conn.cursor()
+    c.execute("""SELECT AVG(level), COUNT(*) FROM hunger_log
+                 WHERE uid=? AND date(datetime)=date('now')""", (uid,))
+    row = c.fetchone()
+    conn.close()
+    avg_l = row[0] or 0
+    count = row[1] or 0
+
+    hunger_map = {1:"😌 Сыт", 2:"🙂 Слегка хочу", 3:"😐 Голоден", 4:"😤 Очень голоден", 5:"😫 Голодаю"}
+    lines = ["🍽️ *Трекер голода*", f"Сегодня отметок: {count}", f"Средний уровень: {avg_l:.1f}/5" if count else "", ""]
+    lines.append("Отметь текущий уровень голода:")
+    kb = types.InlineKeyboardMarkup(row_width=5)
+    btns = [types.InlineKeyboardButton(f"{i} {'⭐'*i}", callback_data=f"hunger:{i}") for i in range(1, 6)]
+    kb.add(*btns)
+    return "\n".join(lines), kb
+
+def build_hunger_stats(uid):
+    init_hunger_table()
+    conn = get_db(); c = conn.cursor()
+    c.execute("""SELECT date(datetime) as d, AVG(level) as avg_l, COUNT(*) as cnt
+                 FROM hunger_log WHERE uid=? AND date(datetime)>=date('now','-7 days')
+                 GROUP BY d ORDER BY d""", (uid,))
+    rows = c.fetchall()
+    conn.close()
+    if not rows:
+        return "📊 *Статистика голода*\n\nНет данных за 7 дней."
+    lines = ["📊 *Голод за 7 дней*", ""]
+    bars = {1:"▁", 2:"▂", 3:"▄", 4:"▆", 5:"█"}
+    for d, avg_l, cnt in rows:
+        bar = bars.get(round(avg_l), "▄")
+        lines.append(f"{d[5:]} {bar*5} {avg_l:.1f}/5 ({cnt} отм.)")
+    return "\n".join(lines)
+
+# ── Рецепты из холодильника ───────────────────────────────
+def build_fridge_recipes(uid, ingredients_text):
+    """Генерирует рецепты на основе введённых ингредиентов через ИИ."""
+    try:
+        import anthropic as _ac, os
+        client = _ac.Anthropic(api_key=os.environ.get("ANTHROPIC_API_KEY", ""))
+        p = get_profile(uid)
+        goal = p.get("goal", "похудение")
+        resp = client.messages.create(
+            model="claude-opus-4-5", max_tokens=1000,
+            messages=[{"role": "user", "content":
+                f"У меня в холодильнике: {ingredients_text}\n"
+                f"Цель питания: {goal}\n"
+                f"Предложи 3 рецепта из этих продуктов.\n"
+                f"Для каждого: название, КБЖУ на порцию, время приготовления, шаги.\n"
+                f"Отвечай на русском, кратко."
+            }]
+        )
+        return resp.content[0].text
+    except Exception as e:
+        return f"❌ Ошибка: {e}"
+
+# ═══════════════════════════════════════════════════════════
+#  TASK #71 — ТРЕНИРОВКИ: ИИ-ГЕНЕРАТОР, КРЕПАТУРА, ТЕХНИКА, ДНЕВНИК
+# ═══════════════════════════════════════════════════════════
+
+MUSCLE_GROUPS_LIST = ["Грудь", "Спина", "Ноги", "Плечи", "Бицепс", "Трицепс", "Пресс", "Ягодицы", "Всё тело"]
+
+def build_ai_workout_generator_menu():
+    kb = types.InlineKeyboardMarkup(row_width=3)
+    for mg in MUSCLE_GROUPS_LIST:
+        kb.add(types.InlineKeyboardButton(mg, callback_data=f"ai_workout:{mg}"))
+    return "🤖 *ИИ-генератор тренировки*\n\nВыбери мышечную группу:", kb
+
+def generate_ai_workout(uid, muscle_group):
+    """Генерирует тренировку под мышечную группу через ИИ."""
+    try:
+        import anthropic as _ac, os
+        client = _ac.Anthropic(api_key=os.environ.get("ANTHROPIC_API_KEY", ""))
+        p = get_profile(uid)
+        level = p.get("fitness_level", "средний")
+        equipment = p.get("equipment", "штанга, гантели, тренажёры")
+        resp = client.messages.create(
+            model="claude-opus-4-5", max_tokens=800,
+            messages=[{"role": "user", "content":
+                f"Составь тренировку на {muscle_group}.\n"
+                f"Уровень: {level}. Оборудование: {equipment}.\n"
+                f"Формат: 5-7 упражнений, для каждого: название, подходы×повторения, отдых, совет по технике.\n"
+                f"Ответ на русском, компактно."
+            }]
+        )
+        return resp.content[0].text
+    except Exception as e:
+        return f"❌ Ошибка: {e}"
+
+# ── Трекер крепатуры ─────────────────────────────────────
+MUSCLE_SORENESS_MAP = {
+    "chest": "Грудь", "back": "Спина", "legs": "Ноги",
+    "shoulders": "Плечи", "arms": "Руки", "core": "Пресс", "glutes": "Ягодицы"
+}
+
+def init_soreness_table():
+    conn = get_db(); c = conn.cursor()
+    c.execute("""CREATE TABLE IF NOT EXISTS soreness_log (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        uid INTEGER, date TEXT, muscle TEXT, level INTEGER)""")
+    conn.commit(); conn.close()
+
+def log_soreness(uid, muscle, level):
+    init_soreness_table()
+    conn = get_db(); c = conn.cursor()
+    today = str(date.today())
+    c.execute("INSERT OR REPLACE INTO soreness_log (uid, date, muscle, level) VALUES (?,?,?,?)",
+              (uid, today, muscle, level))
+    conn.commit(); conn.close()
+
+def build_soreness_menu(uid):
+    init_soreness_table()
+    conn = get_db(); c = conn.cursor()
+    c.execute("SELECT muscle, level FROM soreness_log WHERE uid=? AND date=date('now')", (uid,))
+    today_data = {r[0]: r[1] for r in c.fetchall()}
+    conn.close()
+
+    level_emoji = {0: "✅", 1: "🟡", 2: "🟠", 3: "🔴"}
+    lines = ["💪 *Трекер крепатуры*", "Отметь уровень болезненности мышц сегодня:", ""]
+    kb = types.InlineKeyboardMarkup(row_width=1)
+    for key, name in MUSCLE_SORENESS_MAP.items():
+        lvl = today_data.get(key, 0)
+        emoji = level_emoji.get(lvl, "✅")
+        label = f"{emoji} {name}: {'нет' if lvl==0 else ['','лёгкая','средняя','сильная'][lvl]}"
+        kb.add(types.InlineKeyboardButton(label, callback_data=f"soreness:{key}"))
+    return "\n".join(lines), kb
+
+# ── Техника упражнений ────────────────────────────────────
+EXERCISE_TECHNIQUE = {
+    "присед": {"name": "Приседания со штангой", "yt": "https://youtu.be/UXJrBgI2RxA",
+        "tips": ["Стопы шире плеч, носки слегка в стороны", "Спина прямая, грудь вперёд", "Колени по линии носков", "Опускайся до параллели бедра с полом", "Вдох вниз, выдох вверх"]},
+    "жим": {"name": "Жим штанги лёжа", "yt": "https://youtu.be/rT7DgCr-3pg",
+        "tips": ["Хват чуть шире плеч", "Лопатки сведены и прижаты", "Спина слегка выгнута (арч)", "Локти 45° от корпуса", "Штанга касается нижней груди"]},
+    "тяга": {"name": "Становая тяга", "yt": "https://youtu.be/op9kVnSso6Q",
+        "tips": ["Ноги на ширине плеч", "Хват чуть шире ног", "Спина нейтральная (не скругляй)", "Гриф ведёт по голени", "Бёдра и плечи поднимаются одновременно"]},
+    "подтягивания": {"name": "Подтягивания", "yt": "https://youtu.be/eGo4IYlbE5g",
+        "tips": ["Хват чуть шире плеч", "Лопатки в начале движения", "Подбородок над перекладиной", "Опускайся полностью", "Не раскачивайся"]},
+    "отжимания": {"name": "Отжимания", "yt": "https://youtu.be/IODxDxX7oi4",
+        "tips": ["Тело — прямая линия", "Руки чуть шире плеч", "Локти 45° от корпуса", "Грудь касается пола", "Не провисай в пояснице"]},
+}
+
+def build_exercise_technique(exercise_name):
+    ex = exercise_name.lower().strip()
+    for key, data in EXERCISE_TECHNIQUE.items():
+        if key in ex or ex in key:
+            lines = [f"📚 *Техника: {data['name']}*", ""]
+            for i, tip in enumerate(data["tips"], 1):
+                lines.append(f"{i}. {tip}")
+            lines.append(f"\n▶️ [Видео-демонстрация]({data['yt']})")
+            return "\n".join(lines)
+    return f"❌ Техника для *{exercise_name}* не найдена.\n\nДоступные: " + ", ".join(EXERCISE_TECHNIQUE.keys())
+
+# ── Дневник тренировочной сессии ─────────────────────────
+def init_session_notes_table():
+    conn = get_db(); c = conn.cursor()
+    c.execute("""CREATE TABLE IF NOT EXISTS session_notes (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        uid INTEGER, date TEXT, mood INTEGER, energy INTEGER, note TEXT)""")
+    conn.commit(); conn.close()
+
+def save_session_note(uid, mood, energy, note=""):
+    init_session_notes_table()
+    conn = get_db(); c = conn.cursor()
+    c.execute("INSERT INTO session_notes (uid, date, mood, energy, note) VALUES (?,date('now'),?,?,?)",
+              (uid, mood, energy, note))
+    conn.commit(); conn.close()
+
+def build_session_notes_recent(uid, limit=5):
+    init_session_notes_table()
+    conn = get_db(); c = conn.cursor()
+    c.execute("SELECT date, mood, energy, note FROM session_notes WHERE uid=? ORDER BY date DESC LIMIT ?",
+              (uid, limit))
+    rows = c.fetchall()
+    conn.close()
+    if not rows:
+        return "📓 *Дневник сессий*\n\nПока пусто — заполни после тренировки!"
+    lines = ["📓 *Дневник тренировочных сессий*", ""]
+    for d, mood, energy, note in rows:
+        lines.append(f"*{d}* | Настроение: {'😊'*mood} | Энергия: {'⚡'*energy}")
+        if note:
+            lines.append(f"  _{note}_")
+    return "\n".join(lines)
+
+def build_session_note_start(uid):
+    kb = types.InlineKeyboardMarkup(row_width=5)
+    kb.add(*[types.InlineKeyboardButton(f"{'😊'*i} {i}", callback_data=f"snote_mood:{i}") for i in range(1, 6)])
+    return "📓 *Дневник сессии*\n\nКак настроение после тренировки?", kb
+
+# ═══════════════════════════════════════════════════════════
+#  TASK #72 — ТЕЛО: ПМС, ДИНАМИКА ОБХВАТОВ, ИДЕАЛЬНЫЙ ВЕС
+# ═══════════════════════════════════════════════════════════
+
+def build_pms_warning(uid):
+    """ПМС-предупреждение на основе текущей фазы цикла."""
+    phase_key, day = get_current_cycle_phase(uid)
+    if not phase_key:
+        return "🌸 Нет данных о цикле. Начни отслеживание в разделе Здоровье → Цикл."
+
+    lines = ["🌸 *Прогноз самочувствия*", ""]
+    if phase_key == "luteal" and day >= 22:
+        days_to_period = 28 - day
+        lines.append(f"⚠️ *ПМС-период* (примерно через {days_to_period} дн.)")
+        lines.append("")
+        lines.append("*Возможные симптомы:*")
+        lines.append("• Перепады настроения, раздражительность")
+        lines.append("• Задержка воды (+1-2 кг на весах — это норма!)")
+        lines.append("• Тяга к сладкому и солёному")
+        lines.append("• Усталость и снижение мотивации")
+        lines.append("")
+        lines.append("*Рекомендации:*")
+        lines.append("• Снизь потребление соли и кофеина")
+        lines.append("• Больше магния: бананы, орехи, тёмный шоколад")
+        lines.append("• Лёгкие тренировки: йога, прогулки")
+        lines.append("• Не паникуй из-за веса — это временно!")
+    elif phase_key == "menstrual":
+        lines.append("🔴 *Менструальная фаза*")
+        lines.append("• Снизь интенсивность тренировок")
+        lines.append("• Налегай на железо: красное мясо, шпинат")
+        lines.append("• Магний помогает с болью")
+    else:
+        lines.append(f"✅ Текущая фаза: *{CYCLE_PHASES[phase_key]['name']}*")
+        lines.append("Самочувствие должно быть стабильным.")
+    return "\n".join(lines)
+
+def build_measurements_ascii_chart(uid):
+    """ASCII-динамика обхватов за последние 8 записей."""
+    conn = get_db(); c = conn.cursor()
+    c.execute("""SELECT date, waist, hips, chest, bicep FROM measurements
+                 WHERE uid=? ORDER BY date DESC LIMIT 8""", (uid,))
+    rows = c.fetchall()
+    conn.close()
+    if len(rows) < 2:
+        return "📏 *Динамика обхватов*\n\nНужно минимум 2 замера."
+
+    rows = list(reversed(rows))
+    lines = ["📏 *Динамика обхватов (ASCII)*", ""]
+
+    def mini_chart(values, label):
+        vals = [v for v in values if v]
+        if len(vals) < 2:
+            return
+        mn, mx = min(vals), max(vals)
+        rng = mx - mn or 1
+        bar_h = 4
+        chart = []
+        for v in vals:
+            h = int((v - mn) / rng * bar_h)
+            col = ["▁","▂","▄","▆","█"][min(h, 4)]
+            chart.append(col)
+        diff = vals[-1] - vals[0]
+        arrow = "📉" if diff < 0 else ("📈" if diff > 0 else "➡️")
+        lines.append(f"*{label}:* {''.join(chart)}  {arrow} {diff:+.1f} см")
+        lines.append(f"  {vals[0]:.0f} → {vals[-1]:.0f} см")
+
+    mini_chart([r[1] for r in rows], "Талия")
+    mini_chart([r[2] for r in rows], "Бёдра")
+    mini_chart([r[3] for r in rows], "Грудь")
+    mini_chart([r[4] for r in rows], "Бицепс")
+
+    return "\n".join(lines)
+
+def build_ideal_weight(uid):
+    """Расчёт идеального веса по 5 формулам."""
+    p = get_profile(uid)
+    height = p.get("height")
+    sex = p.get("sex", "м")
+    age = p.get("age", 30)
+
+    if not height:
+        return "❌ Укажи рост в профиле."
+
+    h = float(height)
+    h_cm = h if h > 3 else h * 100
+    h_m = h_cm / 100
+
+    results = {}
+    # 1. Брок
+    if sex == "м":
+        results["Брок (муж)"] = h_cm - 100 - (h_cm - 150) / 4
+    else:
+        results["Брок (жен)"] = h_cm - 100 - (h_cm - 150) / 2.5
+
+    # 2. Devine
+    if sex == "м":
+        results["Devine (муж)"] = 50 + 2.3 * ((h_cm - 152.4) / 2.54)
+    else:
+        results["Devine (жен)"] = 45.5 + 2.3 * ((h_cm - 152.4) / 2.54)
+
+    # 3. Robinson
+    if sex == "м":
+        results["Robinson"] = 52 + 1.9 * ((h_cm - 152.4) / 2.54)
+    else:
+        results["Robinson"] = 49 + 1.7 * ((h_cm - 152.4) / 2.54)
+
+    # 4. ИМТ 22
+    results["ИМТ=22"] = 22 * h_m ** 2
+
+    # 5. Лоренц
+    results["Лоренц"] = h_cm - 100 - (h_cm - 150) / 2
+
+    current = p.get("weight", 0)
+    lines = ["⚖️ *Идеальный вес по 5 формулам*", f"Рост: {h_cm:.0f} см", ""]
+    total = []
+    for name, val in results.items():
+        if val > 0:
+            total.append(val)
+            diff = (current - val) if current else 0
+            arrow = f"  ({'−' if diff > 0 else '+'}{abs(diff):.1f} кг)" if current else ""
+            lines.append(f"• *{name}:* {val:.1f} кг{arrow}")
+    if total:
+        avg = sum(total) / len(total)
+        lines.append(f"\n📊 *Среднее:* {avg:.1f} кг")
+    lines.append("\n💡 _Формулы дают ориентир, не абсолютную истину_")
+    return "\n".join(lines)
+
+# ═══════════════════════════════════════════════════════════
+#  TASK #73 — АНАЛИТИКА: КОРРЕЛЯЦИИ, ЛУЧШЕЕ ВРЕМЯ, ИИ-КОУЧ
+# ═══════════════════════════════════════════════════════════
+
+def build_sleep_workout_correlation(uid):
+    """Корреляция часов сна и числа повторений/веса."""
+    conn = get_db(); c = conn.cursor()
+    c.execute("""SELECT s.date, s.duration_min,
+                        SUM(e.weight_kg * e.reps * e.sets) as volume
+                 FROM sleep_log s
+                 JOIN exercise_journal e ON e.uid=s.uid AND e.date=s.date
+                 WHERE s.uid=? AND s.duration_min>0
+                 GROUP BY s.date ORDER BY s.date DESC LIMIT 14""", (uid,))
+    rows = c.fetchall()
+    conn.close()
+
+    if len(rows) < 4:
+        return ("📊 *Корреляция сна и тренировок*\n\n"
+                "Недостаточно данных (нужно 4+ совпадающих дней сна и тренировок).")
+
+    # Простая корреляция Пирсона
+    sleeps = [r[1] / 60 for r in rows]
+    volumes = [r[2] for r in rows]
+    n = len(rows)
+    mean_s = sum(sleeps) / n
+    mean_v = sum(volumes) / n
+    cov = sum((s - mean_s) * (v - mean_v) for s, v in zip(sleeps, volumes)) / n
+    std_s = (sum((s - mean_s)**2 for s in sleeps) / n) ** 0.5
+    std_v = (sum((v - mean_v)**2 for v in volumes) / n) ** 0.5
+    r = cov / (std_s * std_v) if std_s * std_v > 0 else 0
+
+    if r > 0.5:
+        interp = "📈 *Сильная позитивная связь* — больше сна = лучше тренировки!"
+    elif r > 0.2:
+        interp = "📊 *Умеренная связь* — сон влияет на результат"
+    elif r < -0.2:
+        interp = "📉 *Обратная связь* — возможно, другие факторы важнее"
+    else:
+        interp = "➡️ *Слабая связь* — сон мало влияет на объём"
+
+    best_sleep_day = max(rows, key=lambda r: r[2])
+    lines = [
+        "📊 *Корреляция: сон vs тренировки*",
+        f"Проанализировано: {n} дней",
+        "",
+        f"Коэффициент корреляции: *{r:.2f}*",
+        interp,
+        "",
+        f"🏆 Лучшая тренировка была при *{best_sleep_day[1]/60:.1f}ч сна*",
+        "",
+        "💡 _Рекомендуемая норма сна для спортсменов: 7-9 ч_"
+    ]
+    return "\n".join(lines)
+
+def build_best_training_time(uid):
+    """Анализ лучшего времени суток для тренировок."""
+    conn = get_db(); c = conn.cursor()
+    c.execute("""CREATE TABLE IF NOT EXISTS exercise_journal (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        uid INTEGER, date TEXT, exercise TEXT,
+        weight_kg REAL, reps INTEGER, sets INTEGER)""")
+    # Используем время из wellbeing_log как прокси
+    c.execute("""SELECT strftime('%H', datetime) as hour,
+                        AVG(weight_kg * reps * sets) as avg_vol,
+                        COUNT(*) as cnt
+                 FROM exercise_journal
+                 WHERE uid=? AND weight_kg>0
+                 GROUP BY hour ORDER BY avg_vol DESC LIMIT 5""", (uid,))
+    rows = c.fetchall()
+    conn.close()
+
+    if not rows:
+        return ("⏰ *Лучшее время тренировок*\n\n"
+                "Недостаточно данных. Записывай тренировки через Журнал упражнений.")
+
+    lines = ["⏰ *Анализ: лучшее время тренировок*", ""]
+    time_labels = {"06": "Раннее утро 6:00", "07": "Утро 7:00", "08": "Утро 8:00",
+                   "09": "Утро 9:00", "10": "Утро 10:00", "12": "Полдень",
+                   "17": "Вечер 17:00", "18": "Вечер 18:00", "19": "Вечер 19:00",
+                   "20": "Вечер 20:00", "21": "Вечер 21:00"}
+    for i, (hour, avg_vol, cnt) in enumerate(rows):
+        medal = ["🥇", "🥈", "🥉", "4.", "5."][i]
+        label = time_labels.get(str(hour).zfill(2), f"{hour}:00")
+        lines.append(f"{medal} *{label}* — объём {avg_vol:.0f} ({cnt} сессий)")
+
+    lines.append("\n💡 _Основано на твоём среднем объёме тренировок по часам суток_")
+    return "\n".join(lines)
+
+def build_ai_weekly_coach(uid):
+    """ИИ-коуч: еженедельный разбор прогресса."""
+    try:
+        import anthropic as _ac, os
+        client = _ac.Anthropic(api_key=os.environ.get("ANTHROPIC_API_KEY", ""))
+
+        # Собираем данные за неделю
+        conn = get_db(); c = conn.cursor()
+        week_ago = str(date.today() - timedelta(days=7))
+
+        c.execute("SELECT AVG(weight) FROM weight_log WHERE uid=? AND date>=?", (uid, week_ago))
+        avg_w = (c.fetchone()[0] or 0)
+
+        c.execute("SELECT AVG(kcal) FROM food_diary WHERE uid=? AND date>=?", (uid, week_ago))
+        avg_kcal = (c.fetchone()[0] or 0)
+
+        c.execute("SELECT COUNT(DISTINCT date) FROM exercise_journal WHERE uid=? AND date>=?", (uid, week_ago))
+        workouts = (c.fetchone()[0] or 0)
+
+        c.execute("SELECT AVG(ml) FROM water_log WHERE uid=? AND date>=?", (uid, week_ago))
+        avg_water = (c.fetchone()[0] or 0)
+
+        conn.close()
+        p = get_profile(uid)
+        goal = p.get("goal", "улучшение здоровья")
+        goal_weight = p.get("goal_weight", "не указан")
+
+        prompt = (
+            f"Ты персональный фитнес-коуч. Сделай краткий разбор недели пользователя.\n"
+            f"Данные: цель='{goal}', целевой вес={goal_weight} кг\n"
+            f"За неделю: средний вес={avg_w:.1f}кг, ср.калории={avg_kcal:.0f}ккал/день, "
+            f"тренировок={workouts}, вода={avg_water:.0f}мл/день\n"
+            f"Дай: 1) оценку недели (1-10), 2) что молодец, 3) что улучшить, 4) цель на след.неделю.\n"
+            f"Тон: поддерживающий, конкретный. 150-200 слов."
+        )
+        resp = client.messages.create(
+            model="claude-opus-4-5", max_tokens=600,
+            messages=[{"role": "user", "content": prompt}]
+        )
+        return f"🤖 *ИИ-коуч: разбор недели*\n\n{resp.content[0].text}"
+    except Exception as e:
+        return f"❌ Ошибка: {e}"
+
+# ═══════════════════════════════════════════════════════════
+#  TASK #74 — ЗДОРОВЬЕ: НАСТРОЕНИЕ, ДЫХАНИЕ, АНАЛИЗЫ, СТРЕСС
+# ═══════════════════════════════════════════════════════════
+
+def init_mood_table():
+    conn = get_db(); c = conn.cursor()
+    c.execute("""CREATE TABLE IF NOT EXISTS mood_log (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        uid INTEGER, date TEXT, mood INTEGER, note TEXT)""")
+    conn.commit(); conn.close()
+
+def log_mood(uid, mood_level, note=""):
+    init_mood_table()
+    conn = get_db(); c = conn.cursor()
+    c.execute("INSERT INTO mood_log (uid, date, mood, note) VALUES (?,date('now'),?,?)",
+              (uid, mood_level, note))
+    conn.commit(); conn.close()
+
+def build_mood_menu(uid):
+    init_mood_table()
+    conn = get_db(); c = conn.cursor()
+    c.execute("SELECT mood, note FROM mood_log WHERE uid=? AND date=date('now') ORDER BY id DESC LIMIT 1", (uid,))
+    today = c.fetchone()
+    c.execute("SELECT date, AVG(mood) FROM mood_log WHERE uid=? AND date>=date('now','-7 days') GROUP BY date ORDER BY date", (uid,))
+    week = c.fetchall()
+    conn.close()
+
+    mood_emojis = {1: "😭", 2: "😔", 3: "😐", 4: "😊", 5: "🤩"}
+    lines = ["😊 *Трекер настроения*", ""]
+    if today:
+        lines.append(f"Сегодня: {mood_emojis.get(today[0], '😐')} {today[0]}/5")
+        if today[1]:
+            lines.append(f"_{today[1]}_")
+    else:
+        lines.append("Сегодня ещё не отмечено")
+
+    if week:
+        lines.append("\n*Неделя:*")
+        for d, avg_m in week:
+            emoji = mood_emojis.get(round(avg_m), "😐")
+            lines.append(f"{d[5:]} {emoji} {avg_m:.1f}")
+
+    kb = types.InlineKeyboardMarkup(row_width=5)
+    kb.add(*[types.InlineKeyboardButton(f"{mood_emojis[i]} {i}", callback_data=f"mood:{i}") for i in range(1, 6)])
+    return "\n".join(lines), kb
+
+BREATHING_EXERCISES = {
+    "478": {
+        "name": "4-7-8 (успокоение)", "emoji": "😌",
+        "steps": ["Вдох через нос — *4 секунды*", "Задержка дыхания — *7 секунд*", "Выдох через рот — *8 секунд*", "Повтори *4 раза*"],
+        "use": "Перед сном, при стрессе, панике"
+    },
+    "box": {
+        "name": "Box Breathing (баланс)", "emoji": "🔲",
+        "steps": ["Вдох — *4 секунды*", "Задержка — *4 секунды*", "Выдох — *4 секунды*", "Задержка — *4 секунды*", "Повтори *5 раз*"],
+        "use": "Концентрация, снятие тревоги"
+    },
+    "belly": {
+        "name": "Диафрагмальное (расслабление)", "emoji": "🫁",
+        "steps": ["Рука на животе", "Вдох носом — живот надувается — *4 сек*", "Выдох ртом — живот втягивается — *6 сек*", "Повтори *10 раз*"],
+        "use": "Снижение ЧСС, улучшение сна"
+    },
+    "wim": {
+        "name": "Техника Вима Хофа (энергия)", "emoji": "⚡",
+        "steps": ["30 быстрых глубоких вдохов-выдохов", "После последнего выдоха — задержка дыхания", "Когда почувствуешь позыв вдохнуть — глубокий вдох", "Задержи на 15 сек, выдохни", "Повтори 3 цикла"],
+        "use": "Бодрость, иммунитет, энергия"
+    }
+}
+
+def build_breathing_menu():
+    kb = types.InlineKeyboardMarkup(row_width=1)
+    for key, ex in BREATHING_EXERCISES.items():
+        kb.add(types.InlineKeyboardButton(f"{ex['emoji']} {ex['name']}", callback_data=f"breath:{key}"))
+    return "🫁 *Дыхательные упражнения*\n\nВыбери технику:", kb
+
+def build_breathing_exercise(key):
+    ex = BREATHING_EXERCISES.get(key)
+    if not ex:
+        return "❌ Упражнение не найдено"
+    lines = [f"{ex['emoji']} *{ex['name']}*", f"_Применять: {ex['use']}_", ""]
+    for i, step in enumerate(ex["steps"], 1):
+        lines.append(f"{i}. {step}")
+    lines.append("\n✅ Дыши медленно и осознанно")
+    return "\n".join(lines)
+
+# ── Трекер анализов крови ─────────────────────────────────
+BLOOD_MARKERS = {
+    "hemoglobin": {"name": "Гемоглобин", "unit": "г/л", "norm_m": (130, 170), "norm_f": (120, 150)},
+    "vitamin_d": {"name": "Витамин D", "unit": "нг/мл", "norm_m": (30, 100), "norm_f": (30, 100)},
+    "ferritin": {"name": "Ферритин", "unit": "нг/мл", "norm_m": (30, 400), "norm_f": (10, 120)},
+    "testosterone": {"name": "Тестостерон", "unit": "нмоль/л", "norm_m": (12, 35), "norm_f": (0.5, 2.5)},
+    "cortisol": {"name": "Кортизол", "unit": "нмоль/л", "norm_m": (140, 640), "norm_f": (140, 640)},
+    "glucose": {"name": "Глюкоза", "unit": "ммоль/л", "norm_m": (3.9, 6.1), "norm_f": (3.9, 6.1)},
+    "tsh": {"name": "ТТГ (щитовидка)", "unit": "мЕд/л", "norm_m": (0.4, 4.0), "norm_f": (0.4, 4.0)},
+}
+
+def init_blood_table():
+    conn = get_db(); c = conn.cursor()
+    c.execute("""CREATE TABLE IF NOT EXISTS blood_tests (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        uid INTEGER, date TEXT, marker TEXT, value REAL)""")
+    conn.commit(); conn.close()
+
+def log_blood_test(uid, marker, value):
+    init_blood_table()
+    conn = get_db(); c = conn.cursor()
+    c.execute("INSERT INTO blood_tests (uid, date, marker, value) VALUES (?,date('now'),?,?)",
+              (uid, marker, value))
+    conn.commit(); conn.close()
+
+def build_blood_tests_menu(uid):
+    init_blood_table()
+    conn = get_db(); c = conn.cursor()
+    c.execute("""SELECT marker, value, date FROM blood_tests WHERE uid=?
+                 GROUP BY marker HAVING MAX(date) ORDER BY date DESC""", (uid,))
+    rows = {r[0]: (r[1], r[2]) for r in c.fetchall()}
+    conn.close()
+
+    p = get_profile(uid)
+    sex = p.get("sex", "м")
+    lines = ["🩸 *Трекер анализов крови*", ""]
+
+    for key, m in BLOOD_MARKERS.items():
+        norm = m["norm_m"] if sex == "м" else m["norm_f"]
+        if key in rows:
+            val, d = rows[key]
+            if val < norm[0]:
+                status = "⬇️ Низко"
+            elif val > norm[1]:
+                status = "⬆️ Высоко"
+            else:
+                status = "✅ Норма"
+            lines.append(f"*{m['name']}:* {val} {m['unit']} — {status} ({d})")
+        else:
+            lines.append(f"*{m['name']}:* — не введено")
+
+    lines.append("\n_Нажми чтобы ввести анализ:_")
+    kb = types.InlineKeyboardMarkup(row_width=2)
+    for key, m in BLOOD_MARKERS.items():
+        kb.add(types.InlineKeyboardButton(f"➕ {m['name']}", callback_data=f"blood_add:{key}"))
+    return "\n".join(lines), kb
+
+# ── Антистресс-протокол ───────────────────────────────────
+def build_antistress_protocol(uid):
+    conn = get_db(); c = conn.cursor()
+    c.execute("SELECT level FROM stress_log WHERE uid=? AND date=date('now') ORDER BY id DESC LIMIT 1", (uid,))
+    row = c.fetchone()
+    conn.close()
+
+    stress = row[0] if row else 5
+    lines = ["🧘 *Антистресс-протокол*", ""]
+
+    if stress >= 8:
+        lines.append("🔴 *Высокий стресс* — срочные меры:")
+        lines.append("1. Дыхание 4-7-8 прямо сейчас (3 цикла)")
+        lines.append("2. Выпей стакан холодной воды")
+        lines.append("3. Выйди на улицу на 10 минут")
+        lines.append("4. Напиши что тебя беспокоит (не держи в голове)")
+        lines.append("5. Откажись от кофе до вечера")
+    elif stress >= 5:
+        lines.append("🟡 *Умеренный стресс* — восстановление:")
+        lines.append("1. Прогулка 20-30 минут на свежем воздухе")
+        lines.append("2. Лёгкая растяжка или йога 15 мин")
+        lines.append("3. Горячий душ или ванна вечером")
+        lines.append("4. Исключи новостные ленты на 2 часа")
+        lines.append("5. Запланируй приятное дело на завтра")
+    else:
+        lines.append("🟢 *Стресс в норме* — поддержание:")
+        lines.append("1. Придерживайся режима сна")
+        lines.append("2. Регулярные тренировки — лучший антистресс")
+        lines.append("3. Медитация 5 минут утром")
+        lines.append("4. Благодарность: 3 вещи за сегодня")
+
+    lines.append("\n🫁 Дыхательные упражнения → кнопка ниже")
+    kb = types.InlineKeyboardMarkup()
+    kb.add(types.InlineKeyboardButton("🫁 Дыхательные упражнения", callback_data="show_breathing"))
+    return "\n".join(lines), kb
+
+# ═══════════════════════════════════════════════════════════
+#  TASK #75 — СИСТЕМА: РЕФЕРАЛ, ЧЕЛЛЕНДЖИ, БРИФИНГ
+# ═══════════════════════════════════════════════════════════
+
+def get_referral_code(uid):
+    return f"FIT{uid}"
+
+def process_referral(uid, code):
+    """Обрабатывает реферальный код."""
+    try:
+        ref_uid = int(code.replace("FIT", ""))
+        if ref_uid == uid:
+            return "❌ Нельзя использовать свой код"
+        conn = get_db(); c = conn.cursor()
+        c.execute("""CREATE TABLE IF NOT EXISTS referrals (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            referrer_uid INTEGER, referred_uid INTEGER, date TEXT)""")
+        c.execute("SELECT id FROM referrals WHERE referred_uid=?", (uid,))
+        if c.fetchone():
+            conn.close()
+            return "❌ Ты уже использовал реферальный код"
+        c.execute("INSERT INTO referrals (referrer_uid, referred_uid, date) VALUES (?,?,date('now'))",
+                  (ref_uid, uid))
+        conn.commit(); conn.close()
+        add_xp(uid, 100)
+        add_xp(ref_uid, 150)
+        return f"✅ Код принят! +100 XP тебе, +150 XP другу"
+    except Exception:
+        return "❌ Неверный код"
+
+def build_referral_info(uid):
+    code = get_referral_code(uid)
+    conn = get_db(); c = conn.cursor()
+    c.execute("""CREATE TABLE IF NOT EXISTS referrals (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        referrer_uid INTEGER, referred_uid INTEGER, date TEXT)""")
+    c.execute("SELECT COUNT(*) FROM referrals WHERE referrer_uid=?", (uid,))
+    count = c.fetchone()[0]
+    conn.close()
+
+    lines = [
+        "🎁 *Реферальная программа*", "",
+        f"Твой код: `{code}`",
+        f"Приглашено друзей: *{count}*",
+        "",
+        "💰 *Бонусы:*",
+        "• Ты получаешь: *+150 XP* за каждого друга",
+        "• Друг получает: *+100 XP* при регистрации",
+        "",
+        "📤 *Как поделиться:*",
+        f"Отправь другу код *{code}* или скопируй текст ниже:"
+    ]
+    kb = types.InlineKeyboardMarkup()
+    kb.add(types.InlineKeyboardButton("✏️ Ввести чужой код", callback_data="enter_ref_code"))
+    return "\n".join(lines), kb
+
+# ── Групповые челленджи ────────────────────────────────────
+GROUP_CHALLENGES = {
+    "steps_10k": {"name": "10 000 шагов в день", "emoji": "👟", "days": 7, "metric": "steps", "target": 10000},
+    "water_2l": {"name": "2 литра воды каждый день", "emoji": "💧", "days": 7, "metric": "water", "target": 2000},
+    "workout_5": {"name": "5 тренировок за неделю", "emoji": "🏋️", "days": 7, "metric": "workouts", "target": 5},
+    "no_sugar_7": {"name": "7 дней без сладкого", "emoji": "🚫", "days": 7, "metric": "manual", "target": 7},
+    "sleep_8": {"name": "8 часов сна каждую ночь", "emoji": "😴", "days": 7, "metric": "sleep", "target": 480},
+}
+
+def init_challenge_table():
+    conn = get_db(); c = conn.cursor()
+    c.execute("""CREATE TABLE IF NOT EXISTS user_challenges (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        uid INTEGER, challenge_key TEXT, start_date TEXT, active INTEGER DEFAULT 1)""")
+    conn.commit(); conn.close()
+
+def join_challenge(uid, key):
+    init_challenge_table()
+    conn = get_db(); c = conn.cursor()
+    c.execute("SELECT id FROM user_challenges WHERE uid=? AND challenge_key=? AND active=1", (uid, key))
+    if c.fetchone():
+        conn.close()
+        return False  # Already joined
+    c.execute("INSERT INTO user_challenges (uid, challenge_key, start_date) VALUES (?,?,date('now'))",
+              (uid, key))
+    conn.commit(); conn.close()
+    return True
+
+def build_challenges_menu(uid):
+    init_challenge_table()
+    conn = get_db(); c = conn.cursor()
+    c.execute("SELECT challenge_key FROM user_challenges WHERE uid=? AND active=1", (uid,))
+    active = {r[0] for r in c.fetchall()}
+    conn.close()
+
+    lines = ["🏆 *Групповые челленджи*", ""]
+    kb = types.InlineKeyboardMarkup(row_width=1)
+    for key, ch in GROUP_CHALLENGES.items():
+        in_ch = key in active
+        label = f"{'✅ ' if in_ch else ''}{ch['emoji']} {ch['name']} ({ch['days']} дн.)"
+        cb = f"challenge_leave:{key}" if in_ch else f"challenge_join:{key}"
+        kb.add(types.InlineKeyboardButton(label, callback_data=cb))
+
+    active_count = len(active)
+    lines.append(f"Активных: *{active_count}*")
+    lines.append("_Нажми чтобы присоединиться или выйти_")
+    return "\n".join(lines), kb
+
+def build_challenge_progress(uid):
+    """Прогресс по активным челленджам."""
+    init_challenge_table()
+    conn = get_db(); c = conn.cursor()
+    c.execute("SELECT challenge_key, start_date FROM user_challenges WHERE uid=? AND active=1", (uid,))
+    active = c.fetchall()
+    if not active:
+        conn.close()
+        return "🏆 *Прогресс челленджей*\n\nНет активных челленджей."
+
+    lines = ["🏆 *Прогресс челленджей*", ""]
+    today = date.today()
+
+    for key, start_date in active:
+        ch = GROUP_CHALLENGES.get(key)
+        if not ch:
+            continue
+        start = date.fromisoformat(start_date)
+        days_passed = (today - start).days + 1
+        days_left = max(0, ch["days"] - days_passed)
+
+        # Считаем прогресс по метрике
+        progress = 0
+        if ch["metric"] == "steps":
+            c.execute("SELECT COUNT(*) FROM steps_log WHERE uid=? AND date>=? AND steps>=?",
+                      (uid, start_date, ch["target"]))
+            progress = c.fetchone()[0]
+        elif ch["metric"] == "water":
+            c.execute("SELECT COUNT(*) FROM water_log WHERE uid=? AND date>=? AND ml>=?",
+                      (uid, start_date, ch["target"]))
+            progress = c.fetchone()[0]
+        elif ch["metric"] == "workouts":
+            c.execute("SELECT COUNT(DISTINCT date) FROM exercise_journal WHERE uid=? AND date>=?",
+                      (uid, start_date))
+            progress = (c.fetchone() or [0])[0]
+        elif ch["metric"] == "sleep":
+            c.execute("SELECT COUNT(*) FROM sleep_log WHERE uid=? AND date(wake_time)>=? AND duration_min>=?",
+                      (uid, start_date, ch["target"]))
+            progress = c.fetchone()[0]
+
+        pct = min(100, int(progress / ch["days"] * 100))
+        bar_len = 10
+        filled = int(pct / 100 * bar_len)
+        bar = "█" * filled + "░" * (bar_len - filled)
+
+        lines.append(f"{ch['emoji']} *{ch['name']}*")
+        lines.append(f"  [{bar}] {pct}% | {days_left} дн. осталось")
+        lines.append("")
+
+    conn.close()
+    return "\n".join(lines)
+
+# ── Утренний брифинг ──────────────────────────────────────
+def build_morning_briefing(uid):
+    """Утренний брифинг: сводка дня."""
+    from datetime import datetime as _dt
+    p = get_profile(uid)
+    name = p.get("name", "")
+    today = date.today()
+    weekdays = ["понедельник","вторник","среда","четверг","пятница","суббота","воскресенье"]
+    day_name = weekdays[today.weekday()]
+
+    conn = get_db(); c = conn.cursor()
+
+    # Вес последний
+    c.execute("SELECT weight FROM weight_log WHERE uid=? ORDER BY date DESC LIMIT 1", (uid,))
+    w_row = c.fetchone()
+
+    # Цель сегодня (ккал)
+    tdee = p.get("tdee") or 2000
+    goal = p.get("goal", "")
+    if goal in ("похудение", "сушка"):
+        target_kcal = int(tdee * 0.85)
+    elif goal in ("набор", "набор массы"):
+        target_kcal = int(tdee * 1.1)
+    else:
+        target_kcal = tdee
+
+    # Тренировка сегодня?
+    is_workout_day = today.weekday() in [0, 2, 4]
+
+    # Стрик
+    streak, _ = get_activity_streak(uid)
+
+    # Вода выпита сегодня
+    c.execute("SELECT SUM(ml) FROM water_log WHERE uid=? AND date=date('now')", (uid,))
+    water_today = (c.fetchone()[0] or 0)
+    water_norm = p.get("water_norm", 2000)
+
+    conn.close()
+
+    lines = [
+        f"☀️ *Доброе утро{', ' + name if name else ''}!*",
+        f"_{day_name.capitalize()}, {today.strftime('%d.%m.%Y')}_",
+        "",
+        "📋 *Твой план на сегодня:*",
+        f"🍽️ Калорий: *{target_kcal} ккал*",
+        f"💧 Вода: *{water_norm} мл* (выпито: {water_today} мл)",
+        f"🏋️ Тренировка: *{'Да — не забудь!' if is_workout_day else 'День отдыха'}*",
+    ]
+
+    if streak > 0:
+        lines.append(f"🔥 Стрик активности: *{streak} дней*")
+
+    if w_row:
+        lines.append(f"⚖️ Последний вес: *{w_row[0]} кг*")
+
+    lines.append("")
+    lines.append("💪 *Удачного дня! Ты справишься.*")
+    return "\n".join(lines)
+
+
 def compare_weeks(uid):
     """Сравнивает текущую и прошлую неделю по шагам и весу"""
     wd = get_weights(uid)
@@ -9400,6 +10335,8 @@ def menu_pitanie():
     m.add(types.KeyboardButton("🍺 Алкоголь-трекер"))
     m.add(types.KeyboardButton("📸 Анализ меню ИИ"), types.KeyboardButton("🛒 Смарт-список покупок"))
     m.add(types.KeyboardButton("💊 Мои добавки (трекер)"))
+    m.add(types.KeyboardButton("📷 Сканер этикеток"), types.KeyboardButton("📅 Планировщик ккал"))
+    m.add(types.KeyboardButton("🍽️ Уровень голода"), types.KeyboardButton("🥗 Рецепты из холодильника"))
     m.add(types.KeyboardButton("🏠 Главное меню"))
     return m
 
@@ -9420,6 +10357,8 @@ def menu_trenirovki():
     m.add(types.KeyboardButton("🤸 Разминка по мышцам"), types.KeyboardButton("❤️ Пульсовые зоны"))
     m.add(types.KeyboardButton("🗣️ Ввод тренировки"), types.KeyboardButton("📈 Прогрессия весов"))
     m.add(types.KeyboardButton("🌱 Программа новичка"))
+    m.add(types.KeyboardButton("🤖 ИИ-тренировка"), types.KeyboardButton("💪 Крепатура"))
+    m.add(types.KeyboardButton("📚 Техника упражнения"), types.KeyboardButton("📓 Дневник сессии"))
     m.add(types.KeyboardButton("🏠 Главное меню"))
     return m
 
@@ -9439,6 +10378,8 @@ def menu_telo():
     m.add(types.KeyboardButton("📐 % Жира"), types.KeyboardButton("📊 Прогресс обхватов"))
     m.add(types.KeyboardButton("🌳 Дерево достижений"), types.KeyboardButton("🔮 Биоритмы"))
     m.add(types.KeyboardButton("⏰ Напомнить взвеситься"), types.KeyboardButton("📅 Прогноз даты цели"))
+    m.add(types.KeyboardButton("⚠️ ПМС-прогноз"), types.KeyboardButton("📏 Динамика обхватов"))
+    m.add(types.KeyboardButton("⚖️ Идеальный вес"))
     m.add(types.KeyboardButton("🏠 Главное меню"))
     return m
 
@@ -9455,6 +10396,8 @@ def menu_analitika():
     m.add(types.KeyboardButton("📉 Предсказание плато"))
     m.add(types.KeyboardButton("📬 Дайджест недели"), types.KeyboardButton("📊 Месяц назад"))
     m.add(types.KeyboardButton("🏆 Рейтинг тренировок"))
+    m.add(types.KeyboardButton("😴 Сон vs тренировки"), types.KeyboardButton("⏰ Лучшее время"))
+    m.add(types.KeyboardButton("🤖 ИИ-коуч недели"))
     m.add(types.KeyboardButton("🏠 Главное меню"))
     return m
 
@@ -9472,6 +10415,8 @@ def menu_zdorovie():
     m.add(types.KeyboardButton("⚡ Энергия дня"), types.KeyboardButton("🩺 Дневник самочувствия"))
     m.add(types.KeyboardButton("🌸 Цикл"), types.KeyboardButton("💧 Напоминания воды"))
     m.add(types.KeyboardButton("🩺 Индекс здоровья"))
+    m.add(types.KeyboardButton("😊 Настроение"), types.KeyboardButton("🫁 Дыхание"))
+    m.add(types.KeyboardButton("🩸 Анализы крови"), types.KeyboardButton("🧘 Антистресс"))
     m.add(types.KeyboardButton("🏠 Главное меню"))
     return m
 
@@ -9483,6 +10428,8 @@ def menu_nastroyki():
     m.add(types.KeyboardButton("🏠 Домашние тренировки"), types.KeyboardButton("👫 Партнёр"))
     m.add(types.KeyboardButton("📤 Экспорт CSV"), types.KeyboardButton("🌐 Язык / Language"))
     m.add(types.KeyboardButton("🏁 Соревнование"), types.KeyboardButton("📄 HTML отчёт"))
+    m.add(types.KeyboardButton("🎁 Реферальная программа"), types.KeyboardButton("🏆 Мои челленджи"))
+    m.add(types.KeyboardButton("☀️ Утренний брифинг"))
     m.add(types.KeyboardButton("🏠 Главное меню"))
     return m
 
@@ -10495,6 +11442,131 @@ def handle_callback(call):
             bot.answer_callback_query(call.id, "Напоминания отключены")
             bot.send_message(cid, "❌ Напоминания воды отключены")
 
+
+    # ── Task #70: трекер голода ──
+    elif data.startswith("hunger:"):
+        level = int(data.split(":")[1])
+        log_hunger(cid, level)
+        hunger_labels = {1:"😌 Сыт", 2:"🙂 Слегка", 3:"😐 Голоден", 4:"😤 Очень", 5:"😫 Голодаю"}
+        bot.answer_callback_query(call.id, f"Отмечено: {hunger_labels.get(level, str(level))}")
+
+    # ── Task #71: ИИ-тренировка ──
+    elif data.startswith("ai_workout:"):
+        muscle = data.split(":", 1)[1]
+        bot.answer_callback_query(call.id, f"Генерирую тренировку на {muscle}...")
+        bot.send_message(cid, f"🤖 Создаю тренировку на *{muscle}*...", parse_mode="Markdown")
+        result = generate_ai_workout(cid, muscle)
+        bot.send_message(cid, result, parse_mode="Markdown", reply_markup=menu_trenirovki())
+
+    # ── Task #71: крепатура ──
+    elif data.startswith("soreness:"):
+        muscle_key = data.split(":", 1)[1]
+        muscle_name = MUSCLE_SORENESS_MAP.get(muscle_key, muscle_key)
+        conn_tmp = get_db(); c_tmp = conn_tmp.cursor()
+        c_tmp.execute("SELECT level FROM soreness_log WHERE uid=? AND date=date('now') AND muscle=?",
+                      (cid, muscle_key))
+        row_tmp = c_tmp.fetchone()
+        conn_tmp.close()
+        cur_level = row_tmp[0] if row_tmp else 0
+        new_level = (cur_level + 1) % 4
+        log_soreness(cid, muscle_key, new_level)
+        labels = {0:"нет", 1:"лёгкая", 2:"средняя", 3:"сильная"}
+        bot.answer_callback_query(call.id, f"{muscle_name}: {labels[new_level]}")
+        txt, kb_sor = build_soreness_menu(cid)
+        try:
+            bot.edit_message_text(txt, cid, call.message.message_id,
+                                  parse_mode="Markdown", reply_markup=kb_sor)
+        except Exception:
+            bot.send_message(cid, txt, parse_mode="Markdown", reply_markup=kb_sor)
+
+    # ── Task #71: дневник сессии — настроение ──
+    elif data.startswith("snote_mood:"):
+        mood = int(data.split(":")[1])
+        set_state(cid, "waiting_session_energy", extra={"mood": mood})
+        kb_en = types.InlineKeyboardMarkup(row_width=5)
+        kb_en.add(*[types.InlineKeyboardButton(f"{'⚡'*i} {i}", callback_data=f"snote_energy:{i}") for i in range(1, 6)])
+        bot.answer_callback_query(call.id)
+        bot.send_message(cid, f"Настроение: {'😊'*mood}\n\nТеперь оцени уровень энергии:",
+                         parse_mode="Markdown", reply_markup=kb_en)
+
+    elif data.startswith("snote_energy:"):
+        energy = int(data.split(":")[1])
+        extra_data = get_state(cid)[1] or {}
+        mood = extra_data.get("mood", 3)
+        save_session_note(cid, mood, energy)
+        add_xp(cid, 5)
+        bot.answer_callback_query(call.id, "✅ Сохранено!")
+        bot.send_message(cid, f"📓 Сессия записана!\nНастроение: {'😊'*mood} | Энергия: {'⚡'*energy}",
+                         reply_markup=menu_trenirovki())
+        set_state(cid, "idle")
+
+    # ── Task #74: настроение ──
+    elif data.startswith("mood:"):
+        level = int(data.split(":")[1])
+        log_mood(cid, level)
+        mood_emojis = {1:"😭",2:"😔",3:"😐",4:"😊",5:"🤩"}
+        bot.answer_callback_query(call.id, f"Настроение: {mood_emojis.get(level,'😐')} {level}/5")
+        add_xp(cid, 3)
+
+    # ── Task #74: дыхательные упражнения ──
+    elif data.startswith("breath:"):
+        key = data.split(":", 1)[1]
+        bot.answer_callback_query(call.id)
+        bot.send_message(cid, build_breathing_exercise(key), parse_mode="Markdown")
+
+    elif data == "show_breathing":
+        txt, kb_b = build_breathing_menu()
+        bot.answer_callback_query(call.id)
+        bot.send_message(cid, txt, parse_mode="Markdown", reply_markup=kb_b)
+
+    # ── Task #74: анализы крови ──
+    elif data.startswith("blood_add:"):
+        marker_key = data.split(":", 1)[1]
+        m = BLOOD_MARKERS.get(marker_key, {})
+        set_state(cid, "waiting_blood_value", extra={"marker": marker_key})
+        bot.answer_callback_query(call.id)
+        bot.send_message(cid,
+            f"🩸 *{m.get('name', marker_key)}*\n"
+            f"Введи значение в {m.get('unit', '')}:\n"
+            f"_Норма: {m.get('norm_m', ('?','?'))[0]}-{m.get('norm_m', ('?','?'))[1]}_",
+            parse_mode="Markdown", reply_markup=cancel_menu())
+
+    # ── Task #75: реферал ──
+    elif data == "enter_ref_code":
+        set_state(cid, "waiting_ref_code")
+        bot.answer_callback_query(call.id)
+        bot.send_message(cid, "✏️ Введи реферальный код друга:", reply_markup=cancel_menu())
+
+    # ── Task #75: челленджи ──
+    elif data.startswith("challenge_join:"):
+        key = data.split(":", 1)[1]
+        joined = join_challenge(cid, key)
+        ch = GROUP_CHALLENGES.get(key, {})
+        if joined:
+            add_xp(cid, 20)
+            bot.answer_callback_query(call.id, f"✅ Присоединился к '{ch.get('name', key)}'! +20 XP")
+        else:
+            bot.answer_callback_query(call.id, "Ты уже участвуешь!")
+        txt, kb_ch = build_challenges_menu(cid)
+        try:
+            bot.edit_message_text(txt, cid, call.message.message_id,
+                                  parse_mode="Markdown", reply_markup=kb_ch)
+        except Exception:
+            bot.send_message(cid, txt, parse_mode="Markdown", reply_markup=kb_ch)
+
+    elif data.startswith("challenge_leave:"):
+        key = data.split(":", 1)[1]
+        conn_tmp = get_db(); c_tmp = conn_tmp.cursor()
+        c_tmp.execute("UPDATE user_challenges SET active=0 WHERE uid=? AND challenge_key=?", (cid, key))
+        conn_tmp.commit(); conn_tmp.close()
+        bot.answer_callback_query(call.id, "Вышел из челленджа")
+        txt, kb_ch = build_challenges_menu(cid)
+        try:
+            bot.edit_message_text(txt, cid, call.message.message_id,
+                                  parse_mode="Markdown", reply_markup=kb_ch)
+        except Exception:
+            bot.send_message(cid, txt, parse_mode="Markdown", reply_markup=kb_ch)
+
     else:
         bot.answer_callback_query(call.id)
 
@@ -10513,6 +11585,21 @@ def handle_photo(message):
         image_bytes = r.content
 
         caption = (message.caption or "").lower().strip()
+
+        # Режим: сканер этикетки (Task #70)
+        if state == "waiting_label_photo":
+            import base64 as _b64
+            bot.send_message(cid, "🔍 Анализирую этикетку...")
+            image_b64 = _b64.b64encode(image_bytes).decode("utf-8")
+            result = analyze_label_photo_ai(cid, image_b64)
+            kb_label = types.InlineKeyboardMarkup(row_width=2)
+            kb_label.add(
+                types.InlineKeyboardButton("📷 Ещё одну", callback_data="scan_another_label"),
+                types.InlineKeyboardButton("✅ Готово", callback_data="close"))
+            bot.send_message(cid, f"📷 *Состав продукта:*\n\n{result}",
+                             parse_mode="Markdown", reply_markup=kb_label)
+            set_state(cid, "idle")
+            return
 
         # Режим: анализ меню ресторана (Task #64)
         if state == "waiting_menu_photo":
@@ -11466,6 +12553,56 @@ def router(message):
         add_medication(cid, name, dose, schedule_time)
         bot.send_message(cid, f"✅ Добавлено: *{name}* {dose} в {schedule_time}", parse_mode="Markdown",
                          reply_markup=main_menu(cid))
+        set_state(cid, "idle")
+        return
+
+
+    if state == "waiting_label_photo":
+        # Handled in photo handler
+        pass
+
+    if state == "waiting_fridge_ingredients":
+        bot.send_message(cid, "🥗 Ищу рецепты...")
+        result = build_fridge_recipes(cid, text)
+        bot.send_message(cid, result, parse_mode="Markdown", reply_markup=menu_pitanie())
+        set_state(cid, "idle")
+        return
+
+    if state == "waiting_exercise_technique":
+        result = build_exercise_technique(text)
+        bot.send_message(cid, result, parse_mode="Markdown", disable_web_page_preview=False,
+                         reply_markup=menu_trenirovki())
+        set_state(cid, "idle")
+        return
+
+    if state == "waiting_blood_value":
+        extra_data = get_state(cid)[1] or {}
+        marker_key = extra_data.get("marker", "")
+        try:
+            value = float(text.replace(",", ".").strip())
+            log_blood_test(cid, marker_key, value)
+            m = BLOOD_MARKERS.get(marker_key, {})
+            p = get_profile(cid)
+            sex = p.get("sex", "м")
+            norm = m.get("norm_m" if sex=="м" else "norm_f", (0, 999))
+            if value < norm[0]:
+                status = "⬇️ Ниже нормы"
+            elif value > norm[1]:
+                status = "⬆️ Выше нормы"
+            else:
+                status = "✅ В норме"
+            bot.send_message(cid,
+                f"✅ Сохранено: *{m.get('name', marker_key)}* = {value} {m.get('unit','')}\n{status}",
+                parse_mode="Markdown", reply_markup=menu_zdorovie())
+        except ValueError:
+            bot.send_message(cid, "⚠️ Введи число", reply_markup=cancel_menu())
+            return
+        set_state(cid, "idle")
+        return
+
+    if state == "waiting_ref_code":
+        result = process_referral(cid, text.strip().upper())
+        bot.send_message(cid, result, reply_markup=main_menu(cid))
         set_state(cid, "idle")
         return
 
@@ -13479,6 +14616,115 @@ def router(message):
     elif text == "🩺 Индекс здоровья":
         bot.send_message(cid, "⏳ Считаю индекс здоровья...")
         bot.send_message(cid, build_health_index(cid), parse_mode="Markdown")
+
+
+    # ── Task #70: Сканер этикеток ──
+    elif text == "📷 Сканер этикеток":
+        set_state(cid, "waiting_label_photo")
+        bot.send_message(cid,
+            "📷 *Сканер этикетки*\n\nОтправь фото этикетки продукта — распознаю КБЖУ!",
+            parse_mode="Markdown", reply_markup=cancel_menu())
+
+    # ── Task #70: Планировщик калорий ──
+    elif text == "📅 Планировщик ккал":
+        bot.send_message(cid, build_calorie_week_plan(cid), parse_mode="Markdown")
+
+    # ── Task #70: Трекер голода ──
+    elif text == "🍽️ Уровень голода":
+        txt, kb_h = build_hunger_menu(cid)
+        bot.send_message(cid, txt, parse_mode="Markdown", reply_markup=kb_h)
+
+    # ── Task #70: Рецепты из холодильника ──
+    elif text == "🥗 Рецепты из холодильника":
+        set_state(cid, "waiting_fridge_ingredients")
+        bot.send_message(cid,
+            "🥗 *Рецепты из холодильника*\n\nПеречисли что есть дома, например:\n"
+            "_курица, яйца, брокколи, гречка, сыр_",
+            parse_mode="Markdown", reply_markup=cancel_menu())
+
+    # ── Task #71: ИИ-генератор тренировки ──
+    elif text == "🤖 ИИ-тренировка":
+        txt, kb_ai = build_ai_workout_generator_menu()
+        bot.send_message(cid, txt, parse_mode="Markdown", reply_markup=kb_ai)
+
+    # ── Task #71: Крепатура ──
+    elif text == "💪 Крепатура":
+        txt, kb_sor = build_soreness_menu(cid)
+        bot.send_message(cid, txt, parse_mode="Markdown", reply_markup=kb_sor)
+
+    # ── Task #71: Техника упражнения ──
+    elif text == "📚 Техника упражнения":
+        set_state(cid, "waiting_exercise_technique")
+        bot.send_message(cid,
+            "📚 *Техника упражнений*\n\nНапиши название упражнения:\n"
+            "_присед, жим, тяга, подтягивания, отжимания_",
+            parse_mode="Markdown", reply_markup=cancel_menu())
+
+    # ── Task #71: Дневник сессии ──
+    elif text == "📓 Дневник сессии":
+        txt, kb_sn = build_session_note_start(cid)
+        bot.send_message(cid, txt, parse_mode="Markdown", reply_markup=kb_sn)
+
+    # ── Task #72: ПМС-прогноз ──
+    elif text == "⚠️ ПМС-прогноз":
+        bot.send_message(cid, build_pms_warning(cid), parse_mode="Markdown")
+
+    # ── Task #72: Динамика обхватов ──
+    elif text == "📏 Динамика обхватов":
+        bot.send_message(cid, build_measurements_ascii_chart(cid), parse_mode="Markdown")
+
+    # ── Task #72: Идеальный вес ──
+    elif text == "⚖️ Идеальный вес":
+        bot.send_message(cid, build_ideal_weight(cid), parse_mode="Markdown")
+
+    # ── Task #73: Сон vs тренировки ──
+    elif text == "😴 Сон vs тренировки":
+        bot.send_message(cid, build_sleep_workout_correlation(cid), parse_mode="Markdown")
+
+    # ── Task #73: Лучшее время тренировок ──
+    elif text == "⏰ Лучшее время":
+        bot.send_message(cid, build_best_training_time(cid), parse_mode="Markdown")
+
+    # ── Task #73: ИИ-коуч недели ──
+    elif text == "🤖 ИИ-коуч недели":
+        bot.send_message(cid, "🤖 Анализирую твою неделю...")
+        bot.send_message(cid, build_ai_weekly_coach(cid), parse_mode="Markdown")
+
+    # ── Task #74: Настроение ──
+    elif text == "😊 Настроение":
+        txt, kb_m = build_mood_menu(cid)
+        bot.send_message(cid, txt, parse_mode="Markdown", reply_markup=kb_m)
+
+    # ── Task #74: Дыхание ──
+    elif text == "🫁 Дыхание":
+        txt, kb_b = build_breathing_menu()
+        bot.send_message(cid, txt, parse_mode="Markdown", reply_markup=kb_b)
+
+    # ── Task #74: Анализы крови ──
+    elif text == "🩸 Анализы крови":
+        txt, kb_bl = build_blood_tests_menu(cid)
+        bot.send_message(cid, txt, parse_mode="Markdown", reply_markup=kb_bl)
+
+    # ── Task #74: Антистресс ──
+    elif text == "🧘 Антистресс":
+        txt, kb_as = build_antistress_protocol(cid)
+        bot.send_message(cid, txt, parse_mode="Markdown", reply_markup=kb_as)
+
+    # ── Task #75: Реферальная программа ──
+    elif text == "🎁 Реферальная программа":
+        txt, kb_ref = build_referral_info(cid)
+        bot.send_message(cid, txt, parse_mode="Markdown", reply_markup=kb_ref)
+
+    # ── Task #75: Мои челленджи ──
+    elif text == "🏆 Мои челленджи":
+        progress = build_challenge_progress(cid)
+        txt, kb_ch = build_challenges_menu(cid)
+        bot.send_message(cid, progress, parse_mode="Markdown")
+        bot.send_message(cid, txt, parse_mode="Markdown", reply_markup=kb_ch)
+
+    # ── Task #75: Утренний брифинг ──
+    elif text == "☀️ Утренний брифинг":
+        bot.send_message(cid, build_morning_briefing(cid), parse_mode="Markdown")
 
     # ── Помощь / команды ──
     elif text == "❓ Помощь / команды":
