@@ -1044,6 +1044,18 @@ def init_db():
     except Exception:
         pass
 
+    # Views для алиасинга uid <-> user_id в старых таблицах
+    for _view_sql in [
+        "CREATE VIEW IF NOT EXISTS food_diary_v AS SELECT user_id AS uid, user_id, meal, product, grams, kcal, date FROM food_diary",
+        "CREATE VIEW IF NOT EXISTS water_log AS SELECT user_id AS uid, user_id, ml, date FROM water_ml_log",
+        "CREATE VIEW IF NOT EXISTS steps_log AS SELECT user_id AS uid, user_id, step_count AS steps, date FROM steps",
+        "CREATE VIEW IF NOT EXISTS sleep_log AS SELECT user_id AS uid, user_id, duration_hours, quality, date FROM sleep",
+    ]:
+        try:
+            conn.execute(_view_sql)
+        except Exception:
+            pass
+
     # ── Таблицы новых функций ─────────────────────────────────
     c.execute('''CREATE TABLE IF NOT EXISTS hunger_log (
         id INTEGER PRIMARY KEY AUTOINCREMENT, uid INTEGER,
@@ -8360,11 +8372,17 @@ def init_mood_table():
         uid INTEGER, date TEXT, mood INTEGER, note TEXT)""")
     conn.commit(); conn.close()
 
-def log_mood(uid, mood_level, note=""):
+def log_mood(uid, mood_level, stress=None, energy=None, note=""):
+    """Логирует настроение. Принимает как (uid, mood) так и (uid, mood, stress, energy, note)."""
     init_mood_table()
     conn = get_db(); c = conn.cursor()
-    c.execute("INSERT INTO mood_log (uid, date, mood, note) VALUES (?,date('now'),?,?)",
-              (uid, mood_level, note))
+    # Записываем и в uid-style и в user_id-style для совместимости
+    try:
+        c.execute("INSERT INTO mood_log (uid, user_id, date, mood, energy, note) VALUES (?,?,date('now'),?,?,?)",
+                  (uid, uid, mood_level, energy or 0, note))
+    except Exception:
+        c.execute("INSERT INTO mood_log (uid, date, mood, note) VALUES (?,date('now'),?,?)",
+                  (uid, mood_level, note))
     conn.commit(); conn.close()
 
 def build_mood_menu(uid):
