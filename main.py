@@ -6,7 +6,7 @@ import time
 import csv
 import io
 import re
-from datetime import datetime, timezone, timedelta
+from datetime import datetime, timezone, timedelta, date
 import random
 from functools import lru_cache
 
@@ -869,6 +869,10 @@ def build_product_card(name, profile=None):
 #  БАЗА ДАННЫХ
 # ─────────────────────────────────────────
 
+def get_db():
+    """Возвращает соединение с БД (хелпер для новых функций)."""
+    return sqlite3.connect("weight_tracker.db")
+
 def init_db():
     conn = sqlite3.connect("weight_tracker.db")
     c = conn.cursor()
@@ -992,8 +996,10 @@ def init_db():
         user_id INTEGER, partner_id INTEGER,
         PRIMARY KEY (user_id, partner_id))''')
     c.execute('''CREATE TABLE IF NOT EXISTS referrals (
-        id INTEGER PRIMARY KEY AUTOINCREMENT, referrer_id INTEGER,
-        new_user_id INTEGER, date TEXT)''')
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        referrer_id INTEGER, referrer_uid INTEGER,
+        new_user_id INTEGER, referred_uid INTEGER,
+        date TEXT)''')
     c.execute('''CREATE TABLE IF NOT EXISTS water_ml_log (
         id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER,
         date TEXT, ml INTEGER)''')
@@ -1030,6 +1036,51 @@ def init_db():
             c.execute(f"ALTER TABLE user_profile ADD COLUMN {col} TEXT DEFAULT {dflt}")
         except Exception:
             pass
+    # ── Совместимость: VIEW weight_log → weights ──────────────
+    try:
+        c.execute('''CREATE VIEW IF NOT EXISTS weight_log AS
+            SELECT user_id AS uid, user_id, weight_value AS weight, date
+            FROM weights''')
+    except Exception:
+        pass
+
+    # ── Таблицы новых функций ─────────────────────────────────
+    c.execute('''CREATE TABLE IF NOT EXISTS hunger_log (
+        id INTEGER PRIMARY KEY AUTOINCREMENT, uid INTEGER,
+        level INTEGER, note TEXT DEFAULT "", datetime TEXT)''')
+    c.execute('''CREATE TABLE IF NOT EXISTS mood_log (
+        id INTEGER PRIMARY KEY AUTOINCREMENT, uid INTEGER, user_id INTEGER,
+        mood INTEGER, energy INTEGER DEFAULT 0, note TEXT, date TEXT)''')
+    c.execute('''CREATE TABLE IF NOT EXISTS soreness_log (
+        id INTEGER PRIMARY KEY AUTOINCREMENT, uid INTEGER,
+        muscle TEXT, level INTEGER, date TEXT)''')
+    c.execute('''CREATE TABLE IF NOT EXISTS session_notes (
+        id INTEGER PRIMARY KEY AUTOINCREMENT, uid INTEGER,
+        mood INTEGER, energy INTEGER, note TEXT, date TEXT)''')
+    c.execute('''CREATE TABLE IF NOT EXISTS blood_tests (
+        id INTEGER PRIMARY KEY AUTOINCREMENT, uid INTEGER,
+        marker TEXT, value REAL, date TEXT)''')
+    c.execute('''CREATE TABLE IF NOT EXISTS referrals (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        referrer_uid INTEGER, referred_uid INTEGER, date TEXT)''')
+    c.execute('''CREATE TABLE IF NOT EXISTS user_challenges (
+        id INTEGER PRIMARY KEY AUTOINCREMENT, uid INTEGER,
+        challenge_key TEXT, start_date TEXT, progress INTEGER DEFAULT 0,
+        completed INTEGER DEFAULT 0, active INTEGER DEFAULT 1)''')
+    c.execute('''CREATE TABLE IF NOT EXISTS supplements_log (
+        id INTEGER PRIMARY KEY AUTOINCREMENT, uid INTEGER,
+        supp_key TEXT, taken INTEGER DEFAULT 0, date TEXT)''')
+    c.execute('''CREATE TABLE IF NOT EXISTS user_supplements (
+        id INTEGER PRIMARY KEY AUTOINCREMENT, uid INTEGER,
+        supp_key TEXT, enabled INTEGER DEFAULT 1, active INTEGER DEFAULT 1)''')
+    c.execute('''CREATE TABLE IF NOT EXISTS cycle_log (
+        id INTEGER PRIMARY KEY AUTOINCREMENT, uid INTEGER, user_id INTEGER,
+        cycle_start TEXT, period_start TEXT, cycle_length INTEGER DEFAULT 28)''')
+    c.execute('''CREATE TABLE IF NOT EXISTS measurements (
+        id INTEGER PRIMARY KEY AUTOINCREMENT, uid INTEGER, user_id INTEGER,
+        chest REAL, waist REAL, hips REAL, arm REAL, thigh REAL,
+        neck REAL DEFAULT 0, abdomen REAL DEFAULT 0, date TEXT)''')
+
     conn.commit(); conn.close()
 
 _profile_cache = {}  # {uid: (profile_dict, timestamp)}
@@ -4516,7 +4567,7 @@ def get_referral_code(uid):
 def get_referral_count(uid):
     conn = sqlite3.connect("weight_tracker.db")
     r = conn.execute(
-        "SELECT COUNT(*) FROM referrals WHERE referrer_id=?", (uid,)).fetchone()
+        "SELECT COUNT(*) FROM referrals WHERE referrer_id=? OR referrer_uid=?", (uid, uid)).fetchone()
     conn.close()
     return r[0] if r else 0
 
@@ -4527,11 +4578,11 @@ def register_referral(new_uid, ref_code):
             return False
         conn = sqlite3.connect("weight_tracker.db")
         existing = conn.execute(
-            "SELECT id FROM referrals WHERE new_user_id=?", (new_uid,)).fetchone()
+            "SELECT id FROM referrals WHERE new_user_id=? OR referred_uid=?", (new_uid, new_uid)).fetchone()
         if not existing:
             conn.execute(
-                "INSERT INTO referrals (referrer_id, new_user_id, date) VALUES (?,?,?)",
-                (referrer_id, new_uid, now_samara().date().strftime("%Y-%m-%d")))
+                "INSERT INTO referrals (referrer_id, referrer_uid, new_user_id, referred_uid, date) VALUES (?,?,?,?,?)",
+                (referrer_id, referrer_id, new_uid, new_uid, now_samara().date().strftime("%Y-%m-%d")))
             conn.commit()
             # Бонус XP
             add_xp(referrer_id, "referral", 100)
@@ -7786,8 +7837,11 @@ def analyze_label_photo_ai(uid, image_b64):
 def build_calorie_week_plan(uid):
     """Генерирует план калорий на 7 дней вперёд."""
     p = get_profile(uid)
-    tdee = p.get("tdee") or calculate_tdee(uid)
-    goal = p.get("goal", "похудение")
+    if not p:
+        return "❌ Настрой профиль сначала."
+    plan = get_user_plan(uid, p)
+    tdee = plan.get("tdee") or plan.get("calories") or 2000
+    goal = p.get("workout_pref", "похудение")
 
     if goal in ("похудение", "сушка"):
         target = int(tdee * 0.85)
@@ -8169,11 +8223,13 @@ def build_ideal_weight(uid):
 def build_sleep_workout_correlation(uid):
     """Корреляция часов сна и числа повторений/веса."""
     conn = get_db(); c = conn.cursor()
-    c.execute("""SELECT s.date, s.duration_min,
+    # sleep таблица: user_id, duration_hours, date
+    # workout_weights: user_id, weight_kg, reps, sets, date
+    c.execute("""SELECT s.date, s.duration_hours,
                         SUM(e.weight_kg * e.reps * e.sets) as volume
-                 FROM sleep_log s
-                 JOIN exercise_journal e ON e.uid=s.uid AND e.date=s.date
-                 WHERE s.uid=? AND s.duration_min>0
+                 FROM sleep s
+                 JOIN workout_weights e ON e.user_id=s.user_id AND e.date=s.date
+                 WHERE s.user_id=? AND s.duration_hours>0
                  GROUP BY s.date ORDER BY s.date DESC LIMIT 14""", (uid,))
     rows = c.fetchall()
     conn.close()
@@ -8488,12 +8544,12 @@ def process_referral(uid, code):
         c.execute("""CREATE TABLE IF NOT EXISTS referrals (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             referrer_uid INTEGER, referred_uid INTEGER, date TEXT)""")
-        c.execute("SELECT id FROM referrals WHERE referred_uid=?", (uid,))
+        c.execute("SELECT id FROM referrals WHERE referred_uid=? OR new_user_id=?", (uid, uid))
         if c.fetchone():
             conn.close()
             return "❌ Ты уже использовал реферальный код"
-        c.execute("INSERT INTO referrals (referrer_uid, referred_uid, date) VALUES (?,?,date('now'))",
-                  (ref_uid, uid))
+        c.execute("INSERT INTO referrals (referrer_id, referrer_uid, new_user_id, referred_uid, date) VALUES (?,?,?,?,date('now'))",
+                  (ref_uid, ref_uid, uid, uid))
         conn.commit(); conn.close()
         add_xp(uid, 100)
         add_xp(ref_uid, 150)
@@ -8507,7 +8563,7 @@ def build_referral_info(uid):
     c.execute("""CREATE TABLE IF NOT EXISTS referrals (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         referrer_uid INTEGER, referred_uid INTEGER, date TEXT)""")
-    c.execute("SELECT COUNT(*) FROM referrals WHERE referrer_uid=?", (uid,))
+    c.execute("SELECT COUNT(*) FROM referrals WHERE referrer_uid=? OR referrer_id=?", (uid, uid))
     count = c.fetchone()[0]
     conn.close()
 
