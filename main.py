@@ -1,4 +1,4 @@
-import telebot
+ import telebot
 from telebot import types
 import sqlite3
 import threading
@@ -1043,6 +1043,93 @@ def init_db():
             FROM weights''')
     except Exception:
         pass
+
+    # Добавляем uid-алиасы к старым таблицам (ALTER TABLE игнорирует если уже есть)
+    for _alter_sql in [
+        "ALTER TABLE food_diary ADD COLUMN uid INTEGER",
+        "ALTER TABLE water ADD COLUMN uid INTEGER",
+        "ALTER TABLE steps ADD COLUMN uid INTEGER",
+        "ALTER TABLE sleep ADD COLUMN uid INTEGER",
+        "ALTER TABLE workout_weights ADD COLUMN uid INTEGER",
+        "ALTER TABLE water_ml_log ADD COLUMN uid INTEGER",
+    ]:
+        try: conn.execute(_alter_sql)
+        except Exception: pass
+    # Синхронизируем uid = user_id где uid IS NULL
+    for _tbl in ["food_diary", "water", "steps", "sleep", "workout_weights", "water_ml_log"]:
+        try: conn.execute(f"UPDATE {_tbl} SET uid=user_id WHERE uid IS NULL")
+        except Exception: pass
+    # Триггеры для автозаполнения uid при вставке
+    for _trg_tbl in ["food_diary", "water", "steps", "sleep", "workout_weights", "water_ml_log"]:
+        try:
+            conn.execute(f"""CREATE TRIGGER IF NOT EXISTS sync_uid_{_trg_tbl}
+                AFTER INSERT ON {_trg_tbl} WHEN NEW.uid IS NULL
+                BEGIN UPDATE {_trg_tbl} SET uid=user_id WHERE id=NEW.id; END""")
+        except Exception: pass
+
+    # Добавляем недостающие колонки в таблицы которые могли быть созданы со старой схемой
+    _missing_cols = [
+        ("mood_log", "uid INTEGER"),
+        ("mood_log", "user_id INTEGER"),
+        ("mood_log", "energy INTEGER DEFAULT 0"),
+        ("mood_log", "stress INTEGER DEFAULT 0"),
+        ("cycle_log", "uid INTEGER"),
+        ("cycle_log", "user_id INTEGER"),
+        ("cycle_log", "cycle_start TEXT"),
+        ("cycle_log", "period_start TEXT"),
+        ("cycle_log", "cycle_length INTEGER DEFAULT 28"),
+        ("measurements", "uid INTEGER"),
+        ("measurements", "user_id INTEGER"),
+        ("measurements", "waist REAL DEFAULT 0"),
+        ("measurements", "chest REAL DEFAULT 0"),
+        ("measurements", "hips REAL DEFAULT 0"),
+        ("measurements", "arm REAL DEFAULT 0"),
+        ("measurements", "thigh REAL DEFAULT 0"),
+        ("measurements", "neck REAL DEFAULT 0"),
+        ("measurements", "abdomen REAL DEFAULT 0"),
+        ("exercise_journal", "uid INTEGER"),
+        ("exercise_journal", "user_id INTEGER"),
+        ("exercise_journal", "weight_kg REAL DEFAULT 0"),
+        ("exercise_journal", "reps INTEGER DEFAULT 0"),
+        ("exercise_journal", "sets INTEGER DEFAULT 1"),
+        ("exercise_journal", "exercise TEXT DEFAULT ''"),
+        ("stress_log", "uid INTEGER"),
+        ("hunger_log", "uid INTEGER"),
+        ("soreness_log", "uid INTEGER"),
+        ("sleep_log", "uid INTEGER"),
+        ("sleep_log", "duration_hours REAL DEFAULT 0"),
+        ("sleep_log", "quality INTEGER DEFAULT 5"),
+        ("xp_log", "uid INTEGER"),
+    ]
+    for _tbl, _col_def in _missing_cols:
+        try: conn.execute(f"ALTER TABLE {_tbl} ADD COLUMN {_col_def}")
+        except Exception: pass
+
+    # Убедимся что xp_log существует
+    conn.execute("""CREATE TABLE IF NOT EXISTS xp_log (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        uid INTEGER, user_id INTEGER, date TEXT,
+        amount INTEGER DEFAULT 0, reason TEXT DEFAULT '')""")
+
+    # Убедимся что exercise_journal и workout_log существуют
+    conn.execute("""CREATE TABLE IF NOT EXISTS exercise_journal (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        uid INTEGER, user_id INTEGER, date TEXT, exercise TEXT DEFAULT '',
+        weight_kg REAL DEFAULT 0, reps INTEGER DEFAULT 0, sets INTEGER DEFAULT 1)""")
+    conn.execute("""CREATE TABLE IF NOT EXISTS workout_log (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        uid INTEGER, user_id INTEGER, date TEXT,
+        workout_type TEXT DEFAULT '', duration_min INTEGER DEFAULT 0,
+        notes TEXT DEFAULT '')""")
+    conn.execute("""CREATE VIEW IF NOT EXISTS workout_log_v AS
+        SELECT user_id AS uid, user_id, date, workout_type, duration_min, notes FROM workout_log""")
+
+    # Синхронизируем uid в exercise_journal и mood_log и cycle_log
+    for _tbl2 in ["exercise_journal", "workout_log", "mood_log", "cycle_log", "measurements", "stress_log"]:
+        try: conn.execute(f"UPDATE {_tbl2} SET uid=user_id WHERE uid IS NULL AND user_id IS NOT NULL")
+        except Exception: pass
+        try: conn.execute(f"UPDATE {_tbl2} SET user_id=uid WHERE user_id IS NULL AND uid IS NOT NULL")
+        except Exception: pass
 
     # Views для алиасинга uid <-> user_id в старых таблицах
     for _view_sql in [
@@ -5294,10 +5381,13 @@ def get_cycle_phase(uid):
     except Exception:
         return None
 
-def log_cycle_start(uid):
+def log_cycle_start_legacy(uid):
     today = now_samara().strftime("%Y-%m-%d")
     conn = sqlite3.connect("weight_tracker.db")
-    conn.execute("INSERT INTO cycle_log (user_id, period_start) VALUES (?,?)", (uid, today))
+    try:
+        conn.execute("INSERT INTO cycle_log (uid, cycle_start) VALUES (?,?)", (uid, today))
+    except Exception:
+        pass
     conn.commit(); conn.close()
 
 # ─────────────────────────────────────────
@@ -7740,7 +7830,7 @@ def build_health_index(uid):
     details.append(f"⚖️ Взвешивание: {w_count}/7 дн. — *{w_score}/10*")
 
     # 2. Питание (дни с записями) — макс 15 очков
-    c.execute("SELECT COUNT(DISTINCT date) FROM food_diary WHERE uid=? AND date>=?", (uid, week_ago))
+    c.execute("SELECT COUNT(DISTINCT date) FROM food_diary WHERE user_id=? AND date>=?", (uid, week_ago))
     food_days = c.fetchone()[0]
     food_score = min(15, food_days * 2)
     score += food_score; max_score += 15
@@ -7761,7 +7851,7 @@ def build_health_index(uid):
     details.append(f"🏋️ Тренировки: {workout_days}/7 дн. — *{workout_score}/20*")
 
     # 5. Сон — макс 15 очков
-    c.execute("SELECT COUNT(DISTINCT date(wake_time)) FROM sleep_log WHERE uid=? AND date(wake_time)>=?",
+    c.execute("SELECT COUNT(DISTINCT date) FROM sleep_log WHERE uid=? AND date>=?",
               (uid, week_ago))
     sleep_days = (c.fetchone() or [0])[0]
     sleep_score = min(15, sleep_days * 2)
@@ -8140,7 +8230,7 @@ def build_pms_warning(uid):
 def build_measurements_ascii_chart(uid):
     """ASCII-динамика обхватов за последние 8 записей."""
     conn = get_db(); c = conn.cursor()
-    c.execute("""SELECT date, waist, hips, chest, bicep FROM measurements
+    c.execute("""SELECT date, waist, hips, chest, arm FROM measurements
                  WHERE uid=? ORDER BY date DESC LIMIT 8""", (uid,))
     rows = c.fetchall()
     conn.close()
@@ -8291,12 +8381,12 @@ def build_best_training_time(uid):
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         uid INTEGER, date TEXT, exercise TEXT,
         weight_kg REAL, reps INTEGER, sets INTEGER)""")
-    # Используем время из wellbeing_log как прокси
-    c.execute("""SELECT strftime('%H', datetime) as hour,
+    # Используем date как прокси времени (нет колонки datetime)
+    c.execute("""SELECT substr(date,12,2) as hour,
                         AVG(weight_kg * reps * sets) as avg_vol,
                         COUNT(*) as cnt
                  FROM exercise_journal
-                 WHERE uid=? AND weight_kg>0
+                 WHERE uid=? AND weight_kg>0 AND length(date)>10
                  GROUP BY hour ORDER BY avg_vol DESC LIMIT 5""", (uid,))
     rows = c.fetchall()
     conn.close()
