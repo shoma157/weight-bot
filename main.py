@@ -11460,12 +11460,21 @@ def cmd_backup(message):
     """Ручной запрос бэкапа — шлёт файл БД тому, кто написал команду."""
     cid = message.chat.id
     bot.send_message(cid, "🗄 Создаю резервную копию...")
-    # Временно шлём тому кто запросил
-    global BACKUP_CHAT_ID
-    old = BACKUP_CHAT_ID
-    BACKUP_CHAT_ID = cid
-    send_db_backup()
-    BACKUP_CHAT_ID = old
+    try:
+        if not os.path.exists(DB_PATH):
+            bot.send_message(cid, "❌ Файл БД не найден.")
+            return
+        size = os.path.getsize(DB_PATH)
+        with open(DB_PATH, "rb") as f:
+            from datetime import datetime as _dt
+            ts = _dt.now().strftime("%Y-%m-%d_%H-%M")
+            bot.send_document(
+                cid, f,
+                caption=f"🗄 Бэкап БД ({size//1024} КБ)\n{ts}\n\nПерешли этот файл боту чтобы восстановить.",
+                visible_file_name=f"backup_{ts}.db"
+            )
+    except Exception as e:
+        bot.send_message(cid, f"❌ Ошибка бэкапа: {e}")
 
 @bot.message_handler(content_types=['document'])
 def handle_document(message):
