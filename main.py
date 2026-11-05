@@ -11455,6 +11455,43 @@ def cmd_water(message):
         set_state(cid, "waiting_water")
         bot.send_message(cid, "💧 Сколько стаканов?", reply_markup=cancel_menu())
 
+@bot.message_handler(commands=['backup'])
+def cmd_backup(message):
+    """Ручной запрос бэкапа — только для владельца."""
+    cid = message.chat.id
+    allowed = BACKUP_CHAT_ID or ADMIN_UID
+    if allowed and cid != allowed:
+        return
+    bot.send_message(cid, "🗄 Создаю резервную копию...")
+    send_db_backup()
+
+@bot.message_handler(content_types=['document'])
+def handle_document(message):
+    """Восстановление БД из файла бэкапа."""
+    cid = message.chat.id
+    allowed = BACKUP_CHAT_ID or ADMIN_UID
+    # Только владелец может восстанавливать
+    if allowed and cid != allowed:
+        return
+    doc = message.document
+    if not doc.file_name.endswith(".db"):
+        return
+    try:
+        import tempfile
+        file_info = bot.get_file(doc.file_id)
+        downloaded = bot.download_file(file_info.file_path)
+        with tempfile.NamedTemporaryFile(suffix=".db", delete=False) as tmp:
+            tmp.write(downloaded)
+            tmp_path = tmp.name
+        if restore_db_from_file(tmp_path):
+            os.unlink(tmp_path)
+            bot.send_message(cid, "✅ *База данных восстановлена!*\n\nВсе данные пользователей на месте.",
+                             parse_mode="Markdown")
+        else:
+            bot.send_message(cid, "❌ Не удалось восстановить БД. Файл повреждён или не является базой данных.")
+    except Exception as e:
+        bot.send_message(cid, f"❌ Ошибка восстановления: {e}")
+
 @bot.message_handler(commands=['start','help'])
 def send_welcome(message):
     cid = message.chat.id
@@ -11584,6 +11621,63 @@ def handle_document(message):
     bot.send_message(cid, report, parse_mode="Markdown", reply_markup=main_menu(cid))
 
 ADMIN_UID = None  # Установи свой Telegram ID для получения уведомлений об ошибках
+
+# ═══════════════════════════════════════════════════════════
+#  BACKUP / RESTORE — ежедневный бэкап БД в Telegram
+# ═══════════════════════════════════════════════════════════
+# Укажи свой Telegram ID сюда (узнать: написать @userinfobot)
+BACKUP_CHAT_ID = None  # например: 123456789
+
+def send_db_backup():
+    """Отправляет файл БД в Telegram владельцу."""
+    chat_id = BACKUP_CHAT_ID or ADMIN_UID
+    if not chat_id:
+        return
+    if not os.path.exists(DB_PATH):
+        return
+    try:
+        from datetime import datetime as _dt
+        ts = _dt.now().strftime("%Y-%m-%d_%H-%M")
+        with open(DB_PATH, "rb") as f:
+            bot.send_document(
+                chat_id, f,
+                caption=f"🗄 *Резервная копия БД*\n{ts}\n\nЧтобы восстановить — перешли этот файл боту.",
+                parse_mode="Markdown",
+                visible_file_name=f"backup_{ts}.db"
+            )
+    except Exception as e:
+        print(f"[BACKUP] Ошибка отправки: {e}")
+
+def restore_db_from_file(file_path):
+    """Восстанавливает БД из переданного файла."""
+    import shutil
+    try:
+        # Проверяем что файл — валидная SQLite БД
+        test_conn = sqlite3.connect(file_path)
+        test_conn.execute("SELECT name FROM sqlite_master LIMIT 1").fetchone()
+        test_conn.close()
+        shutil.copy2(file_path, DB_PATH)
+        return True
+    except Exception as e:
+        print(f"[RESTORE] Ошибка: {e}")
+        return False
+
+def backup_scheduler_worker():
+    """Фоновый поток: каждый день в 08:00 по Самаре шлёт бэкап."""
+    import time as _time
+    while True:
+        try:
+            now = now_samara()
+            # Следующие 08:00
+            next_run = now.replace(hour=8, minute=0, second=0, microsecond=0)
+            if now >= next_run:
+                next_run = next_run + timedelta(days=1)
+            wait_sec = (next_run - now).total_seconds()
+            _time.sleep(wait_sec)
+            send_db_backup()
+        except Exception as e:
+            print(f"[BACKUP SCHEDULER] Ошибка: {e}")
+            import time as _time2; _time2.sleep(60)
 
 
 @bot.callback_query_handler(func=lambda call: True)
@@ -15640,5 +15734,8 @@ if __name__ == '__main__':
     # Запуск фонового потока напоминаний
     t=threading.Thread(target=reminder_worker,daemon=True)
     t.start()
-    print("Бот v7 запущен! Самара UTC+4 | Напоминания | Полуфабрикаты | Читмил | График | Экспорт")
+    # Запуск фонового потока ежедневного бэкапа в 08:00 Самара
+    t_backup=threading.Thread(target=backup_scheduler_worker,daemon=True)
+    t_backup.start()
+    print("Бот v7 запущен! Самара UTC+4 | Напоминания | Полуфабрикаты | Читмил | График | Экспорт | Бэкап 08:00")
     bot.infinity_polling()
