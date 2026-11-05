@@ -1,4 +1,4 @@
- import telebot
+import telebot
 from telebot import types
 import sqlite3
 import threading
@@ -9,6 +9,8 @@ import re
 from datetime import datetime, timezone, timedelta, date
 import random
 from functools import lru_cache
+
+DB_PATH = "weight_tracker.db"
 
 try:
     import pdfplumber
@@ -4327,7 +4329,8 @@ def build_daily_goals_pct(uid):
 # ══════════════════════════════════════════════════════
 #  ТРЕКЕР СНА
 # ══════════════════════════════════════════════════════
-def log_sleep(uid, hours):
+def log_sleep_hours(uid, hours):
+    """Упрощённое логирование сна в sleep_log (только часы)."""
     conn = sqlite3.connect("weight_tracker.db")
     today = now_samara().date().strftime("%Y-%m-%d")
     conn.execute(
@@ -4335,7 +4338,8 @@ def log_sleep(uid, hours):
         (uid, today, hours))
     conn.commit(); conn.close()
 
-def get_sleep_history(uid, days=7):
+def get_sleep_history_simple(uid, days=7):
+    """Получает историю сна из sleep_log (упрощённая таблица, только часы)."""
     conn = sqlite3.connect("weight_tracker.db")
     today = now_samara().date()
     since = (today - timedelta(days=days)).strftime("%Y-%m-%d")
@@ -4346,7 +4350,7 @@ def get_sleep_history(uid, days=7):
     return rows
 
 def build_sleep_report(uid):
-    rows = get_sleep_history(uid, 14)
+    rows = get_sleep_history_simple(uid, 14)
     if not rows:
         return ("😴 *Трекер сна*\n\nДанных нет.\n\n"
                 "Введи кол-во часов сна через кнопку ниже.")
