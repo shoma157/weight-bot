@@ -11457,13 +11457,15 @@ def cmd_water(message):
 
 @bot.message_handler(commands=['backup'])
 def cmd_backup(message):
-    """Ручной запрос бэкапа — только для владельца."""
+    """Ручной запрос бэкапа — шлёт файл БД тому, кто написал команду."""
     cid = message.chat.id
-    allowed = BACKUP_CHAT_ID or ADMIN_UID
-    if allowed and cid != allowed:
-        return
     bot.send_message(cid, "🗄 Создаю резервную копию...")
+    # Временно шлём тому кто запросил
+    global BACKUP_CHAT_ID
+    old = BACKUP_CHAT_ID
+    BACKUP_CHAT_ID = cid
     send_db_backup()
+    BACKUP_CHAT_ID = old
 
 @bot.message_handler(content_types=['document'])
 def handle_document(message):
