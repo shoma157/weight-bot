@@ -344,6 +344,9 @@ KCAL_PER_100G = {
     "хачапури по-аджарски": 298, "лаваш с сыром": 265,
     "греча с курицей": 130, "рис с овощами": 110, "паста болоньезе": 145,
     "паста карбонара": 182, "паста с морепродуктами": 157,
+    "паста сливочная с курицей": 149, "паста с томатным соусом": 112,
+    "равиоли с творогом": 143, "равиоли с мясом": 180,
+    "запечённая паста": 168, "пастичио": 168,
     # ── Детское питание и диетические ──
     "рисовая каша на воде": 78, "гречневая каша на воде": 90,
     "овсяная каша на воде": 88, "манная каша на молоке": 98,
@@ -2220,13 +2223,6 @@ def log_supplement(uid, supplement):
         conn.execute("INSERT INTO supplements (user_id, supplement, taken_date) VALUES (?,?,?)", (uid, supplement, today))
         conn.commit()
 
-def get_supplements_today(uid):
-    today = now_samara().strftime("%Y-%m-%d")
-    with sqlite3.connect(DB_PATH) as conn:
-        conn.execute("CREATE TABLE IF NOT EXISTS supplements (id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER, supplement TEXT, taken_date TEXT)")
-        rows = conn.execute("SELECT supplement FROM supplements WHERE user_id=? AND taken_date=?", (uid, today)).fetchall()
-    return [r[0] for r in rows]
-
 def get_supplements_streak(uid, supplement):
     with sqlite3.connect(DB_PATH) as conn:
         conn.execute("CREATE TABLE IF NOT EXISTS supplements (id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER, supplement TEXT, taken_date TEXT)")
@@ -2243,30 +2239,6 @@ def get_supplements_streak(uid, supplement):
         else:
             break
     return streak
-
-def build_supplements_menu():
-    kb = types.ReplyKeyboardMarkup(resize_keyboard=True, row_width=2)
-    for s in SUPPLEMENTS_LIST:
-        kb.add(types.KeyboardButton(s))
-    kb.add(types.KeyboardButton("📊 Статистика добавок"))
-    kb.add(types.KeyboardButton("🔙 Назад"))
-    return kb
-
-# ─────────────────────────────────────────
-#  ТРЕКЕР НАСТРОЕНИЯ
-# ─────────────────────────────────────────
-
-MOOD_EMOJIS = {1: "😞", 2: "😕", 3: "😐", 4: "🙂", 5: "😄"}
-STRESS_EMOJIS = {1: "🧘", 2: "😌", 3: "😐", 4: "😤", 5: "🤯"}
-
-def log_mood(uid, mood, stress, energy, note=""):
-    today = now_samara().strftime("%Y-%m-%d")
-    with sqlite3.connect(DB_PATH) as conn:
-        conn.execute("CREATE TABLE IF NOT EXISTS mood_log (id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER, mood INTEGER, stress INTEGER, energy INTEGER, note TEXT, date TEXT)")
-        conn.execute("DELETE FROM mood_log WHERE user_id=? AND date=?", (uid, today))
-        conn.execute("INSERT INTO mood_log (user_id,mood,stress,energy,note,date) VALUES (?,?,?,?,?,?)",
-                     (uid, mood, stress, energy, note, today))
-        conn.commit()
 
 def get_mood_today(uid):
     today = now_samara().strftime("%Y-%m-%d")
@@ -2479,21 +2451,6 @@ WEEKLY_SHOPPING_BASE = {
     "🫙 Прочее": ["оливковое масло", "соевый соус", "специи (куркума, паприка, орегано)"],
 }
 
-def build_shopping_list(uid):
-    """Генерирует список покупок на неделю"""
-    lines = ["🛒 *Список покупок на неделю:*\n"]
-    for category, items in WEEKLY_SHOPPING_BASE.items():
-        lines.append(f"*{category}*")
-        for item in items:
-            lines.append(f"  ☐ {item}")
-        lines.append("")
-    lines.append("💡 _Список основан на стандартном недельном рационе. Скорректируй под себя._")
-    return "\n".join(lines)
-
-# ─────────────────────────────────────────
-#  ТРЕКЕР СНА
-# ─────────────────────────────────────────
-
 def log_sleep_simple(uid, hours, quality):
     today = now_samara().strftime("%Y-%m-%d")
     with sqlite3.connect(DB_PATH) as conn:
@@ -2528,7 +2485,7 @@ def sleep_advice(hours, quality):
 
 def build_weight_ascii_chart(uid, days=30):
     """Строит ASCII-график веса за N дней"""
-    wd = get_weights(uid, limit=20)
+    wd = get_weights_last_n_days(uid, 20)
     if len(wd) < 2:
         return None
     weights = [w for w, _ in reversed(wd)]
@@ -2651,7 +2608,9 @@ def save_meal_template(uid, name, items):
     """items = список (продукт, граммы)"""
     import json
     with sqlite3.connect(DB_PATH) as conn:
-        conn.execute("CREATE TABLE IF NOT EXISTS meal_templates (id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER, name TEXT, items TEXT, created TEXT)")
+        conn.execute("CREATE TABLE IF NOT EXISTS meal_templates (user_id INTEGER, name TEXT, items TEXT, created TEXT)")
+        try: conn.execute("ALTER TABLE meal_templates ADD COLUMN id INTEGER")
+        except Exception: pass
         conn.execute("INSERT INTO meal_templates (user_id, name, items, created) VALUES (?,?,?,?)",
                      (uid, name, json.dumps(items, ensure_ascii=False), now_samara().strftime("%Y-%m-%d")))
         conn.commit()
@@ -2659,12 +2618,14 @@ def save_meal_template(uid, name, items):
 def get_meal_templates(uid):
     import json
     with sqlite3.connect(DB_PATH) as conn:
-        conn.execute("CREATE TABLE IF NOT EXISTS meal_templates (id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER, name TEXT, items TEXT, created TEXT)")
-        rows = conn.execute("SELECT id, name, items FROM meal_templates WHERE user_id=? ORDER BY id DESC", (uid,)).fetchall()
+        conn.execute('''CREATE TABLE IF NOT EXISTS meal_templates (
+        user_id INTEGER, name TEXT, items_json TEXT,
+        PRIMARY KEY (user_id, name))''')
+        rows = conn.execute("SELECT rowid, name, items_json FROM meal_templates WHERE user_id=? ORDER BY rowid DESC", (uid,)).fetchall()
     result = []
     for tid, name, items_json in rows:
         try:
-            items = json.loads(items_json)
+            items = json.loads(items_json) if items_json else []
         except Exception:
             items = []
         total_kcal = sum(round(KCAL_PER_100G.get(p, 0) * g / 100) for p, g in items)
@@ -2866,54 +2827,6 @@ def build_correlations_report(uid):
         return "🔬 *Корреляции*\n\nНедостаточно данных (нужно ≥5 дней записей сна, настроения и веса).\nПродолжай вести дневник!"
     return "\n".join(lines)
 
-def build_weekly_report(uid):
-    conn = sqlite3.connect("weight_tracker.db")
-    today = now_samara().date()
-    week_ago = today - timedelta(days=7)
-    w_str = week_ago.strftime("%Y-%m-%d")
-    # Вес
-    weights = conn.execute(
-        "SELECT weight_value FROM weights WHERE user_id=? AND date>=? ORDER BY id ASC",
-        (uid, w_str)).fetchall()
-    # Шаги
-    steps = conn.execute(
-        "SELECT step_count FROM steps WHERE user_id=? AND date>=?",
-        (uid, w_str)).fetchall()
-    # Вода
-    water = conn.execute(
-        "SELECT glasses FROM water WHERE user_id=? AND date>=?",
-        (uid, w_str)).fetchall()
-    # Сон
-    sleep = conn.execute(
-        "SELECT duration_hours FROM sleep WHERE user_id=? AND date>=?",
-        (uid, w_str)).fetchall()
-    conn.close()
-    lines = [f"📊 *Недельный отчёт* ({week_ago.strftime('%d.%m')} – {today.strftime('%d.%m')})\n"]
-    if weights:
-        w_start = weights[0][0]; w_end = weights[-1][0]
-        diff = round(w_end - w_start, 2)
-        arrow = "📉" if diff < 0 else "📈" if diff > 0 else "➡️"
-        lines.append(f"⚖️ Вес: {w_start} → {w_end} кг {arrow} ({'+' if diff>0 else ''}{diff} кг)")
-    if steps:
-        avg_steps = round(sum(s[0] for s in steps) / len(steps))
-        lines.append(f"👟 Шаги: в среднем *{avg_steps:,}*/день ({len(steps)} дней)".replace(",", " "))
-    if water:
-        avg_water = round(sum(w[0] for w in water) / len(water), 1)
-        lines.append(f"💧 Вода: в среднем *{avg_water}* стак./день")
-    if sleep:
-        avg_sleep = round(sum(s[0] for s in sleep) / len(sleep), 1)
-        emoji = "✅" if avg_sleep >= 7 else "⚠️"
-        lines.append(f"😴 Сон: в среднем *{avg_sleep}ч* {emoji}")
-    if len(lines) == 1:
-        return "📊 *Недельный отчёт*\n\nНедостаточно данных за последние 7 дней."
-    lines.append(f"\n💪 Продолжай в том же духе!")
-    return "\n".join(lines)
-
-# ══════════════════════════════════════════════════════
-#  ТРЕКЕР ПРИЁМА ПИЩИ (детальный)
-# ══════════════════════════════════════════════════════
-MEAL_SLOTS = ["🌅 Завтрак", "🥗 Обед", "🌆 Ужин", "🍎 Перекус"]
-
 def log_meal_entry(uid, meal_slot, product, grams, kcal):
     conn = sqlite3.connect("weight_tracker.db")
     conn.execute(
@@ -2928,6 +2841,8 @@ def get_meals_today(uid):
         (uid, now_samara().strftime("%Y-%m-%d"))).fetchall()
     conn.close()
     return rows
+
+MEAL_SLOTS = ["Завтрак", "Перекус", "Обед", "Полдник", "Ужин", "Поздний ужин"]
 
 def build_food_diary_today(uid):
     rows = get_meals_today(uid)
@@ -3456,37 +3371,6 @@ def build_pressure_history_text(uid):
 # ══════════════════════════════════════════════════════
 #  ТРЕКЕР ЛЕКАРСТВ
 # ══════════════════════════════════════════════════════
-def add_medication(uid, name, dose, times_per_day):
-    conn = sqlite3.connect("weight_tracker.db")
-    conn.execute(
-        "INSERT INTO medications (user_id, name, dose, times_per_day, active) VALUES (?,?,?,?,1)",
-        (uid, name.strip(), dose.strip(), times_per_day))
-    conn.commit(); conn.close()
-
-def get_medications(uid):
-    conn = sqlite3.connect("weight_tracker.db")
-    rows = conn.execute(
-        "SELECT id, name, dose, times_per_day FROM medications WHERE user_id=? AND active=1",
-        (uid,)).fetchall()
-    conn.close()
-    return rows
-
-def log_medication_taken(uid, med_id):
-    conn = sqlite3.connect("weight_tracker.db")
-    conn.execute(
-        "INSERT INTO medication_log (user_id, med_id, date) VALUES (?,?,?)",
-        (uid, med_id, now_samara().strftime("%Y-%m-%d %H:%M")))
-    conn.commit(); conn.close()
-
-def get_medications_taken_today(uid):
-    conn = sqlite3.connect("weight_tracker.db")
-    today = now_samara().strftime("%Y-%m-%d")
-    rows = conn.execute(
-        "SELECT med_id, COUNT(*) FROM medication_log WHERE user_id=? AND date LIKE ? GROUP BY med_id",
-        (uid, f"{today}%")).fetchall()
-    conn.close()
-    return {r[0]: r[1] for r in rows}
-
 def build_medications_today(uid):
     meds = get_medications(uid)
     if not meds:
@@ -4294,9 +4178,9 @@ def build_daily_goals_pct(uid):
         steps_r = conn.execute(
             "SELECT step_count FROM steps WHERE user_id=? AND date=?", (uid, d)).fetchone()
         kcal_r = conn.execute(
-            "SELECT SUM(calories) FROM food_diary WHERE user_id=? AND date=?", (uid, d)).fetchone()
+            "SELECT SUM(kcal) FROM food_diary WHERE user_id=? AND date=?", (uid, d)).fetchone()
         water_r = conn.execute(
-            "SELECT SUM(cups) FROM water_log WHERE user_id=? AND date=?", (uid, d)).fetchone()
+            "SELECT ml FROM water_ml_log WHERE user_id=? AND date=?", (uid, d)).fetchone()
 
         steps = steps_r[0] if steps_r else 0
         kcal  = kcal_r[0]  if kcal_r and kcal_r[0] else 0
@@ -4406,23 +4290,6 @@ CAFFEINE_DB = {
     "предтреник": 150, "матча": 35,
 }
 
-def log_caffeine(uid, source, mg):
-    conn = sqlite3.connect("weight_tracker.db")
-    today = now_samara().date().strftime("%Y-%m-%d")
-    conn.execute(
-        "INSERT INTO caffeine_log (user_id, date, source, mg) VALUES (?,?,?,?)",
-        (uid, today, source, mg))
-    conn.commit(); conn.close()
-
-def get_caffeine_today(uid):
-    conn = sqlite3.connect("weight_tracker.db")
-    today = now_samara().date().strftime("%Y-%m-%d")
-    r = conn.execute(
-        "SELECT SUM(mg), GROUP_CONCAT(source, ', ') FROM caffeine_log WHERE user_id=? AND date=?",
-        (uid, today)).fetchone()
-    conn.close()
-    return (r[0] or 0, r[1] or "")
-
 def build_caffeine_today(uid):
     total, sources = get_caffeine_today(uid)
     limit = 400
@@ -4460,19 +4327,6 @@ LEVELS = [
     (2500, "💎 Легенда"),
     (5000, "🌟 Мастер"),
 ]
-
-def add_xp(uid, reason, amount=None):
-    pts = amount if amount is not None else XP_REWARDS.get(reason, 5)
-    conn = sqlite3.connect("weight_tracker.db")
-    conn.execute(
-        "INSERT OR IGNORE INTO user_xp (user_id, total_xp) VALUES (?,0)", (uid,))
-    conn.execute(
-        "UPDATE user_xp SET total_xp = total_xp + ? WHERE user_id=?", (pts, uid))
-    conn.commit()
-    total = conn.execute(
-        "SELECT total_xp FROM user_xp WHERE user_id=?", (uid,)).fetchone()[0]
-    conn.close()
-    return total
 
 def get_xp(uid):
     conn = sqlite3.connect("weight_tracker.db")
@@ -4545,29 +4399,6 @@ def get_current_challenge(uid):
     conn.close()
     return r
 
-def start_challenge(uid, challenge_id):
-    today = now_samara().date().strftime("%Y-%m-%d")
-    conn = sqlite3.connect("weight_tracker.db")
-    conn.execute(
-        "INSERT INTO weekly_challenge (user_id, challenge_id, start_date, completed) VALUES (?,?,?,0)",
-        (uid, challenge_id, today))
-    conn.commit(); conn.close()
-
-def build_challenges_menu(uid):
-    current = get_current_challenge(uid)
-    lines = ["🏆 *ЕЖЕНЕДЕЛЬНЫЕ ЧЕЛЛЕНДЖИ*\n"]
-    if current and not current[2]:
-        ch_id = current[0]
-        ch = next((c for c in WEEKLY_CHALLENGES if c["id"] == ch_id), None)
-        if ch:
-            lines.append(f"🎯 *Текущий челлендж:*\n{ch['name']}\n_{ch['desc']}_\n+{ch['xp']} XP\n")
-    lines.append("*Выбери следующий:*")
-    return "\n".join(lines)
-
-
-# ══════════════════════════════════════════════════════
-#  ДНЕВНИК ТРЕНИРОВОК
-# ══════════════════════════════════════════════════════
 def log_exercise(uid, exercise, weight_kg, sets, reps):
     conn = sqlite3.connect("weight_tracker.db")
     today = now_samara().date().strftime("%Y-%m-%d")
@@ -4576,15 +4407,6 @@ def log_exercise(uid, exercise, weight_kg, sets, reps):
         "VALUES (?,?,?,?,?,?)",
         (uid, today, exercise, weight_kg, sets, reps))
     conn.commit(); conn.close()
-
-def get_exercise_history(uid, exercise, limit=5):
-    conn = sqlite3.connect("weight_tracker.db")
-    rows = conn.execute(
-        "SELECT date, weight_kg, sets, reps FROM exercise_log "
-        "WHERE user_id=? AND exercise=? ORDER BY date DESC LIMIT ?",
-        (uid, exercise, limit)).fetchall()
-    conn.close()
-    return rows
 
 def build_exercise_log_today(uid):
     conn = sqlite3.connect("weight_tracker.db")
@@ -4694,24 +4516,6 @@ def register_referral(new_uid, ref_code):
     except Exception:
         return False
 
-def build_referral_info(uid):
-    code = get_referral_code(uid)
-    count = get_referral_count(uid)
-    bot_name = "your_fitness_bot"  # будет заменён
-    link = f"https://t.me/{bot_name}?start={code}"
-    return (
-        f"👥 *РЕФЕРАЛЬНАЯ ПРОГРАММА*\n\n"
-        f"Приглашай друзей и получай *+100 XP* за каждого!\n\n"
-        f"🔗 Твоя ссылка:\n`{link}`\n\n"
-        f"👤 Приглашено друзей: *{count}*\n"
-        f"⚡ Заработано XP: *{count * 100}*\n\n"
-        f"_Поделись ссылкой — друг получит бота, ты — XP!_"
-    )
-
-
-# ══════════════════════════════════════════════════════
-#  ЭКСПОРТ ДАННЫХ В JSON (бэкап)
-# ══════════════════════════════════════════════════════
 def export_full_json(uid):
     import json as _json
     conn = sqlite3.connect("weight_tracker.db")
@@ -4814,31 +4618,6 @@ def analyze_receipt_photo(image_bytes, mime_type="image/jpeg"):
 # ══════════════════════════════════════════════════════
 #  ШАБЛОНЫ ПРИЁМОВ ПИЩИ
 # ══════════════════════════════════════════════════════
-def save_meal_template(uid, name, items):
-    """items = [(food_name, calories), ...]"""
-    import json as _json
-    conn = sqlite3.connect("weight_tracker.db")
-    conn.execute(
-        "INSERT OR REPLACE INTO meal_templates (user_id, name, items_json) VALUES (?,?,?)",
-        (uid, name, _json.dumps(items, ensure_ascii=False)))
-    conn.commit(); conn.close()
-
-def get_meal_templates(uid):
-    import json as _json
-    conn = sqlite3.connect("weight_tracker.db")
-    rows = conn.execute(
-        "SELECT name, items_json FROM meal_templates WHERE user_id=? ORDER BY name",
-        (uid,)).fetchall()
-    conn.close()
-    result = []
-    for name, items_json in rows:
-        try:
-            items = _json.loads(items_json)
-        except Exception:
-            items = []
-        result.append((name, items))
-    return result
-
 def delete_meal_template(uid, name):
     conn = sqlite3.connect("weight_tracker.db")
     conn.execute("DELETE FROM meal_templates WHERE user_id=? AND name=?", (uid, name))
@@ -5513,13 +5292,19 @@ def log_exercise_set(uid, exercise, weight_kg, reps, sets=1):
               (uid, today, exercise.lower(), weight_kg, reps, sets))
     conn.commit(); conn.close()
 
-def get_exercise_history(uid, exercise, limit=10):
+def get_exercise_history(uid, exercise=None, limit=10):
     conn = sqlite3.connect("weight_tracker.db")
     c = conn.cursor()
     c.execute('''CREATE TABLE IF NOT EXISTS exercise_journal (
         id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER,
         date TEXT, exercise TEXT, weight_kg REAL, reps INTEGER, sets INTEGER)''')
-    c.execute('''SELECT date, weight_kg, reps, sets FROM exercise_journal
+    if exercise is None or isinstance(exercise, int):
+        limit = exercise if isinstance(exercise, int) else limit
+        c.execute('''SELECT date, weight_kg, reps, sets FROM exercise_journal
+                 WHERE user_id=? ORDER BY date DESC, id DESC LIMIT ?''',
+              (uid, limit))
+    else:
+        c.execute('''SELECT date, weight_kg, reps, sets FROM exercise_journal
                  WHERE user_id=? AND exercise=? ORDER BY date DESC, id DESC LIMIT ?''',
               (uid, exercise.lower(), limit))
     rows = c.fetchall(); conn.close()
@@ -6120,49 +5905,6 @@ def build_biorhythms(uid):
 #  TASK #61 — АНАЛИТИКА: ТЕПЛОВАЯ КАРТА, STREAK-ДОСКА, ПРЕДСКАЗАНИЕ ПЛАТО
 # ═══════════════════════════════════════════════════════════
 
-def build_activity_heatmap(uid, weeks=12):
-    """ASCII тепловая карта активности в стиле GitHub"""
-    conn = sqlite3.connect("weight_tracker.db")
-    c = conn.cursor()
-    c.execute("SELECT DISTINCT date FROM workout_log WHERE user_id=? ORDER BY date", (uid,))
-    workout_dates = {r[0] for r in c.fetchall()}
-    c.execute("SELECT date, steps FROM steps_log WHERE user_id=? ORDER BY date", (uid,))
-    steps_rows = {r[0]: r[1] for r in c.fetchall()}
-    conn.close()
-    today = date.today()
-    # Начинаем с воскресенья перед нужным периодом
-    start = today - timedelta(weeks=weeks)
-    lines = ["📊 *Тепловая карта активности*\n"]
-    lines.append("Пн Вт Ср Чт Пт Сб Вс")
-    week_cols = [[] for _ in range(7)]  # пн=0..вс=6
-    cur = start
-    while cur <= today:
-        wd = cur.weekday()  # 0=пн..6=вс
-        d_str = cur.isoformat()
-        if d_str in workout_dates:
-            cell = "🟩"
-        elif steps_rows.get(d_str, 0) >= 8000:
-            cell = "🟦"
-        elif steps_rows.get(d_str, 0) >= 3000:
-            cell = "🟨"
-        elif cur <= today:
-            cell = "⬜"
-        else:
-            cell = "  "
-        week_cols[wd].append(cell)
-        cur += timedelta(days=1)
-    max_len = max(len(col) for col in week_cols)
-    for col in week_cols:
-        while len(col) < max_len:
-            col.append("  ")
-    rows_out = []
-    for row_idx in range(max_len):
-        row_line = " ".join(week_cols[day_idx][row_idx] for day_idx in range(7))
-        rows_out.append(row_line)
-    lines.extend(rows_out[-8:])  # последние 8 недель
-    lines.append("\n🟩 тренировка  🟦 8k+ шагов  🟨 3k+ шагов  ⬜ отдых")
-    return "\n".join(lines)
-
 def build_streak_board(uid):
     """Топ серий по всем метрикам"""
     conn = sqlite3.connect("weight_tracker.db")
@@ -6271,7 +6013,10 @@ def add_medication(uid, name, dose, schedule_time):
     c = conn.cursor()
     c.execute('''CREATE TABLE IF NOT EXISTS medications (
         id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER,
-        name TEXT, dose TEXT, schedule_time TEXT, active INTEGER DEFAULT 1)''')
+        name TEXT, dose TEXT, active INTEGER DEFAULT 1)''')
+    try: c.execute("ALTER TABLE medications ADD COLUMN schedule_time TEXT")
+    except Exception: pass
+    conn.commit()
     c.execute("INSERT INTO medications (user_id, name, dose, schedule_time) VALUES (?,?,?,?)",
               (uid, name, dose, schedule_time))
     conn.commit(); conn.close()
@@ -6281,7 +6026,10 @@ def log_medication_taken(uid, med_id):
     c = conn.cursor()
     c.execute('''CREATE TABLE IF NOT EXISTS medication_log (
         id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER,
-        med_id INTEGER, taken_at TEXT)''')
+        med_id INTEGER)''')
+    try: c.execute("ALTER TABLE medication_log ADD COLUMN taken_at TEXT")
+    except Exception: pass
+    conn.commit()
     c.execute("INSERT INTO medication_log (user_id, med_id, taken_at) VALUES (?,?,?)",
               (uid, med_id, datetime.now().strftime("%Y-%m-%d %H:%M:%S")))
     conn.commit(); conn.close()
@@ -6344,11 +6092,19 @@ def log_caffeine(uid, item_key, qty=1):
     c = conn.cursor()
     c.execute('''CREATE TABLE IF NOT EXISTS caffeine_log (
         id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER,
-        date TEXT, time TEXT, item TEXT, mg INTEGER)''')
+        date TEXT, source TEXT, mg INTEGER)''')
+    try: c.execute("ALTER TABLE caffeine_log ADD COLUMN time TEXT")
+    except Exception: pass
+    try: c.execute("ALTER TABLE caffeine_log ADD COLUMN source TEXT")
+    except Exception: pass
+    conn.commit()
     now = datetime.now()
-    mg = CAFFEINE_ITEMS.get(item_key, {}).get("mg", 50) * qty
-    c.execute("INSERT INTO caffeine_log (user_id, date, time, item, mg) VALUES (?,?,?,?,?)",
-              (uid, now.strftime("%Y-%m-%d"), now.strftime("%H:%M"), item_key, mg))
+    if isinstance(item_key, str):
+        mg = CAFFEINE_ITEMS.get(item_key, {}).get("mg", 50) * qty
+    else:
+        mg = int(item_key)
+    c.execute("INSERT INTO caffeine_log (user_id, date, source, mg) VALUES (?,?,?,?)",
+              (uid, now.strftime("%Y-%m-%d"), str(item_key), mg))
     conn.commit(); conn.close()
     return mg
 
@@ -6357,9 +6113,10 @@ def get_caffeine_today(uid):
     c = conn.cursor()
     c.execute('''CREATE TABLE IF NOT EXISTS caffeine_log (
         id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER,
-        date TEXT, time TEXT, item TEXT, mg INTEGER)''')
+        date TEXT, source TEXT, mg INTEGER)''')
+    conn.commit()
     today = date.today().isoformat()
-    c.execute("SELECT SUM(mg), MAX(time) FROM caffeine_log WHERE user_id=? AND date=?", (uid, today))
+    c.execute("SELECT SUM(mg), MAX(date) FROM caffeine_log WHERE user_id=? AND date=?", (uid, today))
     row = c.fetchone(); conn.close()
     return (row[0] or 0, row[1] or "—")
 
@@ -6633,6 +6390,19 @@ def build_competition_status(uid):
         lines.append("🤝 Ничья! Кто добавит XP первым?")
     lines.append("\n💡 Зарабатывай XP за тренировки, питание, замеры веса и шаги.")
     return "\n".join(lines)
+
+# ── Базовая функция add_xp ──
+def add_xp(uid, amount, reason=""):
+    """Начисляет XP пользователю"""
+    if isinstance(amount, str):
+        amount = XP_REWARDS.get(amount, 5)
+    try:
+        conn = sqlite3.connect("weight_tracker.db")
+        conn.execute("INSERT OR IGNORE INTO user_xp (user_id, total_xp) VALUES (?,0)", (uid,))
+        conn.execute("UPDATE user_xp SET total_xp = total_xp + ? WHERE user_id=?", (amount, uid))
+        conn.commit(); conn.close()
+    except Exception:
+        pass
 
 # Патч add_xp — логируем в xp_log для соревнования
 _orig_add_xp = add_xp
@@ -7071,21 +6841,6 @@ def get_favorite_foods(uid, limit=10):
     rows = c.fetchall(); conn.close()
     return rows  # (name, kcal, protein, fat, carbs, cnt)
 
-def build_favorites_menu(uid):
-    rows = get_favorite_foods(uid)
-    if not rows:
-        return "Избранные блюда появятся после нескольких записей в дневник питания.", None
-    lines = ["⭐ *Избранные блюда*\n", "Нажми чтобы быстро добавить:\n"]
-    kb = types.InlineKeyboardMarkup(row_width=1)
-    for name, kcal, protein, fat, carbs, cnt in rows:
-        short = name[:20] + "…" if len(name) > 20 else name
-        lines.append(f"• {short} — {kcal:.0f} ккал (×{cnt})")
-        kb.add(types.InlineKeyboardButton(
-            f"➕ {short} ({kcal:.0f} ккал)",
-            callback_data=f"fav_add:{name[:40]}:{kcal:.0f}:{protein:.0f}:{fat:.0f}:{carbs:.0f}"))
-    return "\n".join(lines), kb
-
-# ── Алкоголь-трекер ────────────────────────────────────────
 ALCOHOL_UNITS = {
     "пиво 0.5":     {"units": 2.3, "kcal": 215, "label": "🍺 Пиво 0.5л"},
     "вино 150мл":   {"units": 2.0, "kcal": 120, "label": "🍷 Вино 150мл"},
@@ -7094,6 +6849,52 @@ ALCOHOL_UNITS = {
     "коктейль":     {"units": 1.5, "kcal": 180, "label": "🍹 Коктейль"},
     "шампанское":   {"units": 1.5, "kcal": 105, "label": "🍾 Шампанское 150мл"},
 }
+
+# ── Алиасы для food_diary ──
+def add_food_diary(uid, product, grams, kcal, meal="Обед"):
+    """Алиас log_meal_entry для совместимости"""
+    conn = sqlite3.connect("weight_tracker.db")
+    conn.execute(
+        "INSERT INTO food_diary (user_id,meal,product,grams,kcal,date) VALUES (?,?,?,?,?,?)",
+        (uid, meal, product, grams, kcal, now_samara().strftime("%Y-%m-%d")))
+    conn.commit(); conn.close()
+
+def get_food_diary_today(uid):
+    """Алиас get_meals_today для совместимости"""
+    return get_meals_today(uid)
+
+def build_food_diary_text(uid):
+    """Алиас build_food_diary_today для совместимости"""
+    return build_food_diary_today(uid)
+
+# ── Обхваты — save/report алиасы ──
+def save_measurements(uid, **kw):
+    """Сохраняет обхваты тела"""
+    conn = sqlite3.connect("weight_tracker.db")
+    conn.execute('''CREATE TABLE IF NOT EXISTS measurements (
+        id INTEGER PRIMARY KEY AUTOINCREMENT, uid INTEGER, user_id INTEGER,
+        chest REAL, waist REAL, hips REAL, arm REAL, thigh REAL,
+        neck REAL DEFAULT 0, abdomen REAL DEFAULT 0, date TEXT)''')
+    try: conn.execute("ALTER TABLE measurements ADD COLUMN arm REAL")
+    except Exception: pass
+    today = now_samara().strftime("%Y-%m-%d")
+    ex = conn.execute("SELECT id FROM measurements WHERE user_id=? AND date=?", (uid, today)).fetchone()
+    allowed = ["chest","waist","hips","arm","thigh","neck","abdomen"]
+    cols = {k: v for k, v in kw.items() if k in allowed}
+    if not cols:
+        conn.close(); return
+    if ex:
+        sets = ", ".join(f"{k}=?" for k in cols)
+        conn.execute(f"UPDATE measurements SET {sets} WHERE id=?", (*cols.values(), ex[0]))
+    else:
+        cols["user_id"] = uid; cols["uid"] = uid; cols["date"] = today
+        c = ", ".join(cols.keys()); v = ", ".join("?"*len(cols))
+        conn.execute(f"INSERT INTO measurements ({c}) VALUES ({v})", list(cols.values()))
+    conn.commit(); conn.close()
+
+def build_measurements_report(uid):
+    """Краткий отчёт по обхватам"""
+    return build_measurements_summary(uid)
 
 def log_alcohol(uid, drink_key, qty=1):
     conn = sqlite3.connect("weight_tracker.db")
@@ -8647,9 +8448,6 @@ def build_antistress_protocol(uid):
 #  TASK #75 — СИСТЕМА: РЕФЕРАЛ, ЧЕЛЛЕНДЖИ, БРИФИНГ
 # ═══════════════════════════════════════════════════════════
 
-def get_referral_code(uid):
-    return f"FIT{uid}"
-
 def process_referral(uid, code):
     """Обрабатывает реферальный код."""
     try:
@@ -8934,13 +8732,6 @@ def log_exercise_weight(uid, exercise, weight_kg, reps, sets):
                  (uid, exercise, weight_kg, reps, sets, now_samara().strftime("%Y-%m-%d")))
     conn.commit(); conn.close()
 
-def get_exercise_history(uid, exercise, limit=5):
-    conn = sqlite3.connect("weight_tracker.db")
-    rows = conn.execute("SELECT weight_kg,reps,sets,date FROM workout_weights WHERE user_id=? AND exercise=? ORDER BY id DESC LIMIT ?",
-                        (uid, exercise, limit)).fetchall()
-    conn.close()
-    return list(reversed(rows))
-
 def get_all_exercises(uid):
     conn = sqlite3.connect("weight_tracker.db")
     rows = conn.execute("SELECT DISTINCT exercise FROM workout_weights WHERE user_id=? ORDER BY exercise",
@@ -8973,46 +8764,6 @@ def get_wellbeing_history(uid, limit=7):
 
 # ─────────────────────────────────────────
 #  STREAK — СЕРИЯ ДНЕЙ
-# ─────────────────────────────────────────
-
-def update_streak(uid):
-    today = now_samara().strftime("%Y-%m-%d")
-    conn  = sqlite3.connect("weight_tracker.db")
-    row   = conn.execute("SELECT last_entry_date,current_streak,best_streak FROM streak WHERE user_id=?",
-                         (uid,)).fetchone()
-    if not row:
-        conn.execute("INSERT INTO streak (user_id,last_entry_date,current_streak,best_streak) VALUES (?,?,1,1)",
-                     (uid, today))
-        conn.commit(); conn.close()
-        return 1, 1
-    last_date, current, best = row
-    try:
-        last_dt = datetime.strptime(last_date, "%Y-%m-%d")
-        today_dt = datetime.strptime(today, "%Y-%m-%d")
-        delta = (today_dt - last_dt).days
-    except Exception:
-        delta = 999
-    if delta == 0:
-        conn.close()
-        return current, best
-    elif delta == 1:
-        current += 1
-    else:
-        current = 1
-    best = max(best, current)
-    conn.execute("UPDATE streak SET last_entry_date=?,current_streak=?,best_streak=? WHERE user_id=?",
-                 (today, current, best, uid))
-    conn.commit(); conn.close()
-    return current, best
-
-def get_streak(uid):
-    conn = sqlite3.connect("weight_tracker.db")
-    row  = conn.execute("SELECT current_streak,best_streak FROM streak WHERE user_id=?", (uid,)).fetchone()
-    conn.close()
-    return (row[0], row[1]) if row else (0, 0)
-
-# ─────────────────────────────────────────
-#  ПРОГНОЗ ДАТЫ ЦЕЛИ
 # ─────────────────────────────────────────
 
 def calc_goal_date(uid):
@@ -10198,6 +9949,35 @@ RECIPES = {
         "ingredients": "• 6 листов лазаньи\n• 300г куриный фарш\n• 300г томатный соус\n• 200г творог 0% (вместо бешамель)\n• 50г моцарелла\n• Лук, чеснок, специи",
         "steps": "1. Фарш обжарить с луком и чесноком.\n2. Смешать с томатным соусом.\n3. Слоями: соус — листы — творог — снова соус.\n4. Сверху моцарелла.\n5. Запекать при 180°C 35–40 мин.",
         "tip": "💡 Творог вместо бешамеля экономит ~200 ккал и добавляет 20г белка на порцию.",
+    },
+
+    "паста сливочная с курицей": {
+        "emoji": "🍝", "time": "25 мин",
+        "kcal_portion": "~520 ккал (350г)",
+        "ingredients": "• 90г пасты (пенне или фарфалле)\n• 150г куриная грудка\n• 100мл сливки 10%\n• 1 зубчик чеснока\n• 30г пармезан тёртый\n• 0.5 ч.л. оливкового масла\n• Соль, чёрный перец, мускатный орех\n• Зелень петрушки",
+        "steps": "1. Отвари пасту аль денте, сохрани 50мл воды от варки.\n2. Курицу нарежь кубиками, обжарь с чесноком на масле 5–7 мин.\n3. Влей сливки, доведи до лёгкого кипения.\n4. Добавь мускатный орех, соль, перец.\n5. Всыпь пасту, перемешай — если густо, добавь воду от варки.\n6. Посыпь пармезаном и петрушкой.",
+        "tip": "💡 Сливки 10% вместо 33% экономят ~100 ккал. Вода от пасты содержит крахмал и помогает соусу держаться.",
+    },
+    "паста с томатным соусом и базиликом": {
+        "emoji": "🍝", "time": "20 мин",
+        "kcal_portion": "~390 ккал (350г)",
+        "ingredients": "• 90г спагетти или лингвини\n• 400г томаты в собственном соку\n• 3 зубчика чеснока\n• 1 ст.л. оливкового масла\n• Свежий или сушёный базилик\n• Щепотка сахара\n• Соль, перец\n• 20г пармезан (по желанию)",
+        "steps": "1. Чеснок обжарить на масле 1–2 мин (не до золотистого).\n2. Добавить томаты, раздавить ложкой. Щепотка сахара нейтрализует кислоту.\n3. Тушить соус 10–12 мин на среднем огне до загустения.\n4. Отварить пасту аль денте.\n5. Соединить пасту с соусом, добавить базилик.\n6. Подавать с пармезаном.",
+        "tip": "💡 Классическая маринара — самая лёгкая паста. Томаты в соку лучше свежих — насыщеннее вкус.",
+    },
+    "равиоли с творогом и шпинатом": {
+        "emoji": "🫕", "time": "40 мин",
+        "kcal_portion": "~430 ккал (300г, 10–12 шт)",
+        "ingredients": "• *Тесто:* 150г муки цельнозерновой, 1 яйцо, 1 желток, щепотка соли, 1 ст.л. воды\n• *Начинка:* 150г творог 0–5%, 100г шпинат (свежий или замороженный), 30г пармезан, мускатный орех, соль, перец\n• *Соус:* 1 ч.л. сливочного масла, шалфей или базилик",
+        "steps": "1. Муку смешать с яйцом, желтком, водой, солью — замесить тугое тесто. Завернуть в плёнку, отдохнуть 20 мин.\n2. Шпинат бланшировать 2 мин, отжать, мелко нарубить. Смешать с творогом, пармезаном, специями.\n3. Раскатать тесто тонко (1–2мм). Выложить начинку ч/з 4см, накрыть вторым пластом, вырезать равиоли.\n4. Варить в кипящей солёной воде 3–4 мин.\n5. Полить растопленным маслом с шалфеем.",
+        "tip": "💡 Творог вместо рикотты — дешевле и больше белка. Лепи сразу двойную порцию и заморозь — удобный быстрый обед.",
+    },
+    "запечённая паста (пастичио)": {
+        "emoji": "🫕", "time": "55 мин",
+        "kcal_portion": "~470 ккал (280г)",
+        "ingredients": "• 150г пасты (пенне или ригатони)\n• 200г куриного или говяжьего фарша\n• 300г томатного соуса\n• *Соус-заливка:* 2 яйца, 150мл молока 1.5%, 50г творог 0%, 30г сыр тёртый\n• Лук, чеснок, орегано, соль, перец",
+        "steps": "1. Отвари пасту до полуготовности (на 2 мин меньше времени).\n2. Фарш обжарь с луком и чесноком, добавь томатный соус, туши 10 мин.\n3. Взбей яйца с молоком и творогом — это заливка.\n4. Форму для запекания смажь. Слоями: паста — мясной соус — паста.\n5. Залей яично-молочной смесью, посыпь сыром.\n6. Запекай при 180°C 30–35 мин до золотистой корочки.",
+        "tip": "💡 Греческий аналог лазаньи. Готовь на 2 дня — разогревается отлично. Творог в заливке даёт нежность и добавляет белок.",
     },
 
     # ══════════════════════════════════════════
@@ -11481,32 +11261,6 @@ def cmd_backup(message):
         bot.send_message(cid, f"❌ Ошибка бэкапа: {e}")
 
 @bot.message_handler(content_types=['document'])
-def handle_document(message):
-    """Восстановление БД из файла бэкапа."""
-    cid = message.chat.id
-    allowed = BACKUP_CHAT_ID or ADMIN_UID
-    # Только владелец может восстанавливать
-    if allowed and cid != allowed:
-        return
-    doc = message.document
-    if not doc.file_name.endswith(".db"):
-        return
-    try:
-        import tempfile
-        file_info = bot.get_file(doc.file_id)
-        downloaded = bot.download_file(file_info.file_path)
-        with tempfile.NamedTemporaryFile(suffix=".db", delete=False) as tmp:
-            tmp.write(downloaded)
-            tmp_path = tmp.name
-        if restore_db_from_file(tmp_path):
-            os.unlink(tmp_path)
-            bot.send_message(cid, "✅ *База данных восстановлена!*\n\nВсе данные пользователей на месте.",
-                             parse_mode="Markdown")
-        else:
-            bot.send_message(cid, "❌ Не удалось восстановить БД. Файл повреждён или не является базой данных.")
-    except Exception as e:
-        bot.send_message(cid, f"❌ Ошибка восстановления: {e}")
-
 @bot.message_handler(commands=['start','help'])
 def send_welcome(message):
     cid = message.chat.id
@@ -11545,6 +11299,27 @@ def send_welcome(message):
 def handle_document(message):
     cid = message.chat.id
     state, extra = get_state(cid)
+
+    # ── Восстановление БД из бэкапа (.db файл) ──
+    doc_check = message.document
+    if doc_check and doc_check.file_name and doc_check.file_name.endswith(".db"):
+        try:
+            import tempfile
+            file_info = bot.get_file(doc_check.file_id)
+            downloaded = bot.download_file(file_info.file_path)
+            with tempfile.NamedTemporaryFile(suffix=".db", delete=False) as tmp:
+                tmp.write(downloaded)
+                tmp_path = tmp.name
+            if restore_db_from_file(tmp_path):
+                try: os.unlink(tmp_path)
+                except: pass
+                bot.send_message(cid, "✅ *База данных восстановлена!*\n\nВсе данные на месте.",
+                                 parse_mode="Markdown", reply_markup=main_menu(cid))
+            else:
+                bot.send_message(cid, "❌ Не удалось восстановить БД. Файл повреждён или не является базой данных.")
+        except Exception as e:
+            bot.send_message(cid, f"❌ Ошибка восстановления: {e}")
+        return
 
     # ── Импорт Apple Health / Google Fit CSV ──
     if state == "waiting_health_import":
