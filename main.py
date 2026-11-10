@@ -2485,7 +2485,7 @@ def sleep_advice(hours, quality):
 
 def build_weight_ascii_chart(uid, days=30):
     """Строит ASCII-график веса за N дней"""
-    wd = get_weights(uid, limit=20)
+    wd = get_weights_last_n_days(uid, 20)
     if len(wd) < 2:
         return None
     weights = [w for w, _ in reversed(wd)]
@@ -2608,7 +2608,9 @@ def save_meal_template(uid, name, items):
     """items = список (продукт, граммы)"""
     import json
     with sqlite3.connect(DB_PATH) as conn:
-        conn.execute("CREATE TABLE IF NOT EXISTS meal_templates (id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER, name TEXT, items TEXT, created TEXT)")
+        conn.execute("CREATE TABLE IF NOT EXISTS meal_templates (user_id INTEGER, name TEXT, items TEXT, created TEXT)")
+        try: conn.execute("ALTER TABLE meal_templates ADD COLUMN id INTEGER")
+        except Exception: pass
         conn.execute("INSERT INTO meal_templates (user_id, name, items, created) VALUES (?,?,?,?)",
                      (uid, name, json.dumps(items, ensure_ascii=False), now_samara().strftime("%Y-%m-%d")))
         conn.commit()
@@ -2616,12 +2618,14 @@ def save_meal_template(uid, name, items):
 def get_meal_templates(uid):
     import json
     with sqlite3.connect(DB_PATH) as conn:
-        conn.execute("CREATE TABLE IF NOT EXISTS meal_templates (id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER, name TEXT, items TEXT, created TEXT)")
-        rows = conn.execute("SELECT id, name, items FROM meal_templates WHERE user_id=? ORDER BY id DESC", (uid,)).fetchall()
+        conn.execute('''CREATE TABLE IF NOT EXISTS meal_templates (
+        user_id INTEGER, name TEXT, items_json TEXT,
+        PRIMARY KEY (user_id, name))''')
+        rows = conn.execute("SELECT rowid, name, items_json FROM meal_templates WHERE user_id=? ORDER BY rowid DESC", (uid,)).fetchall()
     result = []
     for tid, name, items_json in rows:
         try:
-            items = json.loads(items_json)
+            items = json.loads(items_json) if items_json else []
         except Exception:
             items = []
         total_kcal = sum(round(KCAL_PER_100G.get(p, 0) * g / 100) for p, g in items)
@@ -2837,6 +2841,8 @@ def get_meals_today(uid):
         (uid, now_samara().strftime("%Y-%m-%d"))).fetchall()
     conn.close()
     return rows
+
+MEAL_SLOTS = ["Завтрак", "Перекус", "Обед", "Полдник", "Ужин", "Поздний ужин"]
 
 def build_food_diary_today(uid):
     rows = get_meals_today(uid)
@@ -4172,9 +4178,9 @@ def build_daily_goals_pct(uid):
         steps_r = conn.execute(
             "SELECT step_count FROM steps WHERE user_id=? AND date=?", (uid, d)).fetchone()
         kcal_r = conn.execute(
-            "SELECT SUM(calories) FROM food_diary WHERE user_id=? AND date=?", (uid, d)).fetchone()
+            "SELECT SUM(kcal) FROM food_diary WHERE user_id=? AND date=?", (uid, d)).fetchone()
         water_r = conn.execute(
-            "SELECT SUM(cups) FROM water_log WHERE user_id=? AND date=?", (uid, d)).fetchone()
+            "SELECT ml FROM water_ml_log WHERE user_id=? AND date=?", (uid, d)).fetchone()
 
         steps = steps_r[0] if steps_r else 0
         kcal  = kcal_r[0]  if kcal_r and kcal_r[0] else 0
@@ -5286,13 +5292,19 @@ def log_exercise_set(uid, exercise, weight_kg, reps, sets=1):
               (uid, today, exercise.lower(), weight_kg, reps, sets))
     conn.commit(); conn.close()
 
-def get_exercise_history(uid, exercise, limit=10):
+def get_exercise_history(uid, exercise=None, limit=10):
     conn = sqlite3.connect("weight_tracker.db")
     c = conn.cursor()
     c.execute('''CREATE TABLE IF NOT EXISTS exercise_journal (
         id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER,
         date TEXT, exercise TEXT, weight_kg REAL, reps INTEGER, sets INTEGER)''')
-    c.execute('''SELECT date, weight_kg, reps, sets FROM exercise_journal
+    if exercise is None or isinstance(exercise, int):
+        limit = exercise if isinstance(exercise, int) else limit
+        c.execute('''SELECT date, weight_kg, reps, sets FROM exercise_journal
+                 WHERE user_id=? ORDER BY date DESC, id DESC LIMIT ?''',
+              (uid, limit))
+    else:
+        c.execute('''SELECT date, weight_kg, reps, sets FROM exercise_journal
                  WHERE user_id=? AND exercise=? ORDER BY date DESC, id DESC LIMIT ?''',
               (uid, exercise.lower(), limit))
     rows = c.fetchall(); conn.close()
@@ -6001,7 +6013,10 @@ def add_medication(uid, name, dose, schedule_time):
     c = conn.cursor()
     c.execute('''CREATE TABLE IF NOT EXISTS medications (
         id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER,
-        name TEXT, dose TEXT, schedule_time TEXT, active INTEGER DEFAULT 1)''')
+        name TEXT, dose TEXT, active INTEGER DEFAULT 1)''')
+    try: c.execute("ALTER TABLE medications ADD COLUMN schedule_time TEXT")
+    except Exception: pass
+    conn.commit()
     c.execute("INSERT INTO medications (user_id, name, dose, schedule_time) VALUES (?,?,?,?)",
               (uid, name, dose, schedule_time))
     conn.commit(); conn.close()
@@ -6011,7 +6026,10 @@ def log_medication_taken(uid, med_id):
     c = conn.cursor()
     c.execute('''CREATE TABLE IF NOT EXISTS medication_log (
         id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER,
-        med_id INTEGER, taken_at TEXT)''')
+        med_id INTEGER)''')
+    try: c.execute("ALTER TABLE medication_log ADD COLUMN taken_at TEXT")
+    except Exception: pass
+    conn.commit()
     c.execute("INSERT INTO medication_log (user_id, med_id, taken_at) VALUES (?,?,?)",
               (uid, med_id, datetime.now().strftime("%Y-%m-%d %H:%M:%S")))
     conn.commit(); conn.close()
@@ -6074,11 +6092,19 @@ def log_caffeine(uid, item_key, qty=1):
     c = conn.cursor()
     c.execute('''CREATE TABLE IF NOT EXISTS caffeine_log (
         id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER,
-        date TEXT, time TEXT, item TEXT, mg INTEGER)''')
+        date TEXT, source TEXT, mg INTEGER)''')
+    try: c.execute("ALTER TABLE caffeine_log ADD COLUMN time TEXT")
+    except Exception: pass
+    try: c.execute("ALTER TABLE caffeine_log ADD COLUMN source TEXT")
+    except Exception: pass
+    conn.commit()
     now = datetime.now()
-    mg = CAFFEINE_ITEMS.get(item_key, {}).get("mg", 50) * qty
-    c.execute("INSERT INTO caffeine_log (user_id, date, time, item, mg) VALUES (?,?,?,?,?)",
-              (uid, now.strftime("%Y-%m-%d"), now.strftime("%H:%M"), item_key, mg))
+    if isinstance(item_key, str):
+        mg = CAFFEINE_ITEMS.get(item_key, {}).get("mg", 50) * qty
+    else:
+        mg = int(item_key)
+    c.execute("INSERT INTO caffeine_log (user_id, date, source, mg) VALUES (?,?,?,?)",
+              (uid, now.strftime("%Y-%m-%d"), str(item_key), mg))
     conn.commit(); conn.close()
     return mg
 
@@ -6087,9 +6113,10 @@ def get_caffeine_today(uid):
     c = conn.cursor()
     c.execute('''CREATE TABLE IF NOT EXISTS caffeine_log (
         id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER,
-        date TEXT, time TEXT, item TEXT, mg INTEGER)''')
+        date TEXT, source TEXT, mg INTEGER)''')
+    conn.commit()
     today = date.today().isoformat()
-    c.execute("SELECT SUM(mg), MAX(time) FROM caffeine_log WHERE user_id=? AND date=?", (uid, today))
+    c.execute("SELECT SUM(mg), MAX(date) FROM caffeine_log WHERE user_id=? AND date=?", (uid, today))
     row = c.fetchone(); conn.close()
     return (row[0] or 0, row[1] or "—")
 
@@ -6364,12 +6391,15 @@ def build_competition_status(uid):
     lines.append("\n💡 Зарабатывай XP за тренировки, питание, замеры веса и шаги.")
     return "\n".join(lines)
 
-# Патч add_xp — логируем в xp_log для соревнования
-_orig_add_xp = add_xp
+# ── add_xp — начисляет XP и логирует ──
 def add_xp(uid, amount, reason=""):
-    _orig_add_xp(uid, amount)
+    """Начисляет XP пользователю"""
+    if isinstance(amount, str):
+        amount = XP_REWARDS.get(amount, 5)
     try:
         conn = sqlite3.connect("weight_tracker.db")
+        conn.execute("INSERT OR IGNORE INTO user_xp (user_id, total_xp) VALUES (?,0)", (uid,))
+        conn.execute("UPDATE user_xp SET total_xp = total_xp + ? WHERE user_id=?", (amount, uid))
         conn.execute('''CREATE TABLE IF NOT EXISTS xp_log (
             id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER,
             date TEXT, amount INTEGER, reason TEXT)''')
@@ -6800,6 +6830,61 @@ def get_favorite_foods(uid, limit=10):
                  GROUP BY name ORDER BY cnt DESC LIMIT ?''', (uid, limit))
     rows = c.fetchall(); conn.close()
     return rows  # (name, kcal, protein, fat, carbs, cnt)
+
+ALCOHOL_UNITS = {
+    "пиво 0.5":     {"units": 2.3, "kcal": 215, "label": "🍺 Пиво 0.5л"},
+    "вино 150мл":   {"units": 2.0, "kcal": 120, "label": "🍷 Вино 150мл"},
+    "водка 50мл":   {"units": 2.0, "kcal": 115, "label": "🥃 Водка 50мл"},
+    "виски 50мл":   {"units": 2.0, "kcal": 115, "label": "🥃 Виски 50мл"},
+    "коктейль":     {"units": 1.5, "kcal": 180, "label": "🍹 Коктейль"},
+    "шампанское":   {"units": 1.5, "kcal": 105, "label": "🍾 Шампанское 150мл"},
+}
+
+# ── Алиасы для food_diary ──
+def add_food_diary(uid, product, grams, kcal, meal="Обед"):
+    """Алиас log_meal_entry для совместимости"""
+    conn = sqlite3.connect("weight_tracker.db")
+    conn.execute(
+        "INSERT INTO food_diary (user_id,meal,product,grams,kcal,date) VALUES (?,?,?,?,?,?)",
+        (uid, meal, product, grams, kcal, now_samara().strftime("%Y-%m-%d")))
+    conn.commit(); conn.close()
+
+def get_food_diary_today(uid):
+    """Алиас get_meals_today для совместимости"""
+    return get_meals_today(uid)
+
+def build_food_diary_text(uid):
+    """Алиас build_food_diary_today для совместимости"""
+    return build_food_diary_today(uid)
+
+# ── Обхваты — save/report алиасы ──
+def save_measurements(uid, **kw):
+    """Сохраняет обхваты тела"""
+    conn = sqlite3.connect("weight_tracker.db")
+    conn.execute('''CREATE TABLE IF NOT EXISTS measurements (
+        id INTEGER PRIMARY KEY AUTOINCREMENT, uid INTEGER, user_id INTEGER,
+        chest REAL, waist REAL, hips REAL, arm REAL, thigh REAL,
+        neck REAL DEFAULT 0, abdomen REAL DEFAULT 0, date TEXT)''')
+    try: conn.execute("ALTER TABLE measurements ADD COLUMN arm REAL")
+    except Exception: pass
+    today = now_samara().strftime("%Y-%m-%d")
+    ex = conn.execute("SELECT id FROM measurements WHERE user_id=? AND date=?", (uid, today)).fetchone()
+    allowed = ["chest","waist","hips","arm","thigh","neck","abdomen"]
+    cols = {k: v for k, v in kw.items() if k in allowed}
+    if not cols:
+        conn.close(); return
+    if ex:
+        sets = ", ".join(f"{k}=?" for k in cols)
+        conn.execute(f"UPDATE measurements SET {sets} WHERE id=?", (*cols.values(), ex[0]))
+    else:
+        cols["user_id"] = uid; cols["uid"] = uid; cols["date"] = today
+        c = ", ".join(cols.keys()); v = ", ".join("?"*len(cols))
+        conn.execute(f"INSERT INTO measurements ({c}) VALUES ({v})", list(cols.values()))
+    conn.commit(); conn.close()
+
+def build_measurements_report(uid):
+    """Краткий отчёт по обхватам"""
+    return build_measurements_summary(uid)
 
 def log_alcohol(uid, drink_key, qty=1):
     conn = sqlite3.connect("weight_tracker.db")
