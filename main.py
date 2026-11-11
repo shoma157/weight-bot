@@ -1007,7 +1007,11 @@ def init_db():
         date TEXT)''')
     c.execute('''CREATE TABLE IF NOT EXISTS water_ml_log (
         id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER,
-        date TEXT, ml INTEGER)''')
+        date TEXT, ml INTEGER, drink_type TEXT DEFAULT "вода", created_at TEXT)''')
+    try: c.execute("ALTER TABLE water_ml_log ADD COLUMN drink_type TEXT DEFAULT 'вода'")
+    except: pass
+    try: c.execute("ALTER TABLE water_ml_log ADD COLUMN created_at TEXT")
+    except: pass
     c.execute('''CREATE TABLE IF NOT EXISTS stress_log (
         id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER,
         date TEXT, level INTEGER, note TEXT)''')
@@ -5041,22 +5045,75 @@ def build_partner_comparison(uid):
 #  ВОДА В МЛ
 # ─────────────────────────────────────────
 
-def add_water_ml(uid, ml):
-    today = now_samara().strftime("%Y-%m-%d")
+# Коэффициенты гидратации для напитков (сколько мл воды засчитывается за 1 мл напитка)
+DRINK_HYDRATION = {
+    "вода":          1.0,
+    "чай зелёный":   0.9,
+    "чай чёрный":    0.85,
+    "чай травяной":  0.95,
+    "кофе чёрный":   0.8,
+    "кофе с молоком":0.75,
+    "капучино":      0.65,
+    "американо":     0.8,
+    "сок":           0.7,
+    "молоко":        0.6,
+    "кефир":         0.6,
+    "компот":        0.9,
+    "морс":          0.85,
+}
+DRINK_EMOJI = {
+    "вода":"💧","чай зелёный":"🍵","чай чёрный":"🫖","чай травяной":"🌿",
+    "кофе чёрный":"☕","кофе с молоком":"☕","капучино":"☕","американо":"☕",
+    "сок":"🧃","молоко":"🥛","кефир":"🥛","компот":"🍹","морс":"🍹",
+}
+
+def add_water_ml(uid, ml, drink_type="вода"):
+    """Добавляет запись о напитке. Каждое добавление — отдельная строка для истории."""
+    now = now_samara()
+    today = now.strftime("%Y-%m-%d")
+    created_at = now.strftime("%Y-%m-%d %H:%M")
     conn = sqlite3.connect("weight_tracker.db")
-    ex = conn.execute("SELECT id, ml FROM water_ml_log WHERE user_id=? AND date=?", (uid, today)).fetchone()
-    if ex:
-        conn.execute("UPDATE water_ml_log SET ml=? WHERE id=?", (ex[1]+ml, ex[0]))
-    else:
-        conn.execute("INSERT INTO water_ml_log (user_id,date,ml) VALUES (?,?,?)", (uid, today, ml))
+    conn.execute(
+        "INSERT INTO water_ml_log (user_id, date, ml, drink_type, created_at) VALUES (?,?,?,?,?)",
+        (uid, today, ml, drink_type, created_at))
     conn.commit(); conn.close()
 
 def get_water_ml_today(uid):
+    """Возвращает суммарный ml воды с учётом коэффициента гидратации."""
     today = now_samara().strftime("%Y-%m-%d")
     conn = sqlite3.connect("weight_tracker.db")
-    row = conn.execute("SELECT ml FROM water_ml_log WHERE user_id=? AND date=?", (uid, today)).fetchone()
+    rows = conn.execute(
+        "SELECT ml, drink_type FROM water_ml_log WHERE user_id=? AND date=?",
+        (uid, today)).fetchall()
     conn.close()
-    return row[0] if row else 0
+    total = 0
+    for ml, drink_type in rows:
+        coef = DRINK_HYDRATION.get(drink_type or "вода", 1.0)
+        total += round(ml * coef)
+    return total
+
+def get_water_entries_today(uid):
+    """Возвращает все записи о напитках за сегодня (для истории/удаления)."""
+    today = now_samara().strftime("%Y-%m-%d")
+    conn = sqlite3.connect("weight_tracker.db")
+    rows = conn.execute(
+        "SELECT id, ml, drink_type, created_at FROM water_ml_log WHERE user_id=? AND date=? ORDER BY id DESC",
+        (uid, today)).fetchall()
+    conn.close()
+    return rows
+
+def delete_last_water_entry(uid):
+    """Удаляет последнюю запись о напитке."""
+    today = now_samara().strftime("%Y-%m-%d")
+    conn = sqlite3.connect("weight_tracker.db")
+    row = conn.execute(
+        "SELECT id FROM water_ml_log WHERE user_id=? AND date=? ORDER BY id DESC LIMIT 1",
+        (uid, today)).fetchone()
+    if row:
+        conn.execute("DELETE FROM water_ml_log WHERE id=?", (row[0],))
+        conn.commit()
+    conn.close()
+    return bool(row)
 
 def build_water_ml_status(uid):
     ml = get_water_ml_today(uid)
@@ -5064,10 +5121,24 @@ def build_water_ml_status(uid):
     pct = min(100, round(ml / goal_ml * 100))
     filled = round(pct / 10)
     bar = "💧" * filled + "⬜" * (10 - filled)
+    # Детализация по напиткам
+    entries = get_water_entries_today(uid)
+    drinks_detail = ""
+    if entries:
+        lines = []
+        for _, entry_ml, drink_type, created_at in entries[-5:]:  # последние 5
+            emoji = DRINK_EMOJI.get(drink_type or "вода", "💧")
+            time_str = (created_at or "")[-5:] if created_at else ""
+            coef = DRINK_HYDRATION.get(drink_type or "вода", 1.0)
+            water_eq = round(entry_ml * coef)
+            lines.append(f"  {emoji} {drink_type or 'вода'} {entry_ml}мл = {water_eq}мл воды  _{time_str}_")
+        drinks_detail = "\n\n*Последние записи:*\n" + "\n".join(reversed(lines))
     return (f"💧 *Вода сегодня*\n\n"
             f"{bar}\n"
             f"*{ml} мл* из {goal_ml} мл ({pct}%)\n\n"
-            f"{'✅ Норма выполнена!' if ml >= goal_ml else f'Осталось: {goal_ml-ml} мл'}")
+            f"{'✅ Норма выполнена!' if ml >= goal_ml else f'Осталось: {goal_ml-ml} мл'}"
+            f"{drinks_detail}\n\n"
+            f"☕ Кофе и чай засчитываются частично (80–95% от объёма)")
 
 # ─────────────────────────────────────────
 #  ШТРИХКОД → Open Food Facts
@@ -11039,6 +11110,8 @@ REMINDER_SCHEDULE = [
 
 def reminder_worker():
     sent_today = set()
+    # Для персональных водных напоминаний: uid -> последнее время отправки
+    water_remind_sent = {}
     while True:
         now = now_samara()
         key = (now.hour, now.minute)
@@ -11055,14 +11128,95 @@ def reminder_worker():
                         msg   = template.replace("{quote}", quote)
                         # Для воды показываем сколько уже выпито
                         if "стакан воды" in msg:
-                            glasses = get_water_today(uid)
-                            msg += f"\n💧 Сегодня уже: *{glasses}* стак. из 8"
+                            ml_today = get_water_ml_today(uid)
+                            msg += f"\n💧 Сегодня уже: *{ml_today}* мл из 2500"
                         bot.send_message(uid, msg, parse_mode="Markdown")
                     except Exception:
                         pass
+
+        # ── Персональные напоминания о воде ──
+        # Проверяем каждые 30 минут (цикл и так спит 30 сек, но проверяем по минутам)
+        if now.minute % 30 == 0:
+            users = get_all_users()
+            for uid in users:
+                try:
+                    profile = get_profile(uid)
+                    if not profile or not profile.get("reminders_enabled", 1):
+                        continue
+                    interval_h = int(profile.get("water_reminder_hours", 0) or 0)
+                    if interval_h <= 0:
+                        continue
+                    # Смотрим последнюю запись воды
+                    today = now.strftime("%Y-%m-%d")
+                    conn = sqlite3.connect("weight_tracker.db")
+                    last_row = conn.execute(
+                        "SELECT created_at FROM water_ml_log WHERE user_id=? AND date=? ORDER BY id DESC LIMIT 1",
+                        (uid, today)).fetchone()
+                    conn.close()
+                    if last_row and last_row[0]:
+                        try:
+                            from datetime import datetime as _dt
+                            last_time = _dt.strptime(last_row[0], "%Y-%m-%d %H:%M")
+                            last_time = last_time.replace(tzinfo=now.tzinfo) if now.tzinfo else last_time
+                            diff_h = (now.replace(tzinfo=None) - last_time.replace(tzinfo=None)).total_seconds() / 3600
+                        except Exception:
+                            diff_h = interval_h + 1
+                    else:
+                        # Нет записей вообще — напоминаем если уже прошло interval_h с 8:00
+                        start = now.replace(hour=8, minute=0, second=0, microsecond=0)
+                        diff_h = (now - start).total_seconds() / 3600 if now > start else 0
+                    if diff_h >= interval_h:
+                        remind_key = (uid, now.strftime("%Y-%m-%d %H"))
+                        if remind_key not in water_remind_sent:
+                            water_remind_sent[remind_key] = True
+                            ml_today = get_water_ml_today(uid)
+                            bot.send_message(uid,
+                                f"💧 *Пора пить воду!*\n\n"
+                                f"Прошло {int(diff_h)}ч без воды.\n"
+                                f"Сегодня уже: *{ml_today} мл* из 2500 мл\n\n"
+                                f"{'✅ Норма выполнена! Но не забывай пить.' if ml_today >= 2500 else f'Осталось: {2500-ml_today} мл'}",
+                                parse_mode="Markdown")
+                except Exception:
+                    pass
+
+        # ── Напоминания о лекарствах по расписанию ──
+        users = get_all_users()
+        for uid in users:
+            try:
+                profile = get_profile(uid)
+                if not profile or not profile.get("reminders_enabled", 1):
+                    continue
+                meds = get_medications(uid)
+                for row in meds:
+                    mid, name, dose = row[0], row[1], row[2]
+                    schedule_time = row[3] if len(row) > 3 else None
+                    if not schedule_time or not str(schedule_time).count(":"):
+                        continue
+                    try:
+                        med_h, med_m = map(int, str(schedule_time).split(":")[:2])
+                    except Exception:
+                        continue
+                    if key == (med_h, med_m):
+                        med_remind_key = (uid, mid, now.strftime("%Y-%m-%d"))
+                        if med_remind_key not in sent_today:
+                            sent_today.add(med_remind_key)
+                            taken = get_medications_taken_today(uid)
+                            if not taken.get(mid):
+                                kb_med = types.InlineKeyboardMarkup()
+                                kb_med.add(types.InlineKeyboardButton(
+                                    f"✅ Принял {name}", callback_data=f"med_take:{mid}"))
+                                bot.send_message(uid,
+                                    f"💊 *Напоминание о лекарстве*\n\n"
+                                    f"Время принять: *{name}* {dose}\n"
+                                    f"🕐 {schedule_time}",
+                                    parse_mode="Markdown", reply_markup=kb_med)
+            except Exception:
+                pass
+
         # Сбрасываем в полночь
         if now.hour == 0 and now.minute == 0:
             sent_today.clear()
+            water_remind_sent.clear()
         # Еженедельный отчёт — воскресенье 9:00
         if now.weekday() == 6 and now.hour == 9 and now.minute == 0 and ("weekly",) not in sent_today:
             sent_today.add(("weekly",))
@@ -11235,24 +11389,72 @@ def cmd_water(message):
 
 @bot.message_handler(commands=['backup'])
 def cmd_backup(message):
-    """Ручной запрос бэкапа — шлёт файл БД тому, кто написал команду."""
+    """Ручной запрос бэкапа — шлёт файл БД + CSV-экспорт."""
     cid = message.chat.id
     bot.send_message(cid, "🗄 Создаю резервную копию...")
+    from datetime import datetime as _dt
+    ts = _dt.now().strftime("%Y-%m-%d_%H-%M")
+    # 1. Файл БД
     try:
-        if not os.path.exists(DB_PATH):
-            bot.send_message(cid, "❌ Файл БД не найден.")
-            return
-        size = os.path.getsize(DB_PATH)
-        with open(DB_PATH, "rb") as f:
-            from datetime import datetime as _dt
-            ts = _dt.now().strftime("%Y-%m-%d_%H-%M")
-            bot.send_document(
-                cid, f,
-                caption=f"🗄 Бэкап БД ({size//1024} КБ)\n{ts}\n\nПерешли этот файл боту чтобы восстановить.",
-                visible_file_name=f"backup_{ts}.db"
-            )
+        if os.path.exists(DB_PATH):
+            size = os.path.getsize(DB_PATH)
+            with open(DB_PATH, "rb") as f:
+                bot.send_document(
+                    cid, f,
+                    caption=f"🗄 *Бэкап БД* ({size//1024} КБ)\n📅 {ts}\n\nПерешли этот файл боту для восстановления.",
+                    visible_file_name=f"backup_{ts}.db",
+                    parse_mode="Markdown"
+                )
     except Exception as e:
-        bot.send_message(cid, f"❌ Ошибка бэкапа: {e}")
+        bot.send_message(cid, f"❌ Ошибка бэкапа БД: {e}")
+    # 2. CSV-экспорт всех данных
+    try:
+        out = io.StringIO()
+        wr = csv.writer(out)
+        conn = sqlite3.connect(DB_PATH)
+        # Вес
+        wr.writerow(["=== ВЕС ==="]); wr.writerow(["дата", "кг"])
+        for wv, d in conn.execute("SELECT weight_value,date FROM weights WHERE user_id=? ORDER BY date", (cid,)).fetchall():
+            wr.writerow([d, wv])
+        wr.writerow([])
+        # Еда
+        wr.writerow(["=== ЕДА ==="]); wr.writerow(["дата", "приём", "продукт", "г", "ккал"])
+        for row in conn.execute("SELECT date,meal,product,grams,kcal FROM food_diary WHERE user_id=? ORDER BY date,id", (cid,)).fetchall():
+            wr.writerow(list(row))
+        wr.writerow([])
+        # Вода
+        wr.writerow(["=== ВОДА/НАПИТКИ ==="]); wr.writerow(["дата", "мл", "напиток", "время"])
+        for row in conn.execute("SELECT date,ml,drink_type,created_at FROM water_ml_log WHERE user_id=? ORDER BY date,id", (cid,)).fetchall():
+            wr.writerow(list(row))
+        wr.writerow([])
+        # Шаги
+        wr.writerow(["=== ШАГИ ==="]); wr.writerow(["дата", "шагов"])
+        for row in conn.execute("SELECT date,steps FROM steps_log WHERE user_id=? ORDER BY date", (cid,)).fetchall():
+            wr.writerow(list(row))
+        wr.writerow([])
+        # Сон
+        wr.writerow(["=== СОН ==="]); wr.writerow(["дата", "начало", "конец", "мин", "качество"])
+        for row in conn.execute("SELECT date,sleep_time,wake_time,duration_min,quality FROM sleep_log WHERE user_id=? ORDER BY date", (cid,)).fetchall():
+            wr.writerow(list(row))
+        wr.writerow([])
+        # Кофеин
+        wr.writerow(["=== КОФЕИН ==="]); wr.writerow(["дата", "источник", "мг"])
+        for row in conn.execute("SELECT date,source,mg FROM caffeine_log WHERE user_id=? ORDER BY date,id", (cid,)).fetchall():
+            wr.writerow(list(row))
+        wr.writerow([])
+        # Алкоголь
+        wr.writerow(["=== АЛКОГОЛЬ ==="]); wr.writerow(["дата", "напиток", "юниты", "ккал"])
+        for row in conn.execute("SELECT date,drink,units,kcal FROM alcohol_log WHERE user_id=? ORDER BY date", (cid,)).fetchall():
+            wr.writerow(list(row))
+        conn.close()
+        out.seek(0)
+        bio = io.BytesIO(out.getvalue().encode("utf-8-sig"))
+        bio.name = f"data_{ts}.csv"
+        bot.send_document(cid, bio,
+            caption=f"📊 *CSV-экспорт всех данных*\n📅 {ts}\n\nОткрой в Excel или Google Sheets.",
+            parse_mode="Markdown")
+    except Exception as e:
+        bot.send_message(cid, f"⚠️ CSV-экспорт не удался: {e}")
 
 @bot.message_handler(content_types=['document'])
 @bot.message_handler(commands=['start','help'])
@@ -11709,17 +11911,55 @@ def handle_callback(call):
 
     # ── Вода в мл (кнопки) ──
     elif data.startswith("water_ml:"):
-        val = data.split(":")[1]
+        parts = data.split(":")
+        val = parts[1]
+        drink_type = parts[2] if len(parts) > 2 else "вода"
         bot.answer_callback_query(call.id)
         if val == "custom":
-            set_state(cid, "waiting_water_ml")
+            set_state(cid, "waiting_water_ml", extra=drink_type)
             bot.send_message(cid, "💧 Введи количество мл (например: `350`):",
                              parse_mode="Markdown", reply_markup=cancel_menu())
+        elif val == "choose_drink":
+            kb_drink = types.InlineKeyboardMarkup(row_width=2)
+            for label, dtype in [
+                ("💧 Вода", "вода"), ("🍵 Зелёный чай", "чай зелёный"),
+                ("🫖 Чёрный чай", "чай чёрный"), ("🌿 Травяной чай", "чай травяной"),
+                ("☕ Кофе чёрный", "кофе чёрный"), ("☕ Кофе с молоком", "кофе с молоком"),
+                ("☕ Капучино", "капучино"), ("🧃 Сок", "сок"),
+                ("🥛 Молоко/кефир", "молоко"), ("🍹 Компот/морс", "компот"),
+            ]:
+                kb_drink.add(types.InlineKeyboardButton(label, callback_data=f"water_drink_sel:{dtype}"))
+            bot.send_message(cid, "☕ *Что пьёшь?*", parse_mode="Markdown", reply_markup=kb_drink)
+        elif val == "undo":
+            if delete_last_water_entry(cid):
+                bot.send_message(cid, "↩️ Последняя запись удалена.\n\n" + build_water_ml_status(cid),
+                                 parse_mode="Markdown")
+            else:
+                bot.send_message(cid, "⚠️ Нет записей за сегодня.")
         else:
             ml = int(val)
-            add_water_ml(cid, ml)
-            bot.edit_message_text(build_water_ml_status(cid) + f"\n\n✅ +{ml} мл добавлено",
-                                  cid, call.message.message_id, parse_mode="Markdown")
+            add_water_ml(cid, ml, drink_type)
+            coef = DRINK_HYDRATION.get(drink_type, 1.0)
+            water_eq = round(ml * coef)
+            emoji = DRINK_EMOJI.get(drink_type, "💧")
+            note = f" (засчитано {water_eq} мл)" if coef < 1.0 else ""
+            try:
+                bot.edit_message_text(build_water_ml_status(cid) + f"\n\n✅ {emoji} +{ml} мл {drink_type}{note}",
+                                      cid, call.message.message_id, parse_mode="Markdown")
+            except Exception:
+                bot.send_message(cid, build_water_ml_status(cid) + f"\n\n✅ {emoji} +{ml} мл {drink_type}{note}",
+                                 parse_mode="Markdown")
+
+    elif data.startswith("water_drink_sel:"):
+        drink_type = data.split(":", 1)[1]
+        bot.answer_callback_query(call.id)
+        emoji = DRINK_EMOJI.get(drink_type, "💧")
+        kb_ml = types.InlineKeyboardMarkup(row_width=3)
+        for ml_val in [150, 200, 250, 300, 500, 750]:
+            kb_ml.add(types.InlineKeyboardButton(f"{ml_val} мл", callback_data=f"water_ml:{ml_val}:{drink_type}"))
+        kb_ml.add(types.InlineKeyboardButton("✏️ Своё", callback_data=f"water_ml:custom:{drink_type}"))
+        bot.send_message(cid, f"{emoji} *{drink_type.capitalize()}* — сколько выпил?",
+                         parse_mode="Markdown", reply_markup=kb_ml)
 
     # ── Штрихкод: добавить в дневник ──
     elif data.startswith("barcode_add:"):
@@ -13805,7 +14045,11 @@ def router(message):
             types.InlineKeyboardButton("1000 мл", callback_data="water_ml:1000"),
             types.InlineKeyboardButton("✏️ Своё", callback_data="water_ml:custom"),
         )
-        bot.send_message(cid, build_water_ml_status(cid) + "\n\nДобавить:", parse_mode="Markdown", reply_markup=kb_water)
+        kb_water.add(
+            types.InlineKeyboardButton("☕ Другой напиток", callback_data="water_ml:choose_drink"),
+            types.InlineKeyboardButton("↩️ Отменить последнее", callback_data="water_ml:undo"),
+        )
+        bot.send_message(cid, build_water_ml_status(cid) + "\n\n*Добавить воду:*", parse_mode="Markdown", reply_markup=kb_water)
 
     # Прогресс
     elif text=="📈 Мой прогресс":
@@ -14859,8 +15103,26 @@ def router(message):
                       f"\n\n{bar}\n🔥 Итого: *{total_kcal}* / *{target_kcal} ккал*\n{status}")
         m2 = types.ReplyKeyboardMarkup(resize_keyboard=True, row_width=2)
         m2.add(types.KeyboardButton("➕ Записать приём пищи"),
-               types.KeyboardButton("❌ Закрыть дневник"))
+               types.KeyboardButton("↩️ Удалить последнее"))
+        m2.add(types.KeyboardButton("❌ Закрыть дневник"))
         bot.send_message(cid, msg, parse_mode="Markdown", reply_markup=m2)
+
+    elif text == "↩️ Удалить последнее":
+        # Удаляем последнюю запись еды за сегодня
+        today = now_samara().strftime("%Y-%m-%d")
+        conn = sqlite3.connect("weight_tracker.db")
+        last = conn.execute(
+            "SELECT id, product, grams, kcal FROM food_diary WHERE user_id=? AND date=? ORDER BY id DESC LIMIT 1",
+            (cid, today)).fetchone()
+        if last:
+            conn.execute("DELETE FROM food_diary WHERE id=?", (last[0],))
+            conn.commit()
+            conn.close()
+            bot.send_message(cid, f"↩️ Удалено: *{last[1]}* {last[2]}г ({round(last[3])} ккал)\n\n" +
+                             build_food_diary_today(cid), parse_mode="Markdown")
+        else:
+            conn.close()
+            bot.send_message(cid, "⚠️ Нет записей еды за сегодня.")
 
     elif text == "➕ Записать приём пищи":
         set_state(cid, "diary_choose_meal")
@@ -15068,7 +15330,11 @@ def router(message):
             types.InlineKeyboardButton("1000 мл", callback_data="water_ml:1000"),
             types.InlineKeyboardButton("✏️ Своё", callback_data="water_ml:custom"),
         )
-        bot.send_message(cid, build_water_ml_status(cid) + "\n\nДобавить:", parse_mode="Markdown", reply_markup=kb_water)
+        kb_water.add(
+            types.InlineKeyboardButton("☕ Другой напиток", callback_data="water_ml:choose_drink"),
+            types.InlineKeyboardButton("↩️ Отменить последнее", callback_data="water_ml:undo"),
+        )
+        bot.send_message(cid, build_water_ml_status(cid) + "\n\n*Добавить:*", parse_mode="Markdown", reply_markup=kb_water)
 
     # ── Штрихкод ──
     elif text == "📦 Штрихкод":
