@@ -3378,10 +3378,14 @@ def build_medications_today(uid):
                 "Нажми *«➕ Добавить лекарство»* чтобы добавить.")
     taken = get_medications_taken_today(uid)
     lines = ["💊 *Лекарства на сегодня:*\n"]
-    for mid, name, dose, tpd in meds:
+    for row in meds:
+        mid, name, dose = row[0], row[1], row[2]
+        # schedule_time или tpd — берём что есть
+        extra = row[3] if len(row) > 3 else ""
         t = taken.get(mid, 0)
-        status = "✅" * t + "⬜" * max(0, tpd - t)
-        lines.append(f"{status} *{name}* {dose} ({t}/{tpd} раз)")
+        taken_mark = "✅" if t > 0 else "⬜"
+        time_str = f" в {extra}" if extra and not str(extra).isdigit() else ""
+        lines.append(f"{taken_mark} *{name}* {dose}{time_str}")
     return "\n".join(lines)
 
 
@@ -5551,10 +5555,10 @@ def build_scenario_forecast(uid, scenario: str):
     wd = get_weights(uid)
     if not profile or not wd:
         return "⚠️ Недостаточно данных для прогноза."
-    current_w = wd[-1][1]
-    target_w  = profile.get("target_weight", current_w - 10)
+    current_w = float(wd[-1][0])
+    target_w  = float(profile.get("target_weight", current_w - 10) or (current_w - 10))
     plan = get_user_plan(uid, profile)
-    weekly_loss = plan.get("weekly_loss", 0.3)
+    weekly_loss = float(plan.get("weekly_loss", 0.3) or 0.3)
     lines = [f"🔮 *Прогноз: «{scenario}»*\n"]
     if "пропущу" in scenario.lower() or "пропуск" in scenario.lower():
         missed = 3
@@ -6051,9 +6055,9 @@ def get_medications_taken_today(uid):
         id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER,
         med_id INTEGER, taken_at TEXT)''')
     today = date.today().isoformat()
-    c.execute("SELECT med_id FROM medication_log WHERE user_id=? AND taken_at LIKE ?",
+    c.execute("SELECT med_id, COUNT(*) FROM medication_log WHERE user_id=? AND taken_at LIKE ? GROUP BY med_id",
               (uid, today + "%"))
-    taken = {r[0] for r in c.fetchall()}
+    taken = {r[0]: r[1] for r in c.fetchall()}
     conn.close()
     return taken
 
@@ -11720,9 +11724,13 @@ def handle_callback(call):
     # ── Штрихкод: добавить в дневник ──
     elif data.startswith("barcode_add:"):
         parts = data.split(":")
-        grams = int(parts[2])
-        name  = parts[3]
-        kcal_per100 = int(parts[4])
+        try:
+            grams = int(parts[2])
+            name  = parts[3]
+            kcal_per100 = int(parts[4]) if len(parts) > 4 else 100
+        except (IndexError, ValueError):
+            bot.answer_callback_query(call.id, "⚠️ Ошибка данных штрихкода")
+            return
         kcal = round(kcal_per100 * grams / 100)
         add_food_diary(cid, name, grams, kcal)
         update_streak(cid)
