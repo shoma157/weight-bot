@@ -5046,26 +5046,49 @@ def build_partner_comparison(uid):
 # ─────────────────────────────────────────
 
 # Коэффициенты гидратации для напитков (сколько мл воды засчитывается за 1 мл напитка)
+# Чай и кофе без молока = практически вода (миф об обезвоживании от кофеина опровергнут)
 DRINK_HYDRATION = {
-    "вода":          1.0,
-    "чай зелёный":   0.9,
-    "чай чёрный":    0.85,
-    "чай травяной":  0.95,
-    "кофе чёрный":   0.8,
-    "кофе с молоком":0.75,
-    "капучино":      0.65,
-    "американо":     0.8,
-    "сок":           0.7,
-    "молоко":        0.6,
-    "кефир":         0.6,
-    "компот":        0.9,
-    "морс":          0.85,
+    "вода":               1.0,
+    "чай зелёный":        1.0,   # без молока = вода
+    "чай чёрный":         1.0,   # без молока = вода
+    "чай травяной":       1.0,   # без молока = вода
+    "чай с сахаром":      1.0,   # сахар не влияет на гидратацию
+    "кофе чёрный":        0.95,  # лёгкий мочегонный при >3 чашек
+    "американо":          0.95,
+    "эспрессо":           0.9,   # концентрат — маленький объём
+    "кофе с молоком":     0.8,   # молоко снижает
+    "кофе с сиропом":     0.85,  # сладкое чуть снижает
+    "капучино":           0.75,
+    "латте":              0.7,
+    "сок":                0.7,
+    "молоко":             0.6,
+    "кефир":              0.6,
+    "компот":             0.9,
+    "морс":               0.85,
 }
 DRINK_EMOJI = {
     "вода":"💧","чай зелёный":"🍵","чай чёрный":"🫖","чай травяной":"🌿",
-    "кофе чёрный":"☕","кофе с молоком":"☕","капучино":"☕","американо":"☕",
+    "чай с сахаром":"🍵","кофе чёрный":"☕","американо":"☕","эспрессо":"☕",
+    "кофе с молоком":"☕","кофе с сиропом":"☕","капучино":"☕","латте":"☕",
     "сок":"🧃","молоко":"🥛","кефир":"🥛","компот":"🍹","морс":"🍹",
 }
+
+# Описания напитков для меню выбора — показываем коэффициент пользователю
+DRINK_MENU = [
+    # (emoji, label, drink_type, hint)
+    ("💧", "Вода",                  "вода",             "100% — чистая гидратация"),
+    ("🍵", "Чай без молока",        "чай зелёный",      "100% — как вода"),
+    ("🫖", "Чай чёрный",            "чай чёрный",       "100% — как вода"),
+    ("🌿", "Чай травяной",          "чай травяной",     "100% — как вода"),
+    ("🍵", "Чай с сахаром",         "чай с сахаром",    "100% — сахар не влияет"),
+    ("☕", "Кофе чёрный / американо","кофе чёрный",     "95% — почти вода"),
+    ("☕", "Кофе с молоком",        "кофе с молоком",   "80% — молоко снижает"),
+    ("☕", "Кофе с сиропом/сладкий","кофе с сиропом",   "85%"),
+    ("☕", "Капучино / латте",      "капучино",         "75% — много молока"),
+    ("🧃", "Сок",                   "сок",              "70%"),
+    ("🥛", "Молоко / кефир",        "молоко",           "60%"),
+    ("🍹", "Компот / морс",         "компот",           "90%"),
+]
 
 def add_water_ml(uid, ml, drink_type="вода"):
     """Добавляет запись о напитке. Каждое добавление — отдельная строка для истории."""
@@ -11920,16 +11943,13 @@ def handle_callback(call):
             bot.send_message(cid, "💧 Введи количество мл (например: `350`):",
                              parse_mode="Markdown", reply_markup=cancel_menu())
         elif val == "choose_drink":
-            kb_drink = types.InlineKeyboardMarkup(row_width=2)
-            for label, dtype in [
-                ("💧 Вода", "вода"), ("🍵 Зелёный чай", "чай зелёный"),
-                ("🫖 Чёрный чай", "чай чёрный"), ("🌿 Травяной чай", "чай травяной"),
-                ("☕ Кофе чёрный", "кофе чёрный"), ("☕ Кофе с молоком", "кофе с молоком"),
-                ("☕ Капучино", "капучино"), ("🧃 Сок", "сок"),
-                ("🥛 Молоко/кефир", "молоко"), ("🍹 Компот/морс", "компот"),
-            ]:
-                kb_drink.add(types.InlineKeyboardButton(label, callback_data=f"water_drink_sel:{dtype}"))
-            bot.send_message(cid, "☕ *Что пьёшь?*", parse_mode="Markdown", reply_markup=kb_drink)
+            # Показываем тот же экран выбора напитка
+            kb_drink2 = types.InlineKeyboardMarkup(row_width=1)
+            for emoji, label, dtype, hint in DRINK_MENU:
+                kb_drink2.add(types.InlineKeyboardButton(
+                    f"{emoji} {label} — {hint}", callback_data=f"water_drink_sel:{dtype}"))
+            kb_drink2.add(types.InlineKeyboardButton("↩️ Отменить последнее", callback_data="water_ml:undo"))
+            bot.send_message(cid, "☕ *Что пьёшь?* Выбери напиток:", parse_mode="Markdown", reply_markup=kb_drink2)
         elif val == "undo":
             if delete_last_water_entry(cid):
                 bot.send_message(cid, "↩️ Последняя запись удалена.\n\n" + build_water_ml_status(cid),
@@ -11954,11 +11974,25 @@ def handle_callback(call):
         drink_type = data.split(":", 1)[1]
         bot.answer_callback_query(call.id)
         emoji = DRINK_EMOJI.get(drink_type, "💧")
+        coef = DRINK_HYDRATION.get(drink_type, 1.0)
+        coef_pct = round(coef * 100)
+        # Типичные объёмы зависят от напитка
+        if drink_type in ("эспрессо",):
+            ml_options = [30, 60, 90]
+        elif drink_type in ("кофе чёрный", "американо", "кофе с молоком", "кофе с сиропом", "капучино", "латте"):
+            ml_options = [150, 200, 250, 300, 400]
+        elif drink_type in ("чай зелёный", "чай чёрный", "чай травяной", "чай с сахаром"):
+            ml_options = [200, 250, 300, 400, 500]
+        else:
+            ml_options = [200, 300, 500, 750, 1000]
         kb_ml = types.InlineKeyboardMarkup(row_width=3)
-        for ml_val in [150, 200, 250, 300, 500, 750]:
-            kb_ml.add(types.InlineKeyboardButton(f"{ml_val} мл", callback_data=f"water_ml:{ml_val}:{drink_type}"))
-        kb_ml.add(types.InlineKeyboardButton("✏️ Своё", callback_data=f"water_ml:custom:{drink_type}"))
-        bot.send_message(cid, f"{emoji} *{drink_type.capitalize()}* — сколько выпил?",
+        for ml_val in ml_options:
+            water_eq = round(ml_val * coef)
+            suffix = f" = {water_eq}мл💧" if coef < 1.0 else " 💧"
+            kb_ml.add(types.InlineKeyboardButton(f"{ml_val} мл{suffix}", callback_data=f"water_ml:{ml_val}:{drink_type}"))
+        kb_ml.add(types.InlineKeyboardButton("✏️ Своё количество мл", callback_data=f"water_ml:custom:{drink_type}"))
+        hint_line = f"\n_Засчитается {coef_pct}% от объёма_" if coef < 1.0 else "\n_Засчитается 100% — как вода_ ✅"
+        bot.send_message(cid, f"{emoji} *{drink_type.capitalize()}* — сколько выпил?{hint_line}",
                          parse_mode="Markdown", reply_markup=kb_ml)
 
     # ── Штрихкод: добавить в дневник ──
@@ -14036,20 +14070,15 @@ def router(message):
 
     # Вода — показываем инлайн-кнопки мл
     elif text=="💧 Внести воду":
-        kb_water = types.InlineKeyboardMarkup(row_width=3)
-        kb_water.add(
-            types.InlineKeyboardButton("200 мл", callback_data="water_ml:200"),
-            types.InlineKeyboardButton("300 мл", callback_data="water_ml:300"),
-            types.InlineKeyboardButton("500 мл", callback_data="water_ml:500"),
-            types.InlineKeyboardButton("750 мл", callback_data="water_ml:750"),
-            types.InlineKeyboardButton("1000 мл", callback_data="water_ml:1000"),
-            types.InlineKeyboardButton("✏️ Своё", callback_data="water_ml:custom"),
-        )
-        kb_water.add(
-            types.InlineKeyboardButton("☕ Другой напиток", callback_data="water_ml:choose_drink"),
-            types.InlineKeyboardButton("↩️ Отменить последнее", callback_data="water_ml:undo"),
-        )
-        bot.send_message(cid, build_water_ml_status(cid) + "\n\n*Добавить воду:*", parse_mode="Markdown", reply_markup=kb_water)
+        kb_drink = types.InlineKeyboardMarkup(row_width=1)
+        for emoji, label, dtype, hint in DRINK_MENU:
+            kb_drink.add(types.InlineKeyboardButton(
+                f"{emoji} {label}  _({hint})_" if False else f"{emoji} {label} — {hint}",
+                callback_data=f"water_drink_sel:{dtype}"))
+        kb_drink.add(types.InlineKeyboardButton("↩️ Отменить последнее", callback_data="water_ml:undo"))
+        bot.send_message(cid,
+            build_water_ml_status(cid) + "\n\n*Что ты пил?* Выбери напиток:",
+            parse_mode="Markdown", reply_markup=kb_drink)
 
     # Прогресс
     elif text=="📈 Мой прогресс":
