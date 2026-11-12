@@ -967,9 +967,14 @@ def init_db():
     c.execute('''CREATE TABLE IF NOT EXISTS medications (
         id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER,
         name TEXT, dose TEXT, times_per_day INTEGER, active INTEGER DEFAULT 1)''')
+    # Миграция: добавить schedule_time если ещё нет
+    try: c.execute("ALTER TABLE medications ADD COLUMN schedule_time TEXT")
+    except Exception: pass
     c.execute('''CREATE TABLE IF NOT EXISTS medication_log (
         id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER,
         med_id INTEGER, date TEXT)''')
+    try: c.execute("ALTER TABLE medication_log ADD COLUMN taken_at TEXT")
+    except Exception: pass
     c.execute('''CREATE TABLE IF NOT EXISTS user_reminders (
         id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER,
         reminder_text TEXT, hour INTEGER, minute INTEGER,
@@ -5138,9 +5143,57 @@ def delete_last_water_entry(uid):
     conn.close()
     return bool(row)
 
+def get_water_goal_ml(uid):
+    """Норма воды по весу: 35 мл/кг. Мин 1800, макс 4000."""
+    profile = get_profile(uid)
+    if profile:
+        w = float(profile.get("current_weight") or 0)
+        if w > 0:
+            return max(1800, min(4000, int(w * 35 / 100 + 0.5) * 100))
+    return 2500
+
+def get_favorite_drinks(uid, limit=3):
+    """Возвращает последние N уникальных напитков пользователя (для быстрого выбора)."""
+    conn = sqlite3.connect("weight_tracker.db")
+    rows = conn.execute(
+        """SELECT drink_type, COUNT(*) as cnt FROM water_ml_log
+           WHERE user_id=? AND drink_type IS NOT NULL AND drink_type != 'вода'
+           GROUP BY drink_type ORDER BY MAX(id) DESC LIMIT ?""",
+        (uid, limit)).fetchall()
+    conn.close()
+    return [r[0] for r in rows]
+
+def build_drinks_weekly_stats(uid):
+    """Статистика напитков за последние 7 дней."""
+    from datetime import timedelta
+    today = now_samara().date()
+    week_ago = (today - timedelta(days=6)).isoformat()
+    conn = sqlite3.connect("weight_tracker.db")
+    rows = conn.execute(
+        """SELECT drink_type, SUM(ml), COUNT(*) FROM water_ml_log
+           WHERE user_id=? AND date>=? GROUP BY drink_type ORDER BY SUM(ml) DESC""",
+        (uid, week_ago)).fetchall()
+    total = conn.execute(
+        "SELECT SUM(ml) FROM water_ml_log WHERE user_id=? AND date>=?",
+        (uid, week_ago)).fetchone()[0] or 0
+    conn.close()
+    if not rows:
+        return "📊 *Статистика напитков за 7 дней*\n\nНет данных."
+    lines = ["📊 *Статистика напитков за 7 дней*\n"]
+    for dtype, ml, cnt in rows:
+        emoji = DRINK_EMOJI.get(dtype or "вода", "💧")
+        coef = DRINK_HYDRATION.get(dtype or "вода", 1.0)
+        water_eq = round((ml or 0) * coef)
+        lines.append(f"{emoji} *{dtype or 'вода'}*: {ml} мл ({cnt} раз) → {water_eq} мл воды")
+    lines.append(f"\n💧 *Итого за неделю:* {total} мл")
+    avg = round(total / 7)
+    goal = get_water_goal_ml(uid)
+    lines.append(f"📈 В среднем: {avg} мл/день (норма {goal} мл)")
+    return "\n".join(lines)
+
 def build_water_ml_status(uid):
     ml = get_water_ml_today(uid)
-    goal_ml = 2500
+    goal_ml = get_water_goal_ml(uid)
     pct = min(100, round(ml / goal_ml * 100))
     filled = round(pct / 10)
     bar = "💧" * filled + "⬜" * (10 - filled)
@@ -6204,6 +6257,19 @@ def log_caffeine(uid, item_key, qty=1):
     c.execute("INSERT INTO caffeine_log (user_id, date, source, mg) VALUES (?,?,?,?)",
               (uid, now.strftime("%Y-%m-%d"), str(item_key), mg))
     conn.commit(); conn.close()
+    # Проверяем суточный лимит — шлём предупреждение при превышении 400 мг
+    total_today, _ = get_caffeine_today(uid)
+    if total_today >= 400:
+        try:
+            warning = (
+                f"⚠️ *Много кофеина за сегодня!*\n\n"
+                f"Суммарно: *{total_today} мг* (безопасный максимум — 400 мг/день)\n\n"
+                f"Возможные эффекты при превышении: тревожность, учащённый пульс, бессонница.\n"
+                f"Следующую порцию лучше пропустить или выбрать без кофеина ☕"
+            )
+            bot.send_message(uid, warning, parse_mode="Markdown")
+        except Exception:
+            pass
     return mg
 
 def get_caffeine_today(uid):
@@ -10953,6 +11019,8 @@ def main_menu(uid=None):
     else:
         m.add(types.KeyboardButton("🟢 Тренировка сегодня"), types.KeyboardButton("✅ Тренировка завершена"))
     m.add(types.KeyboardButton("⚖️ Внести вес"), types.KeyboardButton("📋 Сводка за день"))
+    # Быстрые действия — вода и шаги прямо с главной
+    m.add(types.KeyboardButton("💧 Внести воду"), types.KeyboardButton("👟 Внести шаги"))
     # Категории
     m.add(types.KeyboardButton("🍽️ Питание"), types.KeyboardButton("🏋️ Тренировки"))
     m.add(types.KeyboardButton("📊 Моё тело"), types.KeyboardButton("📈 Аналитика"))
@@ -11152,7 +11220,8 @@ def reminder_worker():
                         # Для воды показываем сколько уже выпито
                         if "стакан воды" in msg:
                             ml_today = get_water_ml_today(uid)
-                            msg += f"\n💧 Сегодня уже: *{ml_today}* мл из 2500"
+                            goal = get_water_goal_ml(uid)
+                            msg += f"\n💧 Сегодня уже: *{ml_today}* мл из {goal}"
                         bot.send_message(uid, msg, parse_mode="Markdown")
                     except Exception:
                         pass
@@ -11193,11 +11262,12 @@ def reminder_worker():
                         if remind_key not in water_remind_sent:
                             water_remind_sent[remind_key] = True
                             ml_today = get_water_ml_today(uid)
+                            goal = get_water_goal_ml(uid)
                             bot.send_message(uid,
                                 f"💧 *Пора пить воду!*\n\n"
                                 f"Прошло {int(diff_h)}ч без воды.\n"
-                                f"Сегодня уже: *{ml_today} мл* из 2500 мл\n\n"
-                                f"{'✅ Норма выполнена! Но не забывай пить.' if ml_today >= 2500 else f'Осталось: {2500-ml_today} мл'}",
+                                f"Сегодня уже: *{ml_today} мл* из {goal} мл\n\n"
+                                f"{'✅ Норма выполнена! Но не забывай пить.' if ml_today >= goal else f'Осталось: {goal-ml_today} мл'}",
                                 parse_mode="Markdown")
                 except Exception:
                     pass
@@ -11235,6 +11305,37 @@ def reminder_worker():
                                     parse_mode="Markdown", reply_markup=kb_med)
             except Exception:
                 pass
+
+        # ── Напоминание о взвешивании — утром в 8:00 если 3+ дня не взвешивался ──
+        if now.hour == 8 and now.minute == 0:
+            users = get_all_users()
+            for uid in users:
+                try:
+                    profile = get_profile(uid)
+                    if not profile or not profile.get("reminders_enabled", 1):
+                        continue
+                    last = get_last_weigh_date(uid)
+                    if last:
+                        from datetime import date as _date
+                        try:
+                            last_d = _date.fromisoformat(last)
+                            days_ago = (_date.today() - last_d).days
+                        except Exception:
+                            days_ago = 0
+                    else:
+                        days_ago = 999
+                    if days_ago >= 3:
+                        weigh_key = (uid, "weigh", now.strftime("%Y-%m-%d"))
+                        if weigh_key not in sent_today:
+                            sent_today.add(weigh_key)
+                            bot.send_message(uid,
+                                f"⚖️ *Не забудь взвеситься!*\n\n"
+                                f"{'Ты не взвешивался уже ' + str(days_ago) + ' дней.' if days_ago < 999 else 'Ещё нет ни одного взвешивания.'}\n\n"
+                                f"Взвешивайся утром натощак — так данные самые точные.\n"
+                                f"Нажми *⚖️ Внести вес* в главном меню.",
+                                parse_mode="Markdown")
+                except Exception:
+                    pass
 
         # Сбрасываем в полночь
         if now.hour == 0 and now.minute == 0:
@@ -11751,6 +11852,15 @@ def handle_callback(call):
         try: bot.delete_message(cid, call.message.message_id)
         except: pass
 
+    # ── Noop (заголовки-кнопки) ──
+    elif data == "noop":
+        bot.answer_callback_query(call.id)
+
+    # ── Статистика напитков за неделю ──
+    elif data == "drinks_stats":
+        bot.answer_callback_query(call.id)
+        bot.send_message(cid, build_drinks_weekly_stats(cid), parse_mode="Markdown")
+
     # ── Давление: открыть форму ввода ──
     elif data == "pressure_add":
         bot.answer_callback_query(call.id)
@@ -11969,6 +12079,20 @@ def handle_callback(call):
             except Exception:
                 bot.send_message(cid, build_water_ml_status(cid) + f"\n\n✅ {emoji} +{ml} мл {drink_type}{note}",
                                  parse_mode="Markdown")
+
+    elif data.startswith("weight_day:"):
+        bot.answer_callback_query(call.id)
+        day = data.split(":")[1]
+        if day == "yesterday":
+            set_state(cid, "waiting_weight_yesterday")
+            bot.send_message(cid,
+                "📆 Введи вес за *вчера* (например: *105.7*):",
+                parse_mode="Markdown", reply_markup=cancel_menu())
+        else:
+            set_state(cid, "waiting_weight")
+            bot.send_message(cid,
+                "📅 Введи вес за *сегодня* (например: *105.7*):",
+                parse_mode="Markdown", reply_markup=cancel_menu())
 
     elif data.startswith("water_drink_sel:"):
         drink_type = data.split(":", 1)[1]
@@ -12819,6 +12943,25 @@ def router(message):
         return
 
     # Ввод веса
+    if state == "waiting_weight_yesterday":
+        try:
+            w = float(text.replace(",", "."))
+            if not (30 < w < 300):
+                raise ValueError("out of range")
+        except Exception:
+            bot.send_message(cid, "Введи число, например: *105.7*", parse_mode="Markdown")
+            return
+        from datetime import timedelta
+        yesterday = (now_samara() - timedelta(days=1)).strftime("%Y-%m-%d")
+        conn = sqlite3.connect("weight_tracker.db")
+        conn.execute("INSERT INTO weights (user_id, weight_value, date) VALUES (?,?,?)", (cid, w, yesterday))
+        conn.commit(); conn.close()
+        set_state(cid, "idle")
+        bot.send_message(cid,
+            f"✅ Вес *{w} кг* сохранён за вчера ({yesterday}).",
+            parse_mode="Markdown", reply_markup=main_menu(cid))
+        return
+
     if state == "waiting_weight":
         try:
             w = float(text.replace(",", "."))
@@ -14056,9 +14199,16 @@ def router(message):
 
     # Вес
     elif text=="⚖️ Внести вес":
+        kb_w = types.InlineKeyboardMarkup(row_width=2)
+        kb_w.add(
+            types.InlineKeyboardButton("📅 За сегодня", callback_data="weight_day:today"),
+            types.InlineKeyboardButton("📆 За вчера",   callback_data="weight_day:yesterday"),
+        )
         set_state(cid,"waiting_weight")
-        bot.send_message(cid,"⚖️ Введи текущий вес (например: *105.7*)\n\nЛучше утром натощак.",
-                         parse_mode="Markdown",reply_markup=cancel_menu())
+        bot.send_message(cid,
+            "⚖️ Введи текущий вес (например: *105.7*)\n\nЛучше утром натощак.\n\n"
+            "Если забыл внести вчера — нажми «📆 За вчера»:",
+            parse_mode="Markdown", reply_markup=kb_w)
 
     # Шаги
     elif text=="👟 Внести шаги":
@@ -14069,12 +14219,24 @@ def router(message):
                          parse_mode="Markdown",reply_markup=cancel_menu())
 
     # Вода — показываем инлайн-кнопки мл
-    elif text=="💧 Внести воду":
+    elif text in ("💧 Внести воду", "💧 Вода (мл)"):
         kb_drink = types.InlineKeyboardMarkup(row_width=1)
-        for emoji, label, dtype, hint in DRINK_MENU:
-            kb_drink.add(types.InlineKeyboardButton(
-                f"{emoji} {label}  _({hint})_" if False else f"{emoji} {label} — {hint}",
-                callback_data=f"water_drink_sel:{dtype}"))
+        # Любимые напитки вверху (последние 3 использованных)
+        favs = get_favorite_drinks(cid, limit=3)
+        if favs:
+            kb_drink.add(types.InlineKeyboardButton("⭐ Последние напитки:", callback_data="noop"))
+            for dtype in favs:
+                emoji = DRINK_EMOJI.get(dtype, "💧")
+                coef = DRINK_HYDRATION.get(dtype, 1.0)
+                hint = f"{round(coef*100)}%"
+                kb_drink.add(types.InlineKeyboardButton(
+                    f"{emoji} {dtype} — {hint}", callback_data=f"water_drink_sel:{dtype}"))
+            kb_drink.add(types.InlineKeyboardButton("— все напитки —", callback_data="water_ml:choose_drink"))
+        else:
+            for emoji, label, dtype, hint in DRINK_MENU:
+                kb_drink.add(types.InlineKeyboardButton(
+                    f"{emoji} {label} — {hint}", callback_data=f"water_drink_sel:{dtype}"))
+        kb_drink.add(types.InlineKeyboardButton("📊 Статистика за неделю", callback_data="drinks_stats"))
         kb_drink.add(types.InlineKeyboardButton("↩️ Отменить последнее", callback_data="water_ml:undo"))
         bot.send_message(cid,
             build_water_ml_status(cid) + "\n\n*Что ты пил?* Выбери напиток:",
