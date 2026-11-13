@@ -2527,6 +2527,86 @@ def build_weight_ascii_chart(uid, days=30):
     chart.append(date_line)
     return "\n".join(chart)
 
+def _build_ascii_chart_generic(values, labels, unit="", height=7):
+    """Универсальный ASCII-бар-чарт. values — список чисел, labels — список коротких подписей."""
+    if not values or max(values) == 0:
+        return None
+    max_v = max(values)
+    width = len(values)
+    chart = []
+    for row in range(height, 0, -1):
+        threshold = (row / height) * max_v
+        line = "".join("█" if v >= threshold else " " for v in values)
+        val = (row / height) * max_v
+        if unit == "мл":
+            chart.append(f"{int(val):5d} |{line}")
+        elif unit == "ккал":
+            chart.append(f"{int(val):5d} |{line}")
+        else:
+            chart.append(f"{int(val):6d}|{line}")
+    chart.append("       " + "─" * width)
+    # Подписи (каждые 2 дня)
+    date_line = "       "
+    for i, lbl in enumerate(labels):
+        if i % 2 == 0 and i + 1 < width:
+            date_line += lbl[:2]
+        else:
+            date_line += " "
+    chart.append(date_line)
+    return "\n".join(chart)
+
+def build_kcal_ascii_chart(uid, days=14):
+    """ASCII-график калорий за N дней."""
+    conn = sqlite3.connect("weight_tracker.db")
+    rows = conn.execute(
+        "SELECT date(date), SUM(kcal) FROM food_diary WHERE user_id=? "
+        "AND date>=date('now',?) GROUP BY date(date) ORDER BY date(date)",
+        (uid, f"-{days} days")).fetchall()
+    conn.close()
+    if len(rows) < 3:
+        return None
+    values = [round(r[1]) for r in rows]
+    labels = [r[0][5:] for r in rows]  # MM-DD
+    chart = _build_ascii_chart_generic(values, labels, unit="ккал")
+    if not chart:
+        return None
+    return f"🔥 *Калории за {days} дней (ккал/день):*\n```\n{chart}\n```"
+
+def build_water_ascii_chart(uid, days=14):
+    """ASCII-график воды за N дней."""
+    conn = sqlite3.connect("weight_tracker.db")
+    rows = conn.execute(
+        "SELECT date(logged_at), SUM(ml) FROM water_ml_log WHERE user_id=? "
+        "AND logged_at>=date('now',?) GROUP BY date(logged_at) ORDER BY date(logged_at)",
+        (uid, f"-{days} days")).fetchall()
+    conn.close()
+    if len(rows) < 3:
+        return None
+    values = [round(r[1]) for r in rows]
+    labels = [r[0][5:] for r in rows]
+    goal = get_water_goal_ml(uid)
+    chart = _build_ascii_chart_generic(values, labels, unit="мл")
+    if not chart:
+        return None
+    return f"💧 *Вода за {days} дней (мл/день):*\n_Норма: {goal} мл_\n```\n{chart}\n```"
+
+def build_steps_ascii_chart(uid, days=14):
+    """ASCII-график шагов за N дней."""
+    conn = sqlite3.connect("weight_tracker.db")
+    rows = conn.execute(
+        "SELECT date(date), step_count FROM steps WHERE user_id=? "
+        "AND date>=date('now',?) ORDER BY date(date)",
+        (uid, f"-{days} days")).fetchall()
+    conn.close()
+    if len(rows) < 3:
+        return None
+    values = [r[1] for r in rows]
+    labels = [r[0][5:] for r in rows]
+    chart = _build_ascii_chart_generic(values, labels)
+    if not chart:
+        return None
+    return f"👟 *Шаги за {days} дней (шагов/день):*\n```\n{chart}\n```"
+
 # ─────────────────────────────────────────
 #  ЕЖЕНЕДЕЛЬНЫЕ МИНИ-ЦЕЛИ
 # ─────────────────────────────────────────
@@ -5076,6 +5156,20 @@ DRINK_EMOJI = {
     "чай с сахаром":"🍵","кофе чёрный":"☕","американо":"☕","эспрессо":"☕",
     "кофе с молоком":"☕","кофе с сиропом":"☕","капучино":"☕","латте":"☕",
     "сок":"🧃","молоко":"🥛","кефир":"🥛","компот":"🍹","морс":"🍹",
+}
+
+# Автоматическое логирование кофеина при внесении напитка (мг на 100 мл)
+DRINK_CAFFEINE_PER_100ML = {
+    "кофе чёрный":    40,   # ~95 мг в 240 мл
+    "американо":      40,
+    "эспрессо":       210,  # ~63 мг в 30 мл
+    "кофе с молоком": 30,
+    "кофе с сиропом": 30,
+    "капучино":       25,
+    "латте":          20,
+    "чай чёрный":     20,   # ~47 мг в 240 мл
+    "чай зелёный":    12,   # ~28 мг в 240 мл
+    "чай с сахаром":  20,
 }
 
 # Описания напитков для меню выбора — показываем коэффициент пользователю
@@ -9384,6 +9478,48 @@ def build_cheatmeal_plan(uid):
 #  ЕЖЕНЕДЕЛЬНЫЙ ОТЧЁТ
 # ─────────────────────────────────────────
 
+def build_best_day_stats(uid):
+    """Возвращает строку с лучшим днём недели по шагам и калориям за последние 90 дней."""
+    from collections import defaultdict
+    weekday_names = ["Пн","Вт","Ср","Чт","Пт","Сб","Вс"]
+    # Шаги по дням недели
+    sd = get_steps(uid, limit=90)
+    steps_by_wd = defaultdict(list)
+    for steps, dt in sd:
+        try:
+            d = date.fromisoformat(dt[:10])
+            steps_by_wd[d.weekday()].append(steps)
+        except Exception:
+            pass
+    # Ккал по дням недели
+    conn = sqlite3.connect("weight_tracker.db")
+    try:
+        rows = conn.execute(
+            "SELECT date, SUM(kcal) FROM food_log WHERE user_id=? AND date >= date('now','-90 days') GROUP BY date",
+            (uid,)).fetchall()
+    except Exception:
+        rows = []
+    conn.close()
+    kcal_by_wd = defaultdict(list)
+    for dt, kcal in rows:
+        try:
+            d = date.fromisoformat(dt[:10])
+            kcal_by_wd[d.weekday()].append(kcal)
+        except Exception:
+            pass
+    if not steps_by_wd and not kcal_by_wd:
+        return ""
+    lines = []
+    if steps_by_wd:
+        avg_steps = {wd: round(sum(v)/len(v)) for wd, v in steps_by_wd.items()}
+        best_steps_wd = max(avg_steps, key=lambda x: avg_steps[x])
+        lines.append(f"👟 Самый активный день: *{weekday_names[best_steps_wd]}* (~{avg_steps[best_steps_wd]:,} шагов)".replace(",", " "))
+    if kcal_by_wd:
+        avg_kcal = {wd: round(sum(v)/len(v)) for wd, v in kcal_by_wd.items()}
+        best_kcal_wd = min(avg_kcal, key=lambda x: avg_kcal[x])  # минимум ккал = лучший день диеты
+        lines.append(f"🥗 Лучший день диеты: *{weekday_names[best_kcal_wd]}* (~{avg_kcal[best_kcal_wd]} ккал)")
+    return "\n".join(lines)
+
 def build_weekly_report(uid):
     profile = get_profile(uid)
     if not profile: return None
@@ -9413,6 +9549,8 @@ def build_weekly_report(uid):
 
     chart = build_weight_chart(uid)
     chart_text = f"\n```\n{chart}\n```\n" if chart else ""
+    best_day_text = build_best_day_stats(uid)
+    best_day_block = f"\n📅 *Паттерны активности:*\n{best_day_text}\n" if best_day_text else ""
 
     return (
         f"📬 *ЕЖЕНЕДЕЛЬНЫЙ ОТЧЁТ*\n"
@@ -9424,6 +9562,7 @@ def build_weekly_report(uid):
         f"📅 Недель в работе: *~{weeks_done}*\n\n"
         f"👟 Среднее шагов/день: *{avg_steps:,}*\n".replace(",", " ") +
         comp_text +
+        best_day_block +
         f"\n🤖 *Анализ динамики:*\n{a_text}\n"
         + chart_text +
         f"\n💪 {random.choice(MOTIVATIONAL_QUOTES)}"
@@ -11306,6 +11445,39 @@ def reminder_worker():
             except Exception:
                 pass
 
+        # ── Напоминания о добавках (утром 9:00 и вечером 20:00) ──
+        if key in ((9, 0), (20, 0)):
+            users_s = get_all_users()
+            for uid in users_s:
+                try:
+                    profile = get_profile(uid)
+                    if not profile or not profile.get("reminders_enabled", 1):
+                        continue
+                    supp_key_name = ("supp_morning" if key[0] == 9 else "supp_evening", uid, now.strftime("%Y-%m-%d"))
+                    if supp_key_name in sent_today:
+                        continue
+                    active_keys, taken_today = get_supplements_today(uid)
+                    if not active_keys:
+                        continue
+                    # Утром — утренние добавки, вечером — вечерние
+                    time_filter = "утром" if key[0] == 9 else "вечером"
+                    pending = []
+                    for sk in active_keys:
+                        if sk in taken_today:
+                            continue
+                        s = SUPPLEMENTS_LIST.get(sk, {})
+                        if time_filter in s.get("time", ""):
+                            pending.append(s)
+                    if pending:
+                        sent_today.add(supp_key_name)
+                        lines = "\n".join(f"{s['emoji']} {s['name']} — {s['dose']}" for s in pending)
+                        bot.send_message(uid,
+                            f"💊 *Добавки на {'утро' if key[0]==9 else 'вечер'}:*\n\n{lines}\n\n"
+                            f"Открой «💊 Добавки» чтобы отметить приём.",
+                            parse_mode="Markdown")
+                except Exception:
+                    pass
+
         # ── Напоминание о взвешивании — утром в 8:00 если 3+ дня не взвешивался ──
         if now.hour == 8 and now.minute == 0:
             users = get_all_users()
@@ -11341,8 +11513,8 @@ def reminder_worker():
         if now.hour == 0 and now.minute == 0:
             sent_today.clear()
             water_remind_sent.clear()
-        # Еженедельный отчёт — воскресенье 9:00
-        if now.weekday() == 6 and now.hour == 9 and now.minute == 0 and ("weekly",) not in sent_today:
+        # Еженедельный отчёт — воскресенье 20:00
+        if now.weekday() == 6 and now.hour == 20 and now.minute == 0 and ("weekly",) not in sent_today:
             sent_today.add(("weekly",))
             users = get_all_users()
             for uid in users:
@@ -11608,11 +11780,31 @@ def send_welcome(message):
     else:
         plan = get_user_plan(cid, profile)
         sick = "\n\n🤒 *Режим болезни активен*" if profile.get("is_sick") else ""
+        # Дневной прогресс
+        try:
+            today_kcal = get_kcal_today(cid)
+        except Exception:
+            today_kcal = 0
+        try:
+            today_water_ml = get_water_ml_today(cid)
+            water_goal = get_water_goal_ml(cid)
+            water_pct = min(100, round(today_water_ml / water_goal * 100)) if water_goal else 0
+        except Exception:
+            today_water_ml = water_pct = 0
+        try:
+            steps_today_rows = get_steps(cid, limit=1)
+            steps_today = steps_today_rows[0][0] if steps_today_rows and steps_today_rows[0][1][:10] == now_samara().strftime("%Y-%m-%d") else 0
+        except Exception:
+            steps_today = 0
+        target_kcal = plan.get("calories", 0)
+        kcal_str = f"🔥 Ккал: *{today_kcal}* / {target_kcal}" if target_kcal else f"🔥 Ккал: *{today_kcal}*"
+        water_str = f"💧 Вода: *{today_water_ml} мл* ({water_pct}%)"
+        steps_str = f"👟 Шаги: *{steps_today:,}*".replace(",", " ") if steps_today else "👟 Шаги: —"
+        progress_block = f"\n\n📊 *Сегодня:*\n{kcal_str}\n{water_str}\n{steps_str}"
         bot.send_message(cid,
             f"👋 С возвращением!\n\n"
             f"🎯 Цель: *{profile['current_weight']} → {profile['target_weight']} кг*\n"
-            f"🔥 Калории: *{plan['calories']} ккал/день*\n"
-            f"📈 Темп: *~{plan['weekly_loss']} кг/нед*{sick}",
+            f"📈 Темп: *~{plan['weekly_loss']} кг/нед*{sick}{progress_block}",
             parse_mode="Markdown", reply_markup=main_menu(cid))
 
 @bot.message_handler(content_types=['document'])
@@ -11869,13 +12061,6 @@ def handle_callback(call):
             "🩺 Введи давление в формате:\n*120/80* или *120/80/72* (с пульсом)",
             parse_mode="Markdown", reply_markup=cancel_menu())
 
-    # ── Лекарство: принял ──
-    elif data.startswith("med_take:"):
-        mid = int(data.split(":")[1])
-        log_medication_taken(cid, mid)
-        bot.answer_callback_query(call.id, "✅ Отмечено!")
-        bot.send_message(cid, build_medications_today(cid), parse_mode="Markdown")
-
     # ── Лекарство: добавить новое ──
     elif data == "med_add":
         bot.answer_callback_query(call.id)
@@ -12073,12 +12258,56 @@ def handle_callback(call):
             water_eq = round(ml * coef)
             emoji = DRINK_EMOJI.get(drink_type, "💧")
             note = f" (засчитано {water_eq} мл)" if coef < 1.0 else ""
+            # Автологирование кофеина
+            caf_note = ""
+            caf_per100 = DRINK_CAFFEINE_PER_100ML.get(drink_type, 0)
+            if caf_per100 > 0:
+                caf_mg = round(ml * caf_per100 / 100)
+                if caf_mg > 0:
+                    log_caffeine(cid, caf_mg)
+                    caf_note = f"\n☕ +{caf_mg} мг кофеина засчитано"
             try:
-                bot.edit_message_text(build_water_ml_status(cid) + f"\n\n✅ {emoji} +{ml} мл {drink_type}{note}",
+                bot.edit_message_text(build_water_ml_status(cid) + f"\n\n✅ {emoji} +{ml} мл {drink_type}{note}{caf_note}",
                                       cid, call.message.message_id, parse_mode="Markdown")
             except Exception:
-                bot.send_message(cid, build_water_ml_status(cid) + f"\n\n✅ {emoji} +{ml} мл {drink_type}{note}",
+                bot.send_message(cid, build_water_ml_status(cid) + f"\n\n✅ {emoji} +{ml} мл {drink_type}{note}{caf_note}",
                                  parse_mode="Markdown")
+
+    # ── Вес: редактировать последнюю запись ──
+    elif data.startswith("weight_edit_last:"):
+        bot.answer_callback_query(call.id)
+        parts = data.split(":")
+        old_val = parts[1]
+        old_date = parts[2] if len(parts) > 2 else ""
+        set_state(cid, f"waiting_weight_edit:{old_date}")
+        bot.send_message(cid,
+            f"✏️ *Исправить вес за {old_date}*\n\nТекущее значение: *{old_val} кг*\n\nВведи новое значение:",
+            parse_mode="Markdown", reply_markup=cancel_menu())
+
+    # ── Шаги: быстрые кнопки ──
+    elif data.startswith("steps_add:"):
+        steps_val = int(data.split(":")[1])
+        add_steps(cid, steps_val)
+        set_state(cid, "idle")
+        v = ("🔥 Отличный день!" if steps_val >= 12000 else
+             "✅ Хороший уровень!" if steps_val >= 8000 else
+             "🟡 Добавь прогулку." if steps_val >= 5000 else
+             "🔴 Малоподвижный день.")
+        bot.answer_callback_query(call.id, f"✅ {steps_val:,} шагов".replace(",", " "))
+        bot.send_message(cid, f"👟 *{steps_val:,} шагов*\n\n{v}".replace(",", " "),
+                         parse_mode="Markdown", reply_markup=main_menu(cid))
+
+    elif data.startswith("steps_custom:"):
+        bot.answer_callback_query(call.id)
+        set_state(cid, "waiting_steps")
+        bot.send_message(cid, "👟 Введи количество шагов (например: *8500*):",
+                         parse_mode="Markdown", reply_markup=cancel_menu())
+
+    elif data.startswith("steps_day:"):
+        bot.answer_callback_query(call.id)
+        set_state(cid, "waiting_steps_yesterday")
+        bot.send_message(cid, "📆 Введи шаги за *вчера* (например: *7500*):",
+                         parse_mode="Markdown", reply_markup=cancel_menu())
 
     elif data.startswith("weight_day:"):
         bot.answer_callback_query(call.id)
@@ -12409,6 +12638,42 @@ def handle_callback(call):
         bot.answer_callback_query(call.id)
         bot.send_message(cid, "Введи пульс покоя (уд/мин), например `58`:", parse_mode="Markdown")
         set_state(cid, "waiting_resting_hr")
+
+    # ── Графики ккал/воды/шагов ──
+    elif data.startswith("chart_show:"):
+        metric = data.split(":")[1]
+        bot.answer_callback_query(call.id)
+        if metric == "kcal":
+            ch = build_kcal_ascii_chart(cid)
+            bot.send_message(cid, ch or "🔥 Недостаточно данных по калориям (нужно 3+ дня).", parse_mode="Markdown")
+        elif metric == "water":
+            ch = build_water_ascii_chart(cid)
+            bot.send_message(cid, ch or "💧 Недостаточно данных по воде (нужно 3+ дня).", parse_mode="Markdown")
+        elif metric == "steps":
+            ch = build_steps_ascii_chart(cid)
+            bot.send_message(cid, ch or "👟 Недостаточно данных по шагам (нужно 3+ дня).", parse_mode="Markdown")
+
+    # ── Еда: подтверждение удаления ──
+    elif data.startswith("food_del_confirm:"):
+        food_id = int(data.split(":")[1])
+        conn = sqlite3.connect("weight_tracker.db")
+        last = conn.execute("SELECT product, grams, kcal FROM food_diary WHERE id=?", (food_id,)).fetchone()
+        conn.execute("DELETE FROM food_diary WHERE id=?", (food_id,))
+        conn.commit(); conn.close()
+        bot.answer_callback_query(call.id, "🗑 Удалено")
+        if last:
+            bot.edit_message_text(
+                f"↩️ Удалено: *{last[0]}* {last[1]}г ({round(last[2])} ккал)\n\n" + build_food_diary_today(cid),
+                cid, call.message.message_id, parse_mode="Markdown")
+        else:
+            bot.edit_message_text("↩️ Запись удалена.", cid, call.message.message_id)
+
+    elif data == "food_del_cancel":
+        bot.answer_callback_query(call.id, "❌ Отменено")
+        try:
+            bot.delete_message(cid, call.message.message_id)
+        except Exception:
+            pass
 
     # ── Медикаменты: принял ──
     elif data.startswith("med_take:"):
@@ -12962,6 +13227,27 @@ def router(message):
             parse_mode="Markdown", reply_markup=main_menu(cid))
         return
 
+    if state and state.startswith("waiting_weight_edit:"):
+        edit_date = state.split(":", 1)[1]
+        try:
+            w = float(text.replace(",", "."))
+            if not (30 < w < 300):
+                raise ValueError("out of range")
+        except Exception:
+            bot.send_message(cid, "Введи число, например: *105.7*", parse_mode="Markdown")
+            return
+        conn = sqlite3.connect("weight_tracker.db")
+        # Обновляем последнюю запись за эту дату
+        conn.execute(
+            "UPDATE weights SET weight_value=? WHERE user_id=? AND date=? AND id=(SELECT MAX(id) FROM weights WHERE user_id=? AND date=?)",
+            (w, cid, edit_date, cid, edit_date))
+        conn.commit(); conn.close()
+        set_state(cid, "idle")
+        bot.send_message(cid,
+            f"✅ Вес *{w} кг* за {edit_date} исправлен.",
+            parse_mode="Markdown", reply_markup=main_menu(cid))
+        return
+
     if state == "waiting_weight":
         try:
             w = float(text.replace(",", "."))
@@ -13080,6 +13366,22 @@ def router(message):
                              parse_mode="Markdown",reply_markup=main_menu(cid))
         except Exception:
             bot.send_message(cid,"Введи число шагов, например: 8500")
+        return
+
+    if state == "waiting_steps_yesterday":
+        try:
+            s = int(text.replace(" ", "").replace(",", "")); assert 0 < s < 100000
+            yesterday = (now_samara() - timedelta(days=1)).strftime("%Y-%m-%d")
+            conn = sqlite3.connect("weight_tracker.db")
+            conn.execute("INSERT INTO steps (user_id, step_count, date) VALUES (?,?,?)", (cid, s, yesterday))
+            conn.commit(); conn.close()
+            set_state(cid, "idle")
+            v = ("🔥 Отличный день!" if s >= 12000 else "✅ Хороший уровень!" if s >= 8000 else
+                 "🟡 Добавь прогулку." if s >= 5000 else "🔴 Малоподвижный день.")
+            bot.send_message(cid, f"👟 *{s:,} шагов* за вчера ({yesterday})\n\n{v}".replace(",", " "),
+                             parse_mode="Markdown", reply_markup=main_menu(cid))
+        except Exception:
+            bot.send_message(cid, "Введи число шагов, например: 8500")
         return
 
     # ── Самочувствие: настроение ──
@@ -14204,6 +14506,12 @@ def router(message):
             types.InlineKeyboardButton("📅 За сегодня", callback_data="weight_day:today"),
             types.InlineKeyboardButton("📆 За вчера",   callback_data="weight_day:yesterday"),
         )
+        # Показываем кнопку редактирования если есть последняя запись
+        last_w = get_weights(cid, limit=1)
+        if last_w:
+            lw_val, lw_date = last_w[0]
+            kb_w.add(types.InlineKeyboardButton(
+                f"✏️ Исправить последний ({lw_val} кг)", callback_data=f"weight_edit_last:{last_w[0][0]}:{lw_date[:10]}"))
         set_state(cid,"waiting_weight")
         bot.send_message(cid,
             "⚖️ Введи текущий вес (например: *105.7*)\n\nЛучше утром натощак.\n\n"
@@ -14214,9 +14522,27 @@ def router(message):
     elif text=="👟 Внести шаги":
         profile=get_profile(cid)
         sick_hint="\n🤒 При болезни норма — не более 5 000." if profile and profile.get("is_sick") else ""
+        # Последние шаги для контекста
+        recent_steps = get_steps(cid, limit=1)
+        last_str = f"\n📅 Последний раз: *{recent_steps[0][0]:,}* шагов".replace(",", " ") if recent_steps else ""
+        kb_steps = types.InlineKeyboardMarkup(row_width=3)
+        kb_steps.add(
+            types.InlineKeyboardButton("+1 000", callback_data="steps_add:1000"),
+            types.InlineKeyboardButton("+5 000", callback_data="steps_add:5000"),
+            types.InlineKeyboardButton("+10 000", callback_data="steps_add:10000"),
+        )
+        kb_steps.add(
+            types.InlineKeyboardButton("+8 500", callback_data="steps_add:8500"),
+            types.InlineKeyboardButton("+12 000", callback_data="steps_add:12000"),
+        )
+        kb_steps.add(
+            types.InlineKeyboardButton("📆 За вчера", callback_data="steps_day:yesterday"),
+            types.InlineKeyboardButton("✏️ Своё число", callback_data="steps_custom:today"),
+        )
         set_state(cid,"waiting_steps")
-        bot.send_message(cid,f"👟 Введи количество шагов (например: *8500*){sick_hint}",
-                         parse_mode="Markdown",reply_markup=cancel_menu())
+        bot.send_message(cid,
+            f"👟 *Шаги — быстро или своё число*{last_str}{sick_hint}\n\nВыбери или введи количество:",
+            parse_mode="Markdown", reply_markup=kb_steps)
 
     # Вода — показываем инлайн-кнопки мл
     elif text in ("💧 Внести воду", "💧 Вода (мл)"):
@@ -14273,8 +14599,14 @@ def router(message):
         chart=build_weight_chart(cid)
         if not chart:
             bot.send_message(cid,"Нужно минимум 2 взвешивания для графика."); return
+        kb_charts = types.InlineKeyboardMarkup(row_width=1)
+        kb_charts.add(
+            types.InlineKeyboardButton("🔥 График калорий (14 дней)", callback_data="chart_show:kcal"),
+            types.InlineKeyboardButton("💧 График воды (14 дней)", callback_data="chart_show:water"),
+            types.InlineKeyboardButton("👟 График шагов (14 дней)", callback_data="chart_show:steps"),
+        )
         bot.send_message(cid,f"📊 *График веса (последние взвешивания):*\n\n```\n{chart}\n```",
-                         parse_mode="Markdown")
+                         parse_mode="Markdown", reply_markup=kb_charts)
 
     # Шаги история
     elif text=="👣 Мои шаги":
@@ -15299,20 +15631,25 @@ def router(message):
         bot.send_message(cid, msg, parse_mode="Markdown", reply_markup=m2)
 
     elif text == "↩️ Удалить последнее":
-        # Удаляем последнюю запись еды за сегодня
+        # Показываем подтверждение перед удалением
         today = now_samara().strftime("%Y-%m-%d")
         conn = sqlite3.connect("weight_tracker.db")
         last = conn.execute(
             "SELECT id, product, grams, kcal FROM food_diary WHERE user_id=? AND date=? ORDER BY id DESC LIMIT 1",
             (cid, today)).fetchone()
+        conn.close()
         if last:
-            conn.execute("DELETE FROM food_diary WHERE id=?", (last[0],))
-            conn.commit()
-            conn.close()
-            bot.send_message(cid, f"↩️ Удалено: *{last[1]}* {last[2]}г ({round(last[3])} ккал)\n\n" +
-                             build_food_diary_today(cid), parse_mode="Markdown")
+            kb_confirm = types.InlineKeyboardMarkup(row_width=2)
+            kb_confirm.add(
+                types.InlineKeyboardButton("🗑 Да, удалить", callback_data=f"food_del_confirm:{last[0]}"),
+                types.InlineKeyboardButton("❌ Отмена", callback_data="food_del_cancel"),
+            )
+            bot.send_message(cid,
+                f"⚠️ *Удалить запись?*\n\n"
+                f"🍽 *{last[1]}* — {last[2]}г ({round(last[3])} ккал)\n\n"
+                f"Это действие нельзя отменить.",
+                parse_mode="Markdown", reply_markup=kb_confirm)
         else:
-            conn.close()
             bot.send_message(cid, "⚠️ Нет записей еды за сегодня.")
 
     elif text == "➕ Записать приём пищи":
