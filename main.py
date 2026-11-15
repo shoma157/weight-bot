@@ -1,4 +1,4 @@
-import telebot
+ import telebot
 from telebot import types
 import sqlite3
 import threading
@@ -1250,9 +1250,15 @@ def add_weight(uid, w):
                  (uid, w, now_samara().strftime("%Y-%m-%d %H:%M")))
     conn.commit(); conn.close()
 
-def get_weights(uid):
+def get_weights(uid, limit=None):
     conn = sqlite3.connect("weight_tracker.db")
-    rows = conn.execute("SELECT weight_value,date FROM weights WHERE user_id=? ORDER BY id ASC", (uid,)).fetchall()
+    if limit:
+        rows = conn.execute(
+            "SELECT weight_value,date FROM weights WHERE user_id=? ORDER BY id DESC LIMIT ?",
+            (uid, limit)).fetchall()
+        rows = list(reversed(rows))
+    else:
+        rows = conn.execute("SELECT weight_value,date FROM weights WHERE user_id=? ORDER BY id ASC", (uid,)).fetchall()
     conn.close()
     return rows
 
