@@ -2582,8 +2582,8 @@ def build_water_ascii_chart(uid, days=14):
     """ASCII-график воды за N дней."""
     conn = sqlite3.connect("weight_tracker.db")
     rows = conn.execute(
-        "SELECT date(logged_at), SUM(ml) FROM water_ml_log WHERE user_id=? "
-        "AND logged_at>=date('now',?) GROUP BY date(logged_at) ORDER BY date(logged_at)",
+        "SELECT date, SUM(ml) FROM water_ml_log WHERE user_id=? "
+        "AND date>=date('now',?) GROUP BY date ORDER BY date",
         (uid, f"-{days} days")).fetchall()
     conn.close()
     if len(rows) < 3:
@@ -4765,21 +4765,22 @@ def build_today_summary(uid):
 
     # Вес
     w_row = conn.execute(
-        "SELECT weight FROM weights WHERE user_id=? AND date LIKE ? ORDER BY id DESC LIMIT 1",
+        "SELECT weight_value FROM weights WHERE user_id=? AND date LIKE ? ORDER BY id DESC LIMIT 1",
         (uid, today+"%")).fetchone()
     # Шаги
     s_row = conn.execute(
         "SELECT step_count FROM steps WHERE user_id=? AND date=?", (uid, today)).fetchone()
     # Ккал
     k_row = conn.execute(
-        "SELECT SUM(calories), COUNT(*) FROM food_diary WHERE user_id=? AND date=?",
+        "SELECT SUM(kcal), COUNT(*) FROM food_diary WHERE user_id=? AND date=?",
         (uid, today)).fetchone()
-    # Вода
+    # Вода (мл)
     wt_row = conn.execute(
-        "SELECT SUM(cups) FROM water_log WHERE user_id=? AND date=?", (uid, today)).fetchone()
+        "SELECT SUM(ml) FROM water_ml_log WHERE user_id=? AND date=?", (uid, today)).fetchone()
     # Сон
     sl_row = conn.execute(
-        "SELECT hours FROM sleep_log WHERE user_id=? AND date=?", (uid, today)).fetchone()
+        "SELECT hours FROM sleep_log WHERE user_id=? AND date=? ORDER BY id DESC LIMIT 1",
+        (uid, today)).fetchone()
     # Кофеин
     cf_row = conn.execute(
         "SELECT SUM(mg) FROM caffeine_log WHERE user_id=? AND date=?", (uid, today)).fetchone()
@@ -4788,13 +4789,13 @@ def build_today_summary(uid):
     profile = get_profile(uid)
     goal_kcal  = get_daily_kcal_goal(uid) if profile else 2000
     goal_steps = 10000
-    goal_water = 8
+    water_goal_ml = get_water_goal_ml(uid)
 
     weight  = w_row[0] if w_row else None
     steps   = s_row[0] if s_row else 0
     kcal    = int(k_row[0]) if k_row and k_row[0] else 0
     meals   = k_row[1] if k_row else 0
-    water   = wt_row[0] if wt_row and wt_row[0] else 0
+    water_ml = int(wt_row[0]) if wt_row and wt_row[0] else 0
     sleep_h = sl_row[0] if sl_row else None
     caffeine= int(cf_row[0]) if cf_row and cf_row[0] else 0
 
@@ -4805,7 +4806,7 @@ def build_today_summary(uid):
 
     s_bar, s_pct = pct_bar(steps, goal_steps)
     k_bar, k_pct = pct_bar(kcal,  goal_kcal)
-    w_bar, w_pct = pct_bar(water, goal_water)
+    w_bar, w_pct = pct_bar(water_ml, water_goal_ml)
 
     now_h = now_samara().strftime("%H:%M")
     lines = [f"📋 *СВОДКА ЗА СЕГОДНЯ* ({now_h})\n"]
@@ -4817,7 +4818,7 @@ def build_today_summary(uid):
 
     lines.append(f"🦶 Шаги:  [{s_bar}] *{steps:,}/{goal_steps:,}* ({s_pct}%)".replace(",", " "))
     lines.append(f"🔥 Ккал:  [{k_bar}] *{kcal}/{goal_kcal}* ({k_pct}%) — {meals} приёмов")
-    lines.append(f"💧 Вода:  [{w_bar}] *{int(water)}/{goal_water}* ст. ({w_pct}%)")
+    lines.append(f"💧 Вода:  [{w_bar}] *{water_ml}/{water_goal_ml} мл* ({w_pct}%)")
 
     if sleep_h:
         sleep_emoji = "✅" if sleep_h >= 7 else ("⚠️" if sleep_h >= 6 else "🔴")
@@ -12127,12 +12128,6 @@ def handle_callback(call):
         bot.answer_callback_query(call.id)
         bot.send_message(cid, build_plateau_plan(), parse_mode="Markdown")
 
-    # ── Добавить в избранное (из калькулятора) ──
-    elif data.startswith("fav_add:"):
-        dish = data[8:]
-        add_favorite_dish(cid, dish)
-        bot.answer_callback_query(call.id, f"⭐ {dish} добавлен в избранное!")
-
     # ── Режим тренировок (домашние) ──
     elif data.startswith("hw_mode:"):
         mode = int(data.split(":")[1])
@@ -12632,12 +12627,6 @@ def handle_callback(call):
         muscle = data.split(":", 1)[1]
         bot.answer_callback_query(call.id)
         bot.send_message(cid, build_warmup(muscle), parse_mode="Markdown")
-
-    # ── Суперсеты ──
-    elif data.startswith("superset:"):
-        template = data.split(":", 1)[1]
-        bot.answer_callback_query(call.id)
-        bot.send_message(cid, build_superset_plan(template), parse_mode="Markdown")
 
     # ── Пульс покоя ──
     elif data == "set_resting_hr":
