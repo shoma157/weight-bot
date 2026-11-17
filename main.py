@@ -4192,28 +4192,28 @@ def build_month_comparison(uid):
 
     # Текущий месяц (с начала по сегодня)
     c_steps_avg = get_avg("steps", "step_count", cur_month_start, today)
-    c_kcal_avg  = get_avg("food_diary", "calories", cur_month_start, today)
-    c_water_avg = get_avg("water_log", "cups", cur_month_start, today)
+    c_kcal_avg  = get_avg("food_diary", "kcal", cur_month_start, today)
+    c_water_avg = get_avg("water_ml_log", "ml", cur_month_start, today)
     c_weight_entries = get_count("weights", cur_month_start, today)
 
     # Прошлый месяц
     p_steps_avg = get_avg("steps", "step_count", prev_month_start, prev_month_end)
-    p_kcal_avg  = get_avg("food_diary", "calories", prev_month_start, prev_month_end)
-    p_water_avg = get_avg("water_log", "cups", prev_month_start, prev_month_end)
+    p_kcal_avg  = get_avg("food_diary", "kcal", prev_month_start, prev_month_end)
+    p_water_avg = get_avg("water_ml_log", "ml", prev_month_start, prev_month_end)
     p_weight_entries = get_count("weights", prev_month_start, prev_month_end)
 
     # Вес первый/последний
     cw_first = conn.execute(
-        "SELECT weight FROM weights WHERE user_id=? AND date>=? ORDER BY date ASC LIMIT 1",
+        "SELECT weight_value FROM weights WHERE user_id=? AND date>=? ORDER BY date ASC LIMIT 1",
         (uid, cur_month_start.strftime("%Y-%m-%d"))).fetchone()
     cw_last = conn.execute(
-        "SELECT weight FROM weights WHERE user_id=? AND date<=? ORDER BY date DESC LIMIT 1",
+        "SELECT weight_value FROM weights WHERE user_id=? AND date<=? ORDER BY date DESC LIMIT 1",
         (uid, today.strftime("%Y-%m-%d"))).fetchone()
     pw_first = conn.execute(
-        "SELECT weight FROM weights WHERE user_id=? AND date>=? ORDER BY date ASC LIMIT 1",
+        "SELECT weight_value FROM weights WHERE user_id=? AND date>=? ORDER BY date ASC LIMIT 1",
         (uid, prev_month_start.strftime("%Y-%m-%d"))).fetchone()
     pw_last = conn.execute(
-        "SELECT weight FROM weights WHERE user_id=? AND date<=? ORDER BY date DESC LIMIT 1",
+        "SELECT weight_value FROM weights WHERE user_id=? AND date<=? ORDER BY date DESC LIMIT 1",
         (uid, prev_month_end.strftime("%Y-%m-%d"))).fetchone()
     conn.close()
 
@@ -4861,7 +4861,7 @@ def build_calorie_balance(uid):
     today = now_samara().date().strftime("%Y-%m-%d")
     conn = sqlite3.connect("weight_tracker.db")
     kcal_eaten = conn.execute(
-        "SELECT SUM(calories) FROM food_diary WHERE user_id=? AND date=?",
+        "SELECT SUM(kcal) FROM food_diary WHERE user_id=? AND date=?",
         (uid, today)).fetchone()
     steps_row = conn.execute(
         "SELECT step_count FROM steps WHERE user_id=? AND date=?",
@@ -5751,19 +5751,19 @@ def build_ai_week_analysis(uid):
     week_ago = (now_samara() - timedelta(days=7)).strftime("%Y-%m-%d")
     conn = sqlite3.connect("weight_tracker.db")
     kcal_rows = conn.execute(
-        "SELECT SUM(kcal) FROM food_diary WHERE uid=? AND date>=?", (uid, week_ago)).fetchone()
+        "SELECT SUM(kcal) FROM food_diary WHERE user_id=? AND date>=?", (uid, week_ago)).fetchone()
     workout_rows = conn.execute(
-        "SELECT COUNT(*) FROM workouts WHERE user_id=? AND date>=?", (uid, week_ago)).fetchone()
+        "SELECT COUNT(*) FROM workout_weights WHERE user_id=? AND date>=?", (uid, week_ago)).fetchone()
     sleep_rows = conn.execute(
-        "SELECT AVG(duration_h) FROM sleep_log WHERE user_id=? AND date>=?", (uid, week_ago)).fetchone()
+        "SELECT AVG(hours) FROM sleep_log WHERE user_id=? AND date>=?", (uid, week_ago)).fetchone()
     conn.close()
     avg_kcal = round((kcal_rows[0] or 0) / 7)
     workouts_count = workout_rows[0] or 0
     avg_sleep = round(sleep_rows[0] or 0, 1)
     weight_change = 0
     if len(wd) >= 2:
-        weight_change = round(wd[-1][1] - wd[-2][1], 1)
-    avg_steps = round(sum(r[1] for r in sd) / max(1, len(sd)))
+        weight_change = round(wd[-1][0] - wd[-2][0], 1)
+    avg_steps = round(sum(r[0] for r in sd) / max(1, len(sd)))
     summary = (f"Данные за неделю: вес изменился на {weight_change} кг, "
                f"среднее потребление {avg_kcal} ккал/день, "
                f"тренировок {workouts_count}, "
@@ -6037,7 +6037,7 @@ def calculate_body_fat_navy(uid):
         return None, "Профиль не найден"
     conn = sqlite3.connect("weight_tracker.db")
     c = conn.cursor()
-    c.execute("SELECT measurement, value FROM body_measurements WHERE user_id=? ORDER BY date DESC LIMIT 20", (uid,))
+    c.execute("SELECT part, cm FROM measurements WHERE user_id=? ORDER BY date DESC LIMIT 20", (uid,))
     rows = c.fetchall(); conn.close()
     measures = {r[0]: r[1] for r in rows}
     gender = p.get("gender", "male")
@@ -6077,7 +6077,7 @@ def calculate_body_fat_navy(uid):
 def build_measurements_compare(uid):
     conn = sqlite3.connect("weight_tracker.db")
     c = conn.cursor()
-    c.execute("SELECT measurement, value, date FROM body_measurements WHERE user_id=? ORDER BY date ASC", (uid,))
+    c.execute("SELECT part, cm, date FROM measurements WHERE user_id=? ORDER BY date ASC", (uid,))
     rows = c.fetchall(); conn.close()
     if not rows:
         return "Нет данных обхватов. Добавь через 📏 Обхваты тела."
@@ -6111,7 +6111,7 @@ ACHIEVEMENT_TREE = [
 def build_achievement_tree(uid):
     conn = sqlite3.connect("weight_tracker.db")
     c = conn.cursor()
-    c.execute("SELECT xp FROM user_xp WHERE user_id=?", (uid,))
+    c.execute("SELECT total_xp FROM user_xp WHERE user_id=?", (uid,))
     row = c.fetchone(); conn.close()
     total_xp = row[0] if row else 0
     current_level = max((a["level"] for a in ACHIEVEMENT_TREE if total_xp >= a["xp"]), default=1)
@@ -6163,19 +6163,19 @@ def build_streak_board(uid):
     c = conn.cursor()
     results = {}
     # Тренировки
-    c.execute("SELECT DISTINCT date FROM workout_log WHERE user_id=? ORDER BY date DESC", (uid,))
+    c.execute("SELECT DISTINCT date FROM workout_weights WHERE user_id=? ORDER BY date DESC", (uid,))
     rows = [r[0] for r in c.fetchall()]
     results["🏋️ Тренировки"] = _calc_streak(rows)
     # Вес
-    c.execute("SELECT DISTINCT date FROM weight_log WHERE user_id=? ORDER BY date DESC", (uid,))
+    c.execute("SELECT DISTINCT date FROM weights WHERE user_id=? ORDER BY date DESC", (uid,))
     rows = [r[0] for r in c.fetchall()]
     results["⚖️ Замеры веса"] = _calc_streak(rows)
     # Питание
-    c.execute("SELECT DISTINCT date FROM food_log WHERE user_id=? ORDER BY date DESC", (uid,))
+    c.execute("SELECT DISTINCT date FROM food_diary WHERE user_id=? ORDER BY date DESC", (uid,))
     rows = [r[0] for r in c.fetchall()]
     results["🍽️ Питание"] = _calc_streak(rows)
     # Шаги
-    c.execute("SELECT DISTINCT date FROM steps_log WHERE user_id=? ORDER BY date DESC", (uid,))
+    c.execute("SELECT DISTINCT date FROM steps WHERE user_id=? ORDER BY date DESC", (uid,))
     rows = [r[0] for r in c.fetchall()]
     results["👟 Шаги"] = _calc_streak(rows)
     # Сон
@@ -6541,19 +6541,19 @@ def build_monthly_html_report(uid):
     conn = sqlite3.connect("weight_tracker.db")
     c = conn.cursor()
     # Вес
-    c.execute("SELECT date, weight FROM weight_log WHERE user_id=? AND date >= ? ORDER BY date",
+    c.execute("SELECT date, weight_value FROM weights WHERE user_id=? AND date >= ? ORDER BY date",
               (uid, month_start))
     weights = c.fetchall()
     # Шаги
-    c.execute("SELECT date, steps FROM steps_log WHERE user_id=? AND date >= ? ORDER BY date",
+    c.execute("SELECT date, step_count FROM steps WHERE user_id=? AND date >= ? ORDER BY date",
               (uid, month_start))
     steps = c.fetchall()
     # Тренировки
-    c.execute("SELECT COUNT(DISTINCT date) FROM workout_log WHERE user_id=? AND date >= ?",
+    c.execute("SELECT COUNT(DISTINCT date) FROM workout_weights WHERE user_id=? AND date >= ?",
               (uid, month_start))
     workout_days = c.fetchone()[0] or 0
     # Питание
-    c.execute("SELECT AVG(kcal) FROM (SELECT date, SUM(kcal) as kcal FROM food_log WHERE user_id=? AND date >= ? GROUP BY date)",
+    c.execute("SELECT AVG(kcal) FROM (SELECT date, SUM(kcal) as kcal FROM food_diary WHERE user_id=? AND date >= ? GROUP BY date)",
               (uid, month_start))
     avg_kcal_row = c.fetchone()
     avg_kcal = round(avg_kcal_row[0]) if avg_kcal_row and avg_kcal_row[0] else 0
@@ -6613,6 +6613,9 @@ def get_competition_status(uid):
     conn = sqlite3.connect("weight_tracker.db")
     c = conn.cursor()
     # Партнёр
+    c.execute('''CREATE TABLE IF NOT EXISTS partner_pairs (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        user1_id INTEGER, user2_id INTEGER, partner_id INTEGER)''')
     c.execute("SELECT partner_id FROM partner_pairs WHERE user1_id=? OR user2_id=? LIMIT 1",
               (uid, uid))
     row = c.fetchone()
@@ -6683,25 +6686,26 @@ def build_personal_records(uid):
     sd = get_steps(uid, limit=365)
     lines = ["🏆 *Личные рекорды*\n"]
     if wd:
-        min_w = min(wd, key=lambda x: x[1])
-        max_w = max(wd, key=lambda x: x[1])
-        start_w = wd[0][1]
-        cur_w   = wd[-1][1]
+        min_w = min(wd, key=lambda x: x[0])
+        max_w = max(wd, key=lambda x: x[0])
+        start_w = wd[0][0]
+        cur_w   = wd[-1][0]
         lost    = round(start_w - cur_w, 1)
         lines.append(f"⚖️ Стартовый вес: *{start_w} кг*")
-        lines.append(f"⚖️ Минимальный вес: *{min_w[1]} кг* ({min_w[0][:10]})")
+        lines.append(f"⚖️ Минимальный вес: *{min_w[0]} кг* ({min_w[1][:10]})")
         lines.append(f"📉 Всего сброшено: *{lost} кг* 🎉\n")
     if sd:
-        best_day = max(sd, key=lambda x: x[1])
-        avg_steps = round(sum(r[1] for r in sd)/len(sd))
-        lines.append(f"👣 Рекорд шагов: *{best_day[1]:,}* ({best_day[0][:10]})".replace(",","_"))
+        best_day = max(sd, key=lambda x: x[0])
+        avg_steps = round(sum(r[0] for r in sd)/len(sd))
+        lines.append(f"👣 Рекорд шагов: *{best_day[0]:,}* ({best_day[1][:10]})".replace(",","_"))
         lines.append(f"👣 Среднее шагов/день: *{avg_steps:,}*".replace(",","_"))
     conn = sqlite3.connect("weight_tracker.db")
-    streak_row = conn.execute("SELECT MAX(streak) FROM user_profile WHERE user_id=?", (uid,)).fetchone()
-    cur_streak = conn.execute("SELECT streak FROM user_profile WHERE user_id=?", (uid,)).fetchone()
+    cur_streak = conn.execute("SELECT current_streak, best_streak FROM streak WHERE user_id=?", (uid,)).fetchone()
     conn.close()
-    if cur_streak and cur_streak[0]:
+    if cur_streak:
         lines.append(f"\n🔥 Текущая серия: *{cur_streak[0]} дней*")
+        if cur_streak[1] and cur_streak[1] > cur_streak[0]:
+            lines.append(f"🏅 Рекорд серии: *{cur_streak[1]} дней*")
     return "\n".join(lines)
 
 # ─────────────────────────────────────────
@@ -7068,7 +7072,7 @@ def build_compare_days_kcal(uid):
     conn = sqlite3.connect("weight_tracker.db")
     c = conn.cursor()
     def day_totals(d):
-        c.execute("SELECT SUM(kcal), SUM(protein), SUM(fat), SUM(carbs) FROM food_log WHERE user_id=? AND date=?",
+        c.execute("SELECT SUM(kcal), NULL, NULL, NULL FROM food_diary WHERE user_id=? AND date=?",
                   (uid, d))
         row = c.fetchone()
         return [r or 0 for r in row]
@@ -7090,9 +7094,9 @@ def build_compare_days_kcal(uid):
 def get_favorite_foods(uid, limit=10):
     conn = sqlite3.connect("weight_tracker.db")
     c = conn.cursor()
-    c.execute('''SELECT name, kcal, protein, fat, carbs, COUNT(*) as cnt
-                 FROM food_log WHERE user_id=?
-                 GROUP BY name ORDER BY cnt DESC LIMIT ?''', (uid, limit))
+    c.execute('''SELECT product, kcal, NULL, NULL, NULL, COUNT(*) as cnt
+                 FROM food_diary WHERE user_id=?
+                 GROUP BY product ORDER BY cnt DESC LIMIT ?''', (uid, limit))
     rows = c.fetchall(); conn.close()
     return rows  # (name, kcal, protein, fat, carbs, cnt)
 
@@ -7252,9 +7256,9 @@ def build_smart_shopping_list(uid):
     conn = get_db(); c = conn.cursor()
     # Берём блюда за последние 7 дней
     c.execute("""
-        SELECT food_name, SUM(grams) as total_g FROM food_diary
-        WHERE uid=? AND date>=date('now','-7 days')
-        GROUP BY food_name ORDER BY total_g DESC LIMIT 20
+        SELECT product, SUM(grams) as total_g FROM food_diary
+        WHERE user_id=? AND date>=date('now','-7 days')
+        GROUP BY product ORDER BY total_g DESC LIMIT 20
     """, (uid,))
     foods = c.fetchall()
     conn.close()
@@ -7531,10 +7535,10 @@ def build_weight_progression(uid):
 def get_last_weigh_date(uid):
     """Возвращает дату последнего взвешивания."""
     conn = get_db(); c = conn.cursor()
-    c.execute("SELECT date FROM weight_log WHERE uid=? ORDER BY date DESC LIMIT 1", (uid,))
+    c.execute("SELECT date FROM weights WHERE user_id=? ORDER BY id DESC LIMIT 1", (uid,))
     row = c.fetchone()
     conn.close()
-    return row[0] if row else None
+    return row[0][:10] if row else None
 
 def build_weigh_reminder_status(uid):
     """Показывает статус напоминания и последнее взвешивание."""
