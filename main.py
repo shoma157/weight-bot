@@ -1194,6 +1194,10 @@ def init_db():
         chest REAL, waist REAL, hips REAL, arm REAL, thigh REAL,
         neck REAL DEFAULT 0, abdomen REAL DEFAULT 0, date TEXT)''')
 
+    c.execute('''CREATE TABLE IF NOT EXISTS user_settings (
+        user_id INTEGER PRIMARY KEY,
+        auto_backup INTEGER DEFAULT 0)''')
+
     conn.commit(); conn.close()
 
 _profile_cache = {}  # {uid: (profile_dict, timestamp)}
@@ -4679,6 +4683,8 @@ def analyze_food_photo(image_bytes, mime_type="image/jpeg"):
     except ImportError:
         return None
     except Exception as e:
+        if "auth" in str(e).lower() or "api_key" in str(e).lower() or "api key" in str(e).lower():
+            return "⚠️ Добавь переменную `ANTHROPIC_API_KEY` для анализа фото еды."
         return None
 
 def analyze_receipt_photo(image_bytes, mime_type="image/jpeg"):
@@ -4710,7 +4716,9 @@ def analyze_receipt_photo(image_bytes, mime_type="image/jpeg"):
             }]
         )
         return msg.content[0].text
-    except Exception:
+    except Exception as e:
+        if "auth" in str(e).lower() or "api_key" in str(e).lower() or "api key" in str(e).lower():
+            return "⚠️ Добавь переменную `ANTHROPIC_API_KEY` для анализа чека."
         return None
 
 
@@ -11295,6 +11303,7 @@ def menu_nastroyki():
     m.add(types.KeyboardButton("🏁 Соревнование"), types.KeyboardButton("📄 HTML отчёт"))
     m.add(types.KeyboardButton("🎁 Реферальная программа"), types.KeyboardButton("🏆 Мои челленджи"))
     m.add(types.KeyboardButton("☀️ Утренний брифинг"))
+    m.add(types.KeyboardButton("🗄 Авто-бэкап"))
     m.add(types.KeyboardButton("🏠 Главное меню"))
     return m
 
@@ -11941,25 +11950,61 @@ ADMIN_UID = None  # Установи свой Telegram ID для получен�
 # Укажи свой Telegram ID сюда (узнать: написать @userinfobot)
 BACKUP_CHAT_ID = None  # например: 123456789
 
-def send_db_backup():
-    """Отправляет файл БД в Telegram владельцу."""
-    chat_id = BACKUP_CHAT_ID or ADMIN_UID
-    if not chat_id:
-        return
+def get_auto_backup_users():
+    """Возвращает список user_id у кого включён авто-бэкап."""
+    conn = sqlite3.connect(DB_PATH)
+    rows = conn.execute("SELECT user_id FROM user_settings WHERE auto_backup=1").fetchall()
+    conn.close()
+    return [r[0] for r in rows]
+
+def set_auto_backup(uid, enabled: bool):
+    """Включает или выключает авто-бэкап для пользователя."""
+    conn = sqlite3.connect(DB_PATH)
+    conn.execute(
+        "INSERT INTO user_settings(user_id, auto_backup) VALUES(?,?) "
+        "ON CONFLICT(user_id) DO UPDATE SET auto_backup=excluded.auto_backup",
+        (uid, 1 if enabled else 0))
+    conn.commit(); conn.close()
+
+def get_auto_backup_enabled(uid) -> bool:
+    conn = sqlite3.connect(DB_PATH)
+    row = conn.execute("SELECT auto_backup FROM user_settings WHERE user_id=?", (uid,)).fetchone()
+    conn.close()
+    return bool(row and row[0])
+
+def send_personal_backup(uid):
+    """Шлёт пользователю его личный бэкап БД."""
     if not os.path.exists(DB_PATH):
         return
+    from datetime import datetime as _dt
+    ts = _dt.now().strftime("%Y-%m-%d_%H-%M")
     try:
-        from datetime import datetime as _dt
-        ts = _dt.now().strftime("%Y-%m-%d_%H-%M")
         with open(DB_PATH, "rb") as f:
             bot.send_document(
-                chat_id, f,
-                caption=f"🗄 *Резервная копия БД*\n{ts}\n\nЧтобы восстановить — перешли этот файл боту.",
+                uid, f,
+                caption=(
+                    f"🗄 *Резервная копия базы данных*\n"
+                    f"📅 {ts}\n\n"
+                    f"Чтобы восстановить данные — просто перешли этот файл боту.\n"
+                    f"Выключить авто-бэкап: *⚙️ Настройки → 🗄 Авто-бэкап*"
+                ),
                 parse_mode="Markdown",
                 visible_file_name=f"backup_{ts}.db"
             )
     except Exception as e:
-        print(f"[BACKUP] Ошибка отправки: {e}")
+        print(f"[BACKUP] Ошибка отправки uid={uid}: {e}")
+
+def send_db_backup():
+    """Отправляет бэкап всем пользователям у кого включён авто-бэкап."""
+    users = get_auto_backup_users()
+    # Также старый BACKUP_CHAT_ID/ADMIN_UID если задан
+    extra = BACKUP_CHAT_ID or ADMIN_UID
+    if extra and extra not in users:
+        users.append(extra)
+    if not users or not os.path.exists(DB_PATH):
+        return
+    for uid in users:
+        send_personal_backup(uid)
 
 def restore_db_from_file(file_path):
     """Восстанавливает БД из переданного файла."""
@@ -12048,6 +12093,35 @@ def handle_callback(call):
             reply_markup=ration_kb if ration_kb else main_menu(cid))
         if ration_kb:
             bot.send_message(cid, "⬆️ Рецепты из рациона:", reply_markup=main_menu(cid))
+
+    # ── Авто-бэкап ──
+    elif data.startswith("auto_backup:"):
+        action = data.split(":")[1]
+        if action == "on":
+            set_auto_backup(cid, True)
+            bot.answer_callback_query(call.id, "✅ Авто-бэкап включён!")
+            bot.edit_message_text(
+                "🗄 *Авто-бэкап включён*\n\n"
+                "Каждый день в *08:00* я пришлю тебе файл `.db`.\n"
+                "Чтобы восстановить данные — просто перешли его мне.\n\n"
+                "Выключить: *⚙️ Настройки → 🗄 Авто-бэкап*",
+                cid, call.message.message_id, parse_mode="Markdown")
+        elif action == "off":
+            set_auto_backup(cid, False)
+            bot.answer_callback_query(call.id, "🔕 Авто-бэкап выключен")
+            bot.edit_message_text(
+                "🗄 *Авто-бэкап выключен*\n\n"
+                "Включить обратно: *⚙️ Настройки → 🗄 Авто-бэкап*",
+                cid, call.message.message_id, parse_mode="Markdown")
+        elif action == "now":
+            bot.answer_callback_query(call.id, "⏳ Создаю бэкап...")
+            send_personal_backup(cid)
+
+    # ── Сканировать ещё одну этикетку ──
+    elif data == "scan_another_label":
+        bot.answer_callback_query(call.id)
+        set_state(cid, "waiting_label_photo")
+        bot.send_message(cid, "📷 Отправь фото следующей этикетки:")
 
     # ── Закрыть ──
     elif data == "close":
@@ -12964,6 +13038,7 @@ def handle_photo(message):
                 types.InlineKeyboardButton("✅ Готово", callback_data="close"))
             bot.send_message(cid, f"📷 *Состав продукта:*\n\n{result}",
                              parse_mode="Markdown", reply_markup=kb_label)
+            # state stays idle — scan_another_label callback re-activates waiting_label_photo
             set_state(cid, "idle")
             return
 
@@ -13750,7 +13825,7 @@ def router(message):
                 f"✅ *{name}* {dose} × {tpd}/день — добавлено!",
                 parse_mode="Markdown", reply_markup=main_menu(cid))
         except Exception:
-            bot.send_message(cid, "Введи число от 1 до 4.")
+            bot.send_message(cid, "Введи число от 1 до 10.")
         return
 
     # ── Обхваты: ввод значения ──
@@ -13910,22 +13985,7 @@ def router(message):
             bot.send_message(cid,"Введи число стаканов (1-8)")
         return
 
-    # ── Штрихкод ──
-    if state == "waiting_gi_product":
-        product_name = text.strip()
-        gi = get_gi(product_name)
-        if gi is not None:
-            bot.send_message(cid, f"🍎 *{product_name.capitalize()}*\n\n{gi_label(gi)}\n\n"
-                             "💡 Низкий ГИ (≤40) — медленные углеводы, долгое насыщение\n"
-                             "Средний (41–70) — умеренное влияние на сахар\n"
-                             "Высокий (≥71) — быстрый рост сахара в крови",
-                             parse_mode="Markdown", reply_markup=main_menu(cid))
-        else:
-            bot.send_message(cid, f"❓ ГИ для *{product_name}* не найден в базе.\n\n"
-                             "Попробуй: гречка, рис, картофель, банан, яблоко...",
-                             parse_mode="Markdown", reply_markup=main_menu(cid))
-        set_state(cid, "idle")
-        return
+    # (waiting_gi_product removed — handled by waiting_gi_query)
 
     if state == "waiting_exercise_history":
         exercise = text.strip()
@@ -14061,6 +14121,8 @@ def router(message):
                     f"{g}г = {round(info['kcal']*g/100)} ккал",
                     callback_data=f"barcode_add:{barcode}:{g}:{info['name']}:{info['kcal']}"))
             bot.send_message(cid, build_barcode_result(info), parse_mode="Markdown", reply_markup=kb_bc)
+            # state already set to barcode_got_grams above; don't reset to idle
+            return
         set_state(cid, "idle")
         return
 
@@ -14757,6 +14819,23 @@ def router(message):
                 kb2.add(types.InlineKeyboardButton(f"✅ {name}", callback_data=f"med_take:{mid}"))
         kb2.add(types.InlineKeyboardButton("➕ Добавить лекарство", callback_data="med_add"))
         bot.send_message(cid, msg, parse_mode="Markdown", reply_markup=kb2)
+
+    # ── Авто-бэкап ──
+    elif text == "🗄 Авто-бэкап":
+        enabled = get_auto_backup_enabled(cid)
+        status = "✅ включён" if enabled else "❌ выключен"
+        kb_ab = types.InlineKeyboardMarkup(row_width=1)
+        if enabled:
+            kb_ab.add(types.InlineKeyboardButton("🔕 Выключить авто-бэкап", callback_data="auto_backup:off"))
+        else:
+            kb_ab.add(types.InlineKeyboardButton("🔔 Включить авто-бэкап в 8:00", callback_data="auto_backup:on"))
+        kb_ab.add(types.InlineKeyboardButton("📥 Получить бэкап сейчас", callback_data="auto_backup:now"))
+        bot.send_message(cid,
+            f"🗄 *Авто-бэкап базы данных*\n\n"
+            f"Статус: {status}\n\n"
+            f"Каждый день в *08:00* бот пришлёт тебе файл `.db` со всеми твоими данными.\n"
+            f"Чтобы восстановить данные — просто перешли этот файл боту.",
+            parse_mode="Markdown", reply_markup=kb_ab)
 
     # ── Экспорт CSV ──
     elif text in ("📤 Экспорт CSV", "📤 Экспорт данных"):
@@ -15566,10 +15645,11 @@ def router(message):
                 f"{progress}\n\nЗаписать результат?",
                 parse_mode="Markdown", reply_markup=m2)
 
-    elif text == "✏️ Записать новый подход" and extra:
-        set_state(cid, "log_exercise_weight", extra=extra)
+    elif text == "✏️ Записать новый подход" and (extra or state == "log_exercise_name_known"):
+        exercise_name = extra or ""
+        set_state(cid, "log_exercise_weight", extra=exercise_name)
         bot.send_message(cid,
-            f"*{extra}*\n\nВведи через пробел: *вес повторения подходы*\n"
+            f"*{exercise_name}*\n\nВведи через пробел: *вес повторения подходы*\n"
             "Например: *20 12 4*",
             parse_mode="Markdown", reply_markup=cancel_menu())
 
