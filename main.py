@@ -9506,7 +9506,7 @@ def build_best_day_stats(uid):
     conn = sqlite3.connect("weight_tracker.db")
     try:
         rows = conn.execute(
-            "SELECT date, SUM(kcal) FROM food_log WHERE user_id=? AND date >= date('now','-90 days') GROUP BY date",
+            "SELECT date, SUM(kcal) FROM food_diary WHERE user_id=? AND date >= date('now','-90 days') GROUP BY date",
             (uid,)).fetchall()
     except Exception:
         rows = []
@@ -12618,8 +12618,8 @@ def handle_callback(call):
             f_carb = float(parts[5]) if parts[5] else 0
             today  = date.today().isoformat()
             conn = sqlite3.connect("weight_tracker.db")
-            conn.execute("INSERT INTO food_log (user_id, date, meal, name, kcal, protein, fat, carbs) VALUES (?,?,?,?,?,?,?,?)",
-                         (cid, today, "snack", f_name, f_kcal, f_prot, f_fat, f_carb))
+            conn.execute("INSERT INTO food_diary (user_id, meal, product, grams, kcal, date) VALUES (?,?,?,?,?,?)",
+                         (cid, "snack", f_name, 0, f_kcal, today))
             conn.commit(); conn.close()
             add_xp(cid, XP_REWARDS.get("food_log", 2))
             bot.answer_callback_query(call.id, f"✅ {f_name[:20]} добавлено!")
@@ -12684,12 +12684,6 @@ def handle_callback(call):
             bot.edit_message_text(msg, cid, call.message.message_id, parse_mode="Markdown", reply_markup=kb_med)
         except Exception:
             pass
-
-    elif data == "med_add":
-        bot.answer_callback_query(call.id)
-        bot.send_message(cid, "Введи медикамент в формате:\n`Название Доза Время`\n\nПример: `Витамин D 2000 МЕ 08:00`",
-                         parse_mode="Markdown")
-        set_state(cid, "waiting_med_add")
 
     # ── Кофеин ──
     elif data.startswith("caffeine:"):
@@ -14813,14 +14807,6 @@ def router(message):
     elif text == "🗓️ Меню на неделю":
         bot.send_message(cid, build_week_menu(cid), parse_mode="Markdown")
 
-    # ── Список покупок ──
-    elif text == "🛒 Список покупок":
-        bot.send_message(cid, build_shopping_list_from_menu(), parse_mode="Markdown")
-
-    # ── Избранные блюда ──
-    elif text == "⭐ Избранные блюда":
-        bot.send_message(cid, build_favorites_menu(cid), parse_mode="Markdown")
-
     # ── Напоминания ──
     elif text == "⏰ Напоминания":
         rows = get_user_reminders(cid)
@@ -15538,18 +15524,6 @@ def router(message):
         bot.send_message(cid, shopping, parse_mode="Markdown")
 
     # ── Самочувствие ──
-    elif text == "😊 Самочувствие":
-        set_state(cid, "wellbeing_mood")
-        m2 = types.ReplyKeyboardMarkup(resize_keyboard=True, row_width=5)
-        m2.add(*[types.KeyboardButton(str(i)) for i in range(1,6)])
-        m2.add(types.KeyboardButton("❌ Отмена"))
-        bot.send_message(cid,
-            "😊 *ТРЕКЕР САМОЧУВСТВИЯ*\n\n"
-            "Оцени *настроение* сегодня:\n\n"
-            "1 — Ужасное 😞\n2 — Плохое 😕\n3 — Нормальное 😐\n"
-            "4 — Хорошее 😊\n5 — Отличное 🌟",
-            parse_mode="Markdown", reply_markup=m2)
-
     # ── Журнал весов ──
     elif text == "🏋️ Журнал весов":
         exercises = get_all_exercises(cid)
@@ -15964,10 +15938,6 @@ def router(message):
             bot.send_message(cid, result)
 
     # ── ГИ продукта ──
-    elif text == "🍎 ГИ продукта":
-        bot.send_message(cid, "Введи название продукта для проверки ГИ:")
-        set_state(cid, "waiting_gi_product")
-
     # ── Журнал упражнений ──
     elif text == "📒 Журнал упражнений":
         bot.send_message(cid, "Введи название упражнения для просмотра истории:\n\n_(например: жим лёжа, приседания, тяга)_",
