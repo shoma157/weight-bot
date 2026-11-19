@@ -6072,7 +6072,7 @@ def calculate_body_fat_navy(uid):
     else:
         cat = "Существенный дефицит" if bf < 6 else "Спортсмен" if bf < 14 else "Фитнес" if bf < 18 else "Норма" if bf < 25 else "Ожирение"
     wd = get_weights(uid)
-    weight = wd[-1][1] if wd else None
+    weight = wd[-1][0] if wd else None
     fat_kg  = round(weight * bf / 100, 1) if weight else None
     lean_kg = round(weight - fat_kg, 1) if weight and fat_kg else None
     lines = [f"📐 *% Жира (формула ВМС США)*\n", f"Жир: *{bf}%* — {cat}"]
@@ -7136,28 +7136,12 @@ def build_food_diary_text(uid):
 
 # ── Обхваты — save/report алиасы ──
 def save_measurements(uid, **kw):
-    """Сохраняет обхваты тела"""
-    conn = sqlite3.connect("weight_tracker.db")
-    conn.execute('''CREATE TABLE IF NOT EXISTS measurements (
-        id INTEGER PRIMARY KEY AUTOINCREMENT, uid INTEGER, user_id INTEGER,
-        chest REAL, waist REAL, hips REAL, arm REAL, thigh REAL,
-        neck REAL DEFAULT 0, abdomen REAL DEFAULT 0, date TEXT)''')
-    try: conn.execute("ALTER TABLE measurements ADD COLUMN arm REAL")
-    except Exception: pass
+    """Сохраняет обхваты тела — пишет в part/cm схему (одна строка на часть тела)."""
+    allowed = ["chest", "waist", "hips", "arm", "thigh", "neck", "abdomen"]
     today = now_samara().strftime("%Y-%m-%d")
-    ex = conn.execute("SELECT id FROM measurements WHERE user_id=? AND date=?", (uid, today)).fetchone()
-    allowed = ["chest","waist","hips","arm","thigh","neck","abdomen"]
-    cols = {k: v for k, v in kw.items() if k in allowed}
-    if not cols:
-        conn.close(); return
-    if ex:
-        sets = ", ".join(f"{k}=?" for k in cols)
-        conn.execute(f"UPDATE measurements SET {sets} WHERE id=?", (*cols.values(), ex[0]))
-    else:
-        cols["user_id"] = uid; cols["uid"] = uid; cols["date"] = today
-        c = ", ".join(cols.keys()); v = ", ".join("?"*len(cols))
-        conn.execute(f"INSERT INTO measurements ({c}) VALUES ({v})", list(cols.values()))
-    conn.commit(); conn.close()
+    for part, val in kw.items():
+        if part in allowed and val is not None:
+            save_measurement(uid, part, float(val))
 
 def build_measurements_report(uid):
     """Краткий отчёт по обхватам"""
@@ -8304,39 +8288,50 @@ def build_pms_warning(uid):
     return "\n".join(lines)
 
 def build_measurements_ascii_chart(uid):
-    """ASCII-динамика обхватов за последние 8 записей."""
+    """ASCII-динамика обхватов за последние 8 замеров каждой части."""
     conn = get_db(); c = conn.cursor()
-    c.execute("""SELECT date, waist, hips, chest, arm FROM measurements
-                 WHERE uid=? ORDER BY date DESC LIMIT 8""", (uid,))
+    # Схема: part TEXT, cm REAL, date TEXT
+    c.execute("""SELECT part, cm, date FROM measurements
+                 WHERE user_id=? ORDER BY date ASC""", (uid,))
     rows = c.fetchall()
     conn.close()
-    if len(rows) < 2:
-        return "📏 *Динамика обхватов*\n\nНужно минимум 2 замера."
+    if not rows:
+        return "📏 *Динамика обхватов*\n\nНет данных. Добавь замеры через 📏 Обхваты тела."
 
-    rows = list(reversed(rows))
+    # Группируем по части тела
+    from collections import defaultdict
+    history = defaultdict(list)
+    for part, cm, date in rows:
+        history[part].append((date, cm))
+
+    PART_LABELS = {
+        "waist": "Талия", "hips": "Бёдра", "chest": "Грудь",
+        "arm": "Бицепс", "thigh": "Бедро", "neck": "Шея", "abdomen": "Живот",
+    }
     lines = ["📏 *Динамика обхватов (ASCII)*", ""]
 
-    def mini_chart(values, label):
-        vals = [v for v in values if v]
+    def mini_chart(vals, label):
         if len(vals) < 2:
             return
-        mn, mx = min(vals), max(vals)
+        last8 = vals[-8:]
+        mn, mx = min(v for _, v in last8), max(v for _, v in last8)
         rng = mx - mn or 1
-        bar_h = 4
         chart = []
-        for v in vals:
-            h = int((v - mn) / rng * bar_h)
-            col = ["▁","▂","▄","▆","█"][min(h, 4)]
-            chart.append(col)
-        diff = vals[-1] - vals[0]
+        for _, v in last8:
+            h = int((v - mn) / rng * 4)
+            chart.append(["▁","▂","▄","▆","█"][min(h, 4)])
+        diff = last8[-1][1] - last8[0][1]
         arrow = "📉" if diff < 0 else ("📈" if diff > 0 else "➡️")
         lines.append(f"*{label}:* {''.join(chart)}  {arrow} {diff:+.1f} см")
-        lines.append(f"  {vals[0]:.0f} → {vals[-1]:.0f} см")
+        lines.append(f"  {last8[0][1]:.0f} → {last8[-1][1]:.0f} см")
 
-    mini_chart([r[1] for r in rows], "Талия")
-    mini_chart([r[2] for r in rows], "Бёдра")
-    mini_chart([r[3] for r in rows], "Грудь")
-    mini_chart([r[4] for r in rows], "Бицепс")
+    shown = 0
+    for part_key in ["waist", "hips", "chest", "arm", "thigh", "neck", "abdomen"]:
+        if part_key in history and len(history[part_key]) >= 2:
+            mini_chart(history[part_key], PART_LABELS.get(part_key, part_key))
+            shown += 1
+    if shown == 0:
+        return "📏 *Динамика обхватов*\n\nНужно минимум 2 замера одной части тела."
 
     return "\n".join(lines)
 
@@ -8848,8 +8843,10 @@ def build_challenge_progress(uid):
                       (uid, start_date))
             progress = (c.fetchone() or [0])[0]
         elif ch["metric"] == "sleep":
-            c.execute("SELECT COUNT(*) FROM sleep_log WHERE uid=? AND date(wake_time)>=? AND duration_min>=?",
-                      (uid, start_date, ch["target"]))
+            # sleep_log schema: user_id, date, hours
+            target_hours = ch["target"] / 60 if ch["target"] > 24 else ch["target"]
+            c.execute("SELECT COUNT(*) FROM sleep_log WHERE user_id=? AND date>=? AND hours>=?",
+                      (uid, start_date, target_hours))
             progress = c.fetchone()[0]
 
         pct = min(100, int(progress / ch["days"] * 100))
@@ -11745,12 +11742,12 @@ def cmd_backup(message):
         wr.writerow([])
         # Шаги
         wr.writerow(["=== ШАГИ ==="]); wr.writerow(["дата", "шагов"])
-        for row in conn.execute("SELECT date,steps FROM steps_log WHERE user_id=? ORDER BY date", (cid,)).fetchall():
+        for row in conn.execute("SELECT date, step_count FROM steps WHERE user_id=? ORDER BY date", (cid,)).fetchall():
             wr.writerow(list(row))
         wr.writerow([])
         # Сон
-        wr.writerow(["=== СОН ==="]); wr.writerow(["дата", "начало", "конец", "мин", "качество"])
-        for row in conn.execute("SELECT date,sleep_time,wake_time,duration_min,quality FROM sleep_log WHERE user_id=? ORDER BY date", (cid,)).fetchall():
+        wr.writerow(["=== СОН ==="]); wr.writerow(["дата", "часов"])
+        for row in conn.execute("SELECT date, hours FROM sleep_log WHERE user_id=? ORDER BY date", (cid,)).fetchall():
             wr.writerow(list(row))
         wr.writerow([])
         # Кофеин
