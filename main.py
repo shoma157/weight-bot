@@ -2358,6 +2358,54 @@ MOTIVATIONAL_QUOTES = [
     "🌊 «Не считай дни — делай так, чтобы дни считались.»",
     "🦁 «Боль временна. Гордость — навсегда.»",
     "⚖️ «1 кг в неделю — это 52 кг за год. Стабильность побеждает.»",
+    "🌟 «Твоё тело слышит всё, что говорит твой разум.»",
+    "🏃 «Начни там, где ты есть. Используй то, что имеешь. Делай то, что можешь.»",
+    "💎 «Алмаз — это уголь, который хорошо поработал под давлением.»",
+    "🌱 «Рост начинается там, где заканчивается зона комфорта.»",
+    "⚡ «Не жди мотивации. Начни действовать — мотивация придёт сама.»",
+    "🔑 «Секрет успеха — постоянство в правильных вещах.»",
+    "🎪 «Каждая тренировка — это инвестиция в себя будущего.»",
+    "🌈 «После каждой бури — радуга. После каждой тренировки — прогресс.»",
+    "🦅 «Летать можно только преодолев сопротивление.»",
+    "💫 «Ты сильнее, чем думаешь. Опытнее, чем кажешься. Способнее, чем представляешь.»",
+    "🔥 «Огонь внутри больше, чем огонь снаружи.»",
+    "🎯 «Одна тренировка — ты на шаг ближе. Одна пропущенная — ты на шаг дальше.»",
+    "💪 «Когда хочется бросить — вспомни, зачем начал.»",
+    "🌙 «Завтрашнее утро зависит от того, что ты делаешь сегодня вечером.»",
+    "🏆 «Чемпионы продолжают играть, пока не научатся побеждать.»",
+    "⚓ «Дисциплина важнее мотивации. Мотивация — чувство. Дисциплина — выбор.»",
+    "🌺 «Каждый день ты либо растёшь, либо деградируешь. Нейтрального нет.»",
+    "💧 «Вода камень точит не силой, а постоянством.»",
+    "🎵 «Ритм важнее скорости. Держи темп — и дойдёшь.»",
+    "🌍 «Измени себя — и мир вокруг изменится сам.»",
+    "⚔️ «Борьба с собой — самая важная борьба в жизни.»",
+    "🏄 «Не ищи попутный ветер. Научись плыть против любого.»",
+    "🌻 «Цветок не стыдится, что растёт медленно. Он просто растёт.»",
+    "🦁 «Лев не теряет сна из-за мнения овец о его диете.»",
+    "🔮 «Лучшее время начать было вчера. Второе лучшее — сейчас.»",
+    "🏔️ «Вершина горы не убегает. Убегаем мы.»",
+    "💡 «Знание без действия — это просто информация. Действие — это сила.»",
+    "🎖️ «Медали получают те, кто доходит до финиша. Независимо от времени.»",
+    "🌊 «Океан из капель. Результат из привычек.»",
+    "🔭 «Смотри дальше сегодняшней боли — там твой результат.»",
+    "🦋 «Трансформация требует времени. Гусеница не торопится.»",
+    "⛰️ «Каждый шаг вверх делает вершину ближе.»",
+    "🌿 «Небольшой прогресс каждый день складывается в большие результаты.»",
+    "💪 «Тело — твой инструмент. Держи его в настройке.»",
+    "🌞 «Доброе утро! Ты ещё живёшь мечту или уже её реализуешь?»",
+    "🏹 «Натяни лук сильнее — стрела улетит дальше.»",
+    "🌱 «Маленькое семя сегодня — большое дерево завтра.»",
+    "⚡ «Энергия — это привычка. Тренируй её ежедневно.»",
+    "🎯 «Цель без плана — мечта. План без действия — фантазия.»",
+    "🏋️ «Железо не лжёт. Только ты знаешь, насколько старался.»",
+    "🌈 «После самого тяжёлого подхода — самый сладкий отдых.»",
+    "🔑 «Терпение + Труд = Результат. Формула неизменна.»",
+    "🦅 «Орёл не охотится на мух. Держи цель высоко.»",
+    "🌟 «Каждый рекорд когда-то был невозможным.»",
+    "🏃 «Бег трусцой лучше, чем лежание на диване. Всегда.»",
+    "🔥 «Жжение в мышцах — это жир, покидающий тело.»",
+    "🎪 «Шоу должно продолжаться. И тренировка тоже.»",
+    "💎 «Настоящие изменения происходят там, где никто не аплодирует.»",
 ]
 
 ACHIEVEMENTS_MAP = {
@@ -6086,21 +6134,66 @@ def build_mood_week(uid):
     try:
         conn.execute("CREATE TABLE IF NOT EXISTS mood_full (id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER, date TEXT, mood INTEGER, energy INTEGER, note TEXT)")
         rows = conn.execute(
-            "SELECT date, mood, energy, note FROM mood_full WHERE user_id=? ORDER BY date DESC LIMIT 7", (uid,)).fetchall()
+            "SELECT date, mood, energy, note FROM mood_full WHERE user_id=? ORDER BY date ASC LIMIT 7", (uid,)).fetchall()
     except Exception:
         rows = []
     conn.close()
     if not rows:
         return "😊 *Дневник настроения*\n\nЗаписей пока нет.\n\nОцени настроение кнопкой *«😊 Самочувствие»*."
+
     lines = ["😊 *Дневник настроения (7 дней)*\n"]
+
+    # ASCII-график настроения
+    moods = [r[1] for r in rows]
+    dates = [datetime.strptime(r[0], "%Y-%m-%d").strftime("%d.%m") for r in rows]
+    max_m = 10
+    chart_rows = []
+    for level in range(max_m, 0, -1):
+        row_parts = []
+        for m in moods:
+            if m >= level:
+                row_parts.append("██")
+            elif m >= level - 0.5:
+                row_parts.append("▄▄")
+            else:
+                row_parts.append("  ")
+        label = f"{level:2d}│" if level in (1, 5, 10) else "  │"
+        chart_rows.append(label + " ".join(row_parts))
+    # Ось X
+    sep = "  └" + "───" * len(moods)
+    x_labels = "    " + " ".join(d[:5] for d in dates)
+    # Добавляем график
+    lines.append("```")
+    lines.extend(chart_rows)
+    lines.append(sep)
+    lines.append(x_labels)
+    lines.append("```")
+
+    # Детали по дням
+    lines.append("")
     avg_m = round(sum(r[1] for r in rows)/len(rows),1)
-    avg_e = round(sum(r[2] for r in rows if r[2])/max(1,sum(1 for r in rows if r[2])),1)
+    energies = [r[2] for r in rows if r[2]]
+    avg_e = round(sum(energies)/max(1,len(energies)),1) if energies else 0
     for date, mood, energy, note in rows:
         d = datetime.strptime(date, "%Y-%m-%d").strftime("%d.%m")
         em = MOOD_EMOJIS.get(mood, "😐")
-        en = f"⚡{energy}" if energy else ""
-        lines.append(f"{d}: {em} *{mood}* {en}" + (f" — _{note}_" if note else ""))
+        en = f" ⚡{energy}" if energy else ""
+        lines.append(f"{d}: {em} *{mood}*{en}" + (f" — _{note}_" if note else ""))
+
+    # Итог + тренд
+    if len(moods) >= 2:
+        trend = moods[-1] - moods[0]
+        if trend > 1:
+            trend_str = f"📈 Настроение улучшилось на {trend:.0f} пунктов"
+        elif trend < -1:
+            trend_str = f"📉 Настроение снизилось на {abs(trend):.0f} пунктов"
+        else:
+            trend_str = "📊 Настроение стабильное"
+    else:
+        trend_str = ""
     lines.append(f"\nСредние: настроение *{avg_m}*, энергия *{avg_e}*")
+    if trend_str:
+        lines.append(trend_str)
     return "\n".join(lines)
 
 # ═══════════════════════════════════════════════════════════
@@ -11973,7 +12066,17 @@ def reminder_worker():
                             days_ago = 0
                     else:
                         days_ago = 999
-                    if days_ago >= 3:
+                    if days_ago >= 7:
+                        weigh_key = (uid, "weigh7", now.strftime("%Y-%m-%d"))
+                        if weigh_key not in sent_today:
+                            sent_today.add(weigh_key)
+                            bot.send_message(uid,
+                                f"🚨 *Уже {days_ago} дней без взвешивания!*\n\n"
+                                f"Это много — без данных сложно отслеживать прогресс.\n\n"
+                                f"⚖️ Встань на весы прямо сейчас — займёт 10 секунд!\n"
+                                f"Нажми *⚖️ Внести вес* в главном меню.",
+                                parse_mode="Markdown")
+                    elif days_ago >= 3:
                         weigh_key = (uid, "weigh", now.strftime("%Y-%m-%d"))
                         if weigh_key not in sent_today:
                             sent_today.add(weigh_key)
@@ -12824,6 +12927,25 @@ def handle_callback(call):
         bot.send_message(cid,
             f"✏️ *Исправить вес за {old_date}*\n\nТекущее значение: *{old_val} кг*\n\nВведи новое значение:",
             parse_mode="Markdown", reply_markup=cancel_menu())
+
+    # ── Вес: отменить последнюю запись ──
+    elif data.startswith("weight_undo:"):
+        w_val = data.split(":")[1]
+        try:
+            today = now_samara().strftime("%Y-%m-%d")
+            conn = sqlite3.connect(DB_PATH)
+            # Удаляем последнюю запись за сегодня с этим весом
+            conn.execute(
+                "DELETE FROM weights WHERE user_id=? AND date=? AND weight=? "
+                "ORDER BY rowid DESC LIMIT 1",
+                (cid, today, float(w_val)))
+            conn.commit(); conn.close()
+            bot.answer_callback_query(call.id, "↩️ Запись удалена!")
+            bot.edit_message_text(
+                f"↩️ Запись веса *{w_val} кг* удалена.\n\nВнеси правильное значение через *⚖️ Внести вес*.",
+                cid, call.message.message_id, parse_mode="Markdown")
+        except Exception as e:
+            bot.answer_callback_query(call.id, "❌ Не удалось удалить")
 
     # ── Шаги: быстрые кнопки ──
     elif data.startswith("steps_add:"):
@@ -13872,7 +13994,23 @@ def router(message):
         except Exception:
             pass
 
-        bot.send_message(cid, resp, parse_mode="Markdown", reply_markup=main_menu(cid))
+        # Кнопка "Отменить" для исправления опечатки
+        kb_undo = types.InlineKeyboardMarkup()
+        kb_undo.add(types.InlineKeyboardButton("↩️ Отменить запись веса", callback_data=f"weight_undo:{w}"))
+
+        bot.send_message(cid, resp, parse_mode="Markdown", reply_markup=kb_undo)
+        bot.send_message(cid, "👆 Нажми если ввёл неверно — или используй меню:", reply_markup=main_menu(cid))
+
+        # Поздравление при достижении цели!
+        if remain <= 0:
+            goal_msg = (
+                f"🏆🎉 *ПОЗДРАВЛЯЮ! ТЫ ДОСТИГ ЦЕЛИ!* 🎉🏆\n\n"
+                f"Целевой вес *{target} кг* достигнут!\n"
+                f"Ты сбросил *{abs(loss)} кг* от начального веса.\n\n"
+                f"💪 Это огромная работа и настоящая победа над собой!\n"
+                f"Теперь можно поставить новую цель в *⚙️ Настройки → 👤 Мой профиль*"
+            )
+            bot.send_message(cid, goal_msg, parse_mode="Markdown")
 
         # Ачивки (новая система)
         try:
@@ -14045,6 +14183,7 @@ def router(message):
                     bot.send_message(cid, f"\u2753 *{product}* не найден в базе. Попробуй ввести точнее.", parse_mode="Markdown")
                     return
             kcal = round(kcal_p * grams / 100)
+            prev_total_food = get_kcal_today(cid)
             add_food_entry(cid, meal, product, grams, kcal)
             update_streak(cid)
             set_state(cid, "idle")
@@ -14053,9 +14192,12 @@ def router(message):
             target_kcal = get_user_plan(cid, profile)["calories"] if profile else 2000
             remain  = target_kcal - total
             status  = "\u2705 Норма!" if abs(remain)<100 else (f"\u2b07\ufe0f Ещё {remain} ккал" if remain>0 else f"\u26a0\ufe0f Превышение на {abs(remain)} ккал")
+            goal_kcal_note = ""
+            if abs(remain) < 100 and abs(target_kcal - prev_total_food) >= 100:
+                goal_kcal_note = f"\n\n🎉 *Норма {target_kcal} ккал выполнена!* Отличный день питания!"
             bot.send_message(cid,
                 f"\u2705 Записано в {meal}:\n{product} {grams}г = *{kcal} ккал*\n\n"
-                f"\U0001f525 Сегодня итого: *{total} / {target_kcal} ккал*\n{status}",
+                f"\U0001f525 Сегодня итого: *{total} / {target_kcal} ккал*\n{status}{goal_kcal_note}",
                 parse_mode="Markdown", reply_markup=main_menu(cid))
         except Exception:
             bot.send_message(cid, "Введи продукт и граммы:\nНапример: *куриная грудка 200*", parse_mode="Markdown")
