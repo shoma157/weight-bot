@@ -13146,6 +13146,24 @@ def handle_callback(call):
                 bot.send_message(cid, status_text, parse_mode="Markdown")
 
     # ── Вес: редактировать последнюю запись ──
+    elif data.startswith("water_drink_sel:"):
+        dtype = data.split(":", 1)[1]
+        bot.answer_callback_query(call.id)
+        emoji = DRINK_EMOJI.get(dtype, "💧")
+        coef = DRINK_HYDRATION.get(dtype, 1.0)
+        # Показываем кнопки объёма для выбранного напитка
+        kb_vol = types.InlineKeyboardMarkup(row_width=2)
+        volumes = [150, 200, 250, 300, 350, 400, 500]
+        for v in volumes:
+            eq = round(v * coef)
+            label = f"{v} мл" if coef == 1.0 else f"{v} мл (~{eq} мл воды)"
+            kb_vol.add(types.InlineKeyboardButton(label, callback_data=f"water_ml:{v}:{dtype}"))
+        kb_vol.add(types.InlineKeyboardButton("✏️ Своё количество мл", callback_data=f"water_ml:custom:{dtype}"))
+        kb_vol.add(types.InlineKeyboardButton("◀️ Назад к напиткам", callback_data="water_ml:choose_drink"))
+        bot.send_message(cid,
+            f"{emoji} *{dtype.capitalize()}*\n\nСколько выпил?",
+            parse_mode="Markdown", reply_markup=kb_vol)
+
     elif data.startswith("weight_edit_last:"):
         bot.answer_callback_query(call.id)
         parts = data.split(":")
