@@ -6631,11 +6631,11 @@ def build_caffeine_menu(uid):
     if total_mg > MAX_MG:
         lines.append("\n🔴 Превышен дневной лимит ВОЗ (400 мг)!")
     lines.append("\nДобавить:")
-    kb = types.InlineKeyboardMarkup(row_width=2)
-    btns = [types.InlineKeyboardButton(v["label"], callback_data=f"caffeine:{k}")
-            for k, v in CAFFEINE_ITEMS.items()]
+    kb = types.ReplyKeyboardMarkup(resize_keyboard=True, row_width=2)
+    btns = [types.KeyboardButton(v["label"]) for k, v in CAFFEINE_ITEMS.items()]
     for i in range(0, len(btns), 2):
         kb.add(*btns[i:i+2])
+    kb.add(types.KeyboardButton("❌ Отмена"))
     return "\n".join(lines), kb
 
 # ── Энергия дня ──────────────────────────────────────────
@@ -6672,9 +6672,14 @@ def build_energy_menu(uid):
         lines.append(f"{label}: {status}")
     if avg:
         lines.append(f"\nСредняя за неделю: *{avg}/5*")
-    kb = types.InlineKeyboardMarkup(row_width=5)
-    kb.add(*[types.InlineKeyboardButton(ENERGY_LABELS[i], callback_data=f"energy_m:{i}") for i in range(1, 6)])
-    kb.add(*[types.InlineKeyboardButton(ENERGY_LABELS[i], callback_data=f"energy_e:{i}") for i in range(1, 6)])
+    lines.append("\n🌅 *Утром:*")
+    kb = types.ReplyKeyboardMarkup(resize_keyboard=True, row_width=1)
+    for i in range(1, 6):
+        kb.add(types.KeyboardButton(f"🌅 {i} — {ENERGY_LABELS[i]}"))
+    lines.append("🌙 *Вечером:*")
+    for i in range(1, 6):
+        kb.add(types.KeyboardButton(f"🌙 {i} — {ENERGY_LABELS[i]}"))
+    kb.add(types.KeyboardButton("❌ Отмена"))
     return "\n".join(lines), kb
 
 # ── Дневник самочувствия ─────────────────────────────────
@@ -8236,9 +8241,10 @@ def build_hunger_menu(uid):
     hunger_map = {1:"😌 Сыт", 2:"🙂 Слегка хочу", 3:"😐 Голоден", 4:"😤 Очень голоден", 5:"😫 Голодаю"}
     lines = ["🍽️ *Трекер голода*", f"Сегодня отметок: {count}", f"Средний уровень: {avg_l:.1f}/5" if count else "", ""]
     lines.append("Отметь текущий уровень голода:")
-    kb = types.InlineKeyboardMarkup(row_width=5)
-    btns = [types.InlineKeyboardButton(f"{i} {'⭐'*i}", callback_data=f"hunger:{i}") for i in range(1, 6)]
-    kb.add(*btns)
+    kb = types.ReplyKeyboardMarkup(resize_keyboard=True, row_width=1)
+    for i in range(1, 6):
+        kb.add(types.KeyboardButton(f"{i} {'⭐'*i} — {hunger_map[i]}"))
+    kb.add(types.KeyboardButton("❌ Отмена"))
     return "\n".join(lines), kb
 
 def build_hunger_stats(uid):
@@ -14179,6 +14185,92 @@ def router(message):
             bot.send_message(cid, "Введи число от 1 до 5", reply_markup=fatigue_menu())
         return
 
+    # Меню ввода веса (ReplyKeyboard)
+    if state == "weight_menu":
+        if text == "❌ Отмена":
+            set_state(cid, "idle")
+            bot.send_message(cid, "Отменено.", reply_markup=main_menu(cid))
+            return
+        elif text == "📅 Вес за сегодня":
+            set_state(cid, "waiting_weight")
+            kb_cancel = types.ReplyKeyboardMarkup(resize_keyboard=True)
+            kb_cancel.add(types.KeyboardButton("❌ Отмена"))
+            bot.send_message(cid, "⚖️ Введи вес за *сегодня* (например: *105.7*):",
+                parse_mode="Markdown", reply_markup=kb_cancel)
+            return
+        elif text == "📆 Вес за вчера":
+            set_state(cid, "waiting_weight_yesterday")
+            kb_cancel = types.ReplyKeyboardMarkup(resize_keyboard=True)
+            kb_cancel.add(types.KeyboardButton("❌ Отмена"))
+            bot.send_message(cid, "⚖️ Введи вес за *вчера* (например: *105.7*):",
+                parse_mode="Markdown", reply_markup=kb_cancel)
+            return
+        elif text.startswith("✏️ Исправить"):
+            last_w_list = get_weights(cid, limit=1)
+            if last_w_list:
+                lw_val, lw_date = last_w_list[0]
+                set_state(cid, f"waiting_weight_edit:{lw_date[:10]}")
+                kb_cancel = types.ReplyKeyboardMarkup(resize_keyboard=True)
+                kb_cancel.add(types.KeyboardButton("❌ Отмена"))
+                bot.send_message(cid,
+                    f"✏️ Введи правильный вес вместо *{lw_val} кг* за {lw_date[:10]}:",
+                    parse_mode="Markdown", reply_markup=kb_cancel)
+            else:
+                bot.send_message(cid, "Нет записей для исправления.", reply_markup=main_menu(cid))
+                set_state(cid, "idle")
+            return
+        else:
+            # Число напрямую — будет обработано в waiting_weight ниже
+            set_state(cid, "waiting_weight")
+
+    # Меню ввода шагов (ReplyKeyboard)
+    if state == "steps_menu":
+        if text == "❌ Отмена":
+            set_state(cid, "idle")
+            bot.send_message(cid, "Отменено.", reply_markup=main_menu(cid))
+            return
+        import re as _re_st
+        m_steps = _re_st.match(r'^[^\d]*(\d[\d ]*) *шагов$', text)
+        if m_steps:
+            s = int(m_steps.group(1).replace(" ", ""))
+            profile = get_profile(cid)
+            sick_note = " (при болезни норма — 5 000)" if profile and profile.get("is_sick") else ""
+            goal = 5000 if (profile and profile.get("is_sick")) else 10000
+            add_steps(cid, s)
+            set_state(cid, "idle")
+            v = ("🔥 Отличный день! Кардио можно пропустить." if s >= 12000 else
+                 "✅ Хороший уровень!" if s >= 8000 else
+                 "🟡 Добавь вечернюю прогулку." if s >= 5000 else
+                 "🔴 Малоподвижный день. Выйди на прогулку.")
+            all_steps = get_steps(cid, limit=1000)
+            prev_steps = [row[0] for row in all_steps if row[1] != now_samara().strftime("%Y-%m-%d")]
+            pr_note = ""
+            if prev_steps and s > max(prev_steps):
+                pr_note = f"\n\n🏆 *ЛИЧНЫЙ РЕКОРД!* Прошлый рекорд: {max(prev_steps):,} шагов".replace(",", " ")
+            msg = f"👟 *{s:,} шагов*{sick_note}\n\n{v}".replace(",", " ")
+            if s >= goal:
+                msg += f"\n\n🎉 *Норма {goal:,} шагов выполнена!* Так держать!".replace(",", " ")
+            if pr_note:
+                msg += pr_note
+            bot.send_message(cid, msg, parse_mode="Markdown", reply_markup=main_menu(cid))
+            return
+        elif text == "📆 Шаги за вчера":
+            set_state(cid, "waiting_steps_yesterday")
+            kb_cancel = types.ReplyKeyboardMarkup(resize_keyboard=True)
+            kb_cancel.add(types.KeyboardButton("❌ Отмена"))
+            bot.send_message(cid, "👟 Введи количество шагов за *вчера*:", parse_mode="Markdown",
+                reply_markup=kb_cancel)
+            return
+        elif text == "✏️ Своё число шагов":
+            set_state(cid, "waiting_steps")
+            kb_cancel = types.ReplyKeyboardMarkup(resize_keyboard=True)
+            kb_cancel.add(types.KeyboardButton("❌ Отмена"))
+            bot.send_message(cid, "👟 Введи количество шагов:", reply_markup=kb_cancel)
+            return
+        else:
+            # Число напрямую — обработается в waiting_steps ниже
+            set_state(cid, "waiting_steps")
+
     # Ввод веса
     if state == "waiting_weight_yesterday":
         try:
@@ -14576,6 +14668,48 @@ def router(message):
             bot.send_message(cid, "Заметка пустая, попробуй снова.", reply_markup=main_menu(cid))
         set_state(cid, "idle")
         return
+
+    # ── Меню воды ──
+    if state == "water_menu":
+        import re as _re
+        # Быстрые кнопки типа "💧 250 мл воды"
+        m_btn = _re.match(r'^[^ ]+ *(\d+) *мл *(.*)', text)
+        if m_btn:
+            ml = int(m_btn.group(1))
+            raw_type = m_btn.group(2).strip()
+            # Определяем тип напитка
+            if 'кофе' in raw_type.lower(): drink_type = 'кофе чёрный'
+            elif 'чай' in raw_type.lower(): drink_type = 'чай зелёный'
+            else: drink_type = 'вода'
+            add_water_ml(cid, ml, drink_type)
+            coef = DRINK_HYDRATION.get(drink_type, 1.0)
+            water_eq = round(ml * coef)
+            water_goal_ml = get_water_goal_ml(cid)
+            current_total = get_water_ml_today(cid)
+            prev_total_ml = current_total - water_eq
+            goal_note = ""
+            if current_total >= water_goal_ml and prev_total_ml < water_goal_ml:
+                goal_note = f"\n\n🎉 *Норма {water_goal_ml} мл выполнена!* Отлично!"
+            emoji = DRINK_EMOJI.get(drink_type, "💧")
+            set_state(cid, "idle")
+            bot.send_message(cid,
+                f"{emoji} *+{ml} мл {drink_type}*{goal_note}\n\n" + build_water_ml_status(cid),
+                parse_mode="Markdown", reply_markup=main_menu(cid))
+            return
+        elif text == "✏️ Своё количество мл":
+            set_state(cid, "waiting_water_ml", extra="вода")
+            bot.send_message(cid, "💧 Введи количество мл (например: `350`):",
+                parse_mode="Markdown", reply_markup=cancel_menu())
+            return
+        elif text == "↩️ Отменить последнее":
+            if delete_last_water_entry(cid):
+                set_state(cid, "idle")
+                bot.send_message(cid, "↩️ Последняя запись удалена.\n\n" + build_water_ml_status(cid),
+                    parse_mode="Markdown", reply_markup=main_menu(cid))
+            else:
+                bot.send_message(cid, "⚠️ Нет записей за сегодня.", reply_markup=main_menu(cid))
+                set_state(cid, "idle")
+            return
 
     # ── Дневник: поиск в истории ──
     if state == "food_search":
@@ -15183,6 +15317,49 @@ def router(message):
             bot.send_message(cid, "⚠️ Формат: HRV пульс, например: `65 55`\nИли только пульс: `60`", reply_markup=cancel_menu())
         return
 
+    # ── Стресс — выбор уровня (ReplyKeyboard 1-10) ──
+    if state == "waiting_stress":
+        if text == "❌ Отмена":
+            set_state(cid, "idle")
+            bot.send_message(cid, "Отменено.", reply_markup=main_menu(cid))
+            return
+        try:
+            level = int(text.strip())
+            assert 1 <= level <= 10
+        except Exception:
+            bot.send_message(cid, "Выбери число от 1 до 10.")
+            return
+        set_state(cid, "waiting_stress_note", extra=str(level))
+        emoji_stress = "😌" if level <= 3 else ("😐" if level <= 6 else "😰")
+        bot.send_message(cid,
+            f"{emoji_stress} Уровень стресса *{level}/10* выбран.\n\nДобавь заметку (или отправь «-» чтобы пропустить):",
+            parse_mode="Markdown", reply_markup=cancel_menu())
+        return
+
+    # ── Голод — выбор уровня (ReplyKeyboard 1-5) ──
+    if state == "waiting_hunger":
+        if text == "❌ Отмена":
+            set_state(cid, "idle")
+            bot.send_message(cid, "Отменено.", reply_markup=main_menu(cid))
+            return
+        import re as _re_h
+        m_h = _re_h.match(r'^(\d)', text)
+        if m_h:
+            level = int(m_h.group(1))
+            if 1 <= level <= 5:
+                init_hunger_table()
+                conn = get_db(); c = conn.cursor()
+                now_dt = now_samara().strftime("%Y-%m-%d %H:%M:%S")
+                c.execute("INSERT INTO hunger_log (uid, level, datetime) VALUES (?,?,?)", (cid, level, now_dt))
+                conn.commit(); conn.close()
+                hunger_labels = {1:"😌 Сыт", 2:"🙂 Слегка хочу", 3:"😐 Голоден", 4:"😤 Очень голоден", 5:"😫 Голодаю"}
+                set_state(cid, "idle")
+                bot.send_message(cid, f"✅ Голод *{level}/5* — {hunger_labels.get(level, '')} записан.",
+                    parse_mode="Markdown", reply_markup=main_menu(cid))
+                return
+        bot.send_message(cid, "Выбери кнопку с уровнем голода от 1 до 5.")
+        return
+
     # ── Стресс (заметка после оценки) ──
     if state == "waiting_stress_note":
         note = text.strip()
@@ -15563,72 +15740,57 @@ def router(message):
 
     # Вес
     elif text=="⚖️ Внести вес":
-        kb_w = types.InlineKeyboardMarkup(row_width=2)
-        kb_w.add(
-            types.InlineKeyboardButton("📅 За сегодня", callback_data="weight_day:today"),
-            types.InlineKeyboardButton("📆 За вчера",   callback_data="weight_day:yesterday"),
-        )
-        # Показываем кнопку редактирования если есть последняя запись
         last_w = get_weights(cid, limit=1)
+        kb_w = types.ReplyKeyboardMarkup(resize_keyboard=True, row_width=2)
+        kb_w.add(types.KeyboardButton("📅 Вес за сегодня"), types.KeyboardButton("📆 Вес за вчера"))
         if last_w:
             lw_val, lw_date = last_w[0]
-            kb_w.add(types.InlineKeyboardButton(
-                f"✏️ Исправить последний ({lw_val} кг)", callback_data=f"weight_edit_last:{last_w[0][0]}:{lw_date[:10]}"))
-        set_state(cid,"waiting_weight")
+            kb_w.add(types.KeyboardButton(f"✏️ Исправить {lw_val} кг"))
+        kb_w.add(types.KeyboardButton("❌ Отмена"))
+        set_state(cid, "weight_menu", extra=str(last_w[0][0]) if last_w else "")
         bot.send_message(cid,
-            "⚖️ Введи текущий вес (например: *105.7*)\n\nЛучше утром натощак.\n\n"
-            "Если забыл внести вчера — нажми «📆 За вчера»:",
+            "⚖️ *Внести вес*\n\nВведи число (например: *105.7*) или выбери действие:",
             parse_mode="Markdown", reply_markup=kb_w)
 
     # Шаги
     elif text=="👟 Внести шаги":
         profile=get_profile(cid)
         sick_hint="\n🤒 При болезни норма — не более 5 000." if profile and profile.get("is_sick") else ""
-        # Последние шаги для контекста
         recent_steps = get_steps(cid, limit=1)
         last_str = f"\n📅 Последний раз: *{recent_steps[0][0]:,}* шагов".replace(",", " ") if recent_steps else ""
-        kb_steps = types.InlineKeyboardMarkup(row_width=3)
+        kb_steps = types.ReplyKeyboardMarkup(resize_keyboard=True, row_width=3)
         kb_steps.add(
-            types.InlineKeyboardButton("+1 000", callback_data="steps_add:1000"),
-            types.InlineKeyboardButton("+5 000", callback_data="steps_add:5000"),
-            types.InlineKeyboardButton("+10 000", callback_data="steps_add:10000"),
+            types.KeyboardButton("👟 1 000 шагов"),
+            types.KeyboardButton("👟 5 000 шагов"),
+            types.KeyboardButton("👟 10 000 шагов"),
         )
         kb_steps.add(
-            types.InlineKeyboardButton("+8 500", callback_data="steps_add:8500"),
-            types.InlineKeyboardButton("+12 000", callback_data="steps_add:12000"),
+            types.KeyboardButton("👟 8 500 шагов"),
+            types.KeyboardButton("👟 12 000 шагов"),
         )
         kb_steps.add(
-            types.InlineKeyboardButton("📆 За вчера", callback_data="steps_day:yesterday"),
-            types.InlineKeyboardButton("✏️ Своё число", callback_data="steps_custom:today"),
+            types.KeyboardButton("📆 Шаги за вчера"),
+            types.KeyboardButton("✏️ Своё число шагов"),
         )
-        set_state(cid,"waiting_steps")
+        kb_steps.add(types.KeyboardButton("❌ Отмена"))
+        set_state(cid, "steps_menu")
         bot.send_message(cid,
             f"👟 *Шаги — быстро или своё число*{last_str}{sick_hint}\n\nВыбери или введи количество:",
             parse_mode="Markdown", reply_markup=kb_steps)
 
-    # Вода — показываем инлайн-кнопки мл
+    # Вода — простое меню кнопками
     elif text in ("💧 Внести воду", "💧 Вода (мл)"):
-        kb_drink = types.InlineKeyboardMarkup(row_width=1)
-        # Любимые напитки вверху (последние 3 использованных)
-        favs = get_favorite_drinks(cid, limit=3)
-        if favs:
-            kb_drink.add(types.InlineKeyboardButton("⭐ Последние напитки:", callback_data="noop"))
-            for dtype in favs:
-                emoji = DRINK_EMOJI.get(dtype, "💧")
-                coef = DRINK_HYDRATION.get(dtype, 1.0)
-                hint = f"{round(coef*100)}%"
-                kb_drink.add(types.InlineKeyboardButton(
-                    f"{emoji} {dtype} — {hint}", callback_data=f"water_drink_sel:{dtype}"))
-            kb_drink.add(types.InlineKeyboardButton("— все напитки —", callback_data="water_ml:choose_drink"))
-        else:
-            for emoji, label, dtype, hint in DRINK_MENU:
-                kb_drink.add(types.InlineKeyboardButton(
-                    f"{emoji} {label} — {hint}", callback_data=f"water_drink_sel:{dtype}"))
-        kb_drink.add(types.InlineKeyboardButton("📊 Статистика за неделю", callback_data="drinks_stats"))
-        kb_drink.add(types.InlineKeyboardButton("↩️ Отменить последнее", callback_data="water_ml:undo"))
+        status = build_water_ml_status(cid)
+        kb = types.ReplyKeyboardMarkup(resize_keyboard=True, row_width=2)
+        kb.add(types.KeyboardButton("💧 250 мл воды"), types.KeyboardButton("💧 500 мл воды"))
+        kb.add(types.KeyboardButton("💧 150 мл воды"), types.KeyboardButton("💧 350 мл воды"))
+        kb.add(types.KeyboardButton("☕ 250 мл кофе"), types.KeyboardButton("🍵 250 мл чая"))
+        kb.add(types.KeyboardButton("✏️ Своё количество мл"), types.KeyboardButton("↩️ Отменить последнее"))
+        kb.add(types.KeyboardButton("❌ Отмена"))
+        set_state(cid, "water_menu")
         bot.send_message(cid,
-            build_water_ml_status(cid) + "\n\n*Что ты пил?* Выбери напиток:",
-            parse_mode="Markdown", reply_markup=kb_drink)
+            status + "\n\n*Что выпил?* Выбери или введи объём:",
+            parse_mode="Markdown", reply_markup=kb)
 
     # Прогресс
     elif text=="📈 Мой прогресс":
@@ -16972,10 +17134,12 @@ def router(message):
 
     # ── Стресс-дневник ──
     elif text == "🧠 Стресс":
-        rows = get_stress_history(cid, 7)
-        kb_stress = types.InlineKeyboardMarkup(row_width=5)
-        kb_stress.add(*[types.InlineKeyboardButton(str(i), callback_data=f"stress_log:{i}") for i in range(1, 11)])
         report = build_stress_report(cid)
+        kb_stress = types.ReplyKeyboardMarkup(resize_keyboard=True, row_width=5)
+        kb_stress.add(*[types.KeyboardButton(str(i)) for i in range(1, 6)])
+        kb_stress.add(*[types.KeyboardButton(str(i)) for i in range(6, 11)])
+        kb_stress.add(types.KeyboardButton("❌ Отмена"))
+        set_state(cid, "waiting_stress")
         bot.send_message(cid, report + "\n\nОцени уровень стресса сегодня (1=спокойно, 10=максимум):",
                          parse_mode="Markdown", reply_markup=kb_stress)
 
@@ -17267,6 +17431,7 @@ def router(message):
     # ── Task #70: Трекер голода ──
     elif text == "🍽️ Уровень голода":
         txt, kb_h = build_hunger_menu(cid)
+        set_state(cid, "waiting_hunger")
         bot.send_message(cid, txt, parse_mode="Markdown", reply_markup=kb_h)
 
     # ── Task #70: Рецепты из холодильника ──
