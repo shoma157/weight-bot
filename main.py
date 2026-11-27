@@ -5804,10 +5804,11 @@ def build_warmup(muscle_group):
     return f"Группа не найдена. Доступные: {', '.join(WARMUP_BY_MUSCLE)}"
 
 def build_warmup_menu():
-    kb = types.InlineKeyboardMarkup(row_width=3)
-    btns = [types.InlineKeyboardButton(k.capitalize(), callback_data=f"warmup:{k}") for k in WARMUP_BY_MUSCLE]
-    for i in range(0, len(btns), 3):
-        kb.add(*btns[i:i+3])
+    kb = types.ReplyKeyboardMarkup(resize_keyboard=True, row_width=3)
+    keys = list(WARMUP_BY_MUSCLE.keys())
+    for i in range(0, len(keys), 3):
+        kb.add(*[types.KeyboardButton(k.capitalize()) for k in keys[i:i+3]])
+    kb.add(types.KeyboardButton("❌ Отмена"))
     return "🤸 *Разминка* — выбери группу мышц:", kb
 
 def calculate_hr_zones(age, resting_hr=60):
@@ -5835,8 +5836,9 @@ def build_hr_zones(uid):
     for i, (name, (lo, hi)) in enumerate(zones.items()):
         lines.append(f"{emojis[i]} *{name}*: {lo}–{hi} уд/мин")
     lines.append("\n💡 Жиросжигание: зона 2–3 | Выносливость: зона 3–4")
-    kb = types.InlineKeyboardMarkup()
-    kb.add(types.InlineKeyboardButton("⚙️ Изменить пульс покоя", callback_data="set_resting_hr"))
+    kb = types.ReplyKeyboardMarkup(resize_keyboard=True, row_width=1)
+    kb.add(types.KeyboardButton("⚙️ Изменить пульс покоя"))
+    kb.add(types.KeyboardButton("❌ Отмена"))
     return "\n".join(lines), kb
 
 def log_cardio_session(uid, minutes, zone, avg_hr=0):
@@ -5859,9 +5861,10 @@ SUPERSET_TEMPLATES = {
 }
 
 def build_superset_menu():
-    kb = types.InlineKeyboardMarkup(row_width=1)
+    kb = types.ReplyKeyboardMarkup(resize_keyboard=True, row_width=1)
     for name in SUPERSET_TEMPLATES:
-        kb.add(types.InlineKeyboardButton(f"⚡ {name.capitalize()}", callback_data=f"superset:{name}"))
+        kb.add(types.KeyboardButton(f"⚡ {name.capitalize()}"))
+    kb.add(types.KeyboardButton("❌ Отмена"))
     return "⚡ *Суперсеты* — выбери группу мышц:", kb
 
 def build_superset_plan(template_name):
@@ -6535,18 +6538,19 @@ def get_medications_taken_today(uid):
 def build_medications_menu(uid):
     meds = get_medications(uid)
     taken = get_medications_taken_today(uid)
+    kb = types.ReplyKeyboardMarkup(resize_keyboard=True, row_width=1)
     if not meds:
-        kb = types.InlineKeyboardMarkup()
-        kb.add(types.InlineKeyboardButton("➕ Добавить медикамент", callback_data="med_add"))
+        kb.add(types.KeyboardButton("➕ Добавить медикамент"))
+        kb.add(types.KeyboardButton("❌ Отмена"))
         return "💊 *Трекер медикаментов*\n\nМедикаменты не добавлены.", kb
     lines = ["💊 *Трекер медикаментов — сегодня*\n"]
-    kb = types.InlineKeyboardMarkup(row_width=1)
     for mid, name, dose, sch in meds:
         status = "✅" if mid in taken else "⬜"
         lines.append(f"{status} {name} {dose} в {sch}")
         if mid not in taken:
-            kb.add(types.InlineKeyboardButton(f"✅ Принял {name} {dose}", callback_data=f"med_take:{mid}"))
-    kb.add(types.InlineKeyboardButton("➕ Добавить медикамент", callback_data="med_add"))
+            kb.add(types.KeyboardButton(f"✅ Принял {name} {dose}"))
+    kb.add(types.KeyboardButton("➕ Добавить медикамент"))
+    kb.add(types.KeyboardButton("❌ Отмена"))
     return "\n".join(lines), kb
 
 # ── Кофеин-трекер ──────────────────────────────────────
@@ -6716,11 +6720,12 @@ def build_wellbeing_log(uid, limit=7):
     return "\n".join(lines)
 
 def build_wellbeing_tags_menu():
-    kb = types.InlineKeyboardMarkup(row_width=2)
-    btns = [types.InlineKeyboardButton(tag, callback_data=f"wb_tag:{tag}") for tag in WELLBEING_TAGS]
-    for i in range(0, len(btns), 2):
-        kb.add(*btns[i:i+2])
-    kb.add(types.InlineKeyboardButton("✅ Готово — сохранить", callback_data="wb_save"))
+    kb = types.ReplyKeyboardMarkup(resize_keyboard=True, row_width=2)
+    for i in range(0, len(WELLBEING_TAGS), 2):
+        row = WELLBEING_TAGS[i:i+2]
+        kb.add(*[types.KeyboardButton(t) for t in row])
+    kb.add(types.KeyboardButton("✅ Сохранить самочувствие"))
+    kb.add(types.KeyboardButton("❌ Отмена"))
     return kb
 
 # ═══════════════════════════════════════════════════════════
@@ -6958,15 +6963,16 @@ def get_quick_notes(uid):
 def build_notes_menu(uid):
     rows = get_quick_notes(uid)
     if not rows:
-        return "📝 *Заметки*\n\nЗаметок пока нет.\n\nНапиши боту `/note текст` чтобы добавить заметку."
+        return "📝 *Заметки*\n\nЗаметок пока нет.\n\nНапиши боту текст заметки чтобы добавить."
     lines = ["📝 *Мои заметки*\n"]
-    kb = types.InlineKeyboardMarkup(row_width=2)
+    kb = types.ReplyKeyboardMarkup(resize_keyboard=True, row_width=1)
     for nid, note, done, created in rows:
         status = "✅" if done else "⬜"
         lines.append(f"{status} {note}")
         if not done:
-            kb.add(types.InlineKeyboardButton(f"✅ {note[:25]}", callback_data=f"note_done:{nid}"))
-    kb.add(types.InlineKeyboardButton("🗑️ Очистить выполненные", callback_data="notes_clear"))
+            kb.add(types.KeyboardButton(f"✅ Выполнено: {note[:30]}"))
+    kb.add(types.KeyboardButton("🗑️ Очистить выполненные заметки"))
+    kb.add(types.KeyboardButton("❌ Закрыть заметки"))
     return "\n".join(lines), kb
 
 # ─────────────────────────────────────────
@@ -7039,11 +7045,12 @@ def toggle_habit(uid, habit_key):
 def build_habits_keyboard(uid):
     done = get_habits_today(uid)
     count = len(done)
-    kb = types.InlineKeyboardMarkup(row_width=2)
+    kb = types.ReplyKeyboardMarkup(resize_keyboard=True, row_width=1)
     for name, key in DEFAULT_HABITS:
         status = "✅" if key in done else "⬜"
-        kb.add(types.InlineKeyboardButton(f"{status} {name}", callback_data=f"habit:{key}"))
-    kb.add(types.InlineKeyboardButton(f"📊 Выполнено: {count}/{len(DEFAULT_HABITS)}", callback_data="habits_stats"))
+        kb.add(types.KeyboardButton(f"{status} {name}"))
+    kb.add(types.KeyboardButton(f"📊 Статистика привычек"))
+    kb.add(types.KeyboardButton("❌ Закрыть привычки"))
     return kb
 
 def build_habits_stats(uid):
@@ -7171,11 +7178,11 @@ def build_fasting_status(uid):
         lines = ["⏳ *Интервальное голодание*\n",
                  "Голодание сейчас не активно.\n",
                  "Выбери протокол:"]
-        kb = types.InlineKeyboardMarkup(row_width=2)
-        btns = [types.InlineKeyboardButton(v["label"], callback_data=f"if_start:{k}")
-                for k, v in IF_PRESETS.items()]
+        kb = types.ReplyKeyboardMarkup(resize_keyboard=True, row_width=2)
+        btns = [types.KeyboardButton(v["label"]) for k, v in IF_PRESETS.items()]
         for i in range(0, len(btns), 2):
             kb.add(*btns[i:i+2])
+        kb.add(types.KeyboardButton("❌ Отмена"))
         return "\n".join(lines), kb
     start_ts, protocol = status
     start_dt = datetime.strptime(start_ts, "%Y-%m-%d %H:%M:%S")
@@ -7198,9 +7205,10 @@ def build_fasting_status(uid):
         lines.append(f"Осталось: {int(remaining_h)}ч {int((remaining_h % 1)*60)}мин")
     else:
         lines.append("✅ Окно голодания завершено! Можно есть.")
-    kb = types.InlineKeyboardMarkup()
-    kb.add(types.InlineKeyboardButton("✅ Завершить голодание", callback_data="if_stop"))
-    kb.add(types.InlineKeyboardButton("📊 История", callback_data="if_history"))
+    kb = types.ReplyKeyboardMarkup(resize_keyboard=True, row_width=1)
+    kb.add(types.KeyboardButton("✅ Завершить голодание"))
+    kb.add(types.KeyboardButton("📊 История голодания"))
+    kb.add(types.KeyboardButton("❌ Отмена"))
     return "\n".join(lines), kb
 
 def build_fasting_history(uid):
@@ -7345,12 +7353,12 @@ def build_alcohol_menu(uid):
     if today_u >= 4:
         lines.append("⚠️ Превышена дневная норма (4 ед.)")
     lines.append("\nДобавить напиток:")
-    kb = types.InlineKeyboardMarkup(row_width=2)
-    btns = [types.InlineKeyboardButton(v["label"], callback_data=f"alcohol:{k}")
-            for k, v in ALCOHOL_UNITS.items()]
+    kb = types.ReplyKeyboardMarkup(resize_keyboard=True, row_width=2)
+    btns = [types.KeyboardButton(v["label"]) for k, v in ALCOHOL_UNITS.items()]
     for i in range(0, len(btns), 2):
         kb.add(*btns[i:i+2])
-    kb.add(types.InlineKeyboardButton("📊 История за неделю", callback_data="alcohol_history"))
+    kb.add(types.KeyboardButton("📊 История алкоголя"))
+    kb.add(types.KeyboardButton("❌ Отмена"))
     return "\n".join(lines), kb
 
 def build_alcohol_history(uid):
@@ -7533,16 +7541,16 @@ def get_supplements_today(uid):
 def build_supplements_menu(uid):
     init_supplements_table()
     active_keys, taken_today = get_supplements_today(uid)
-    kb = types.InlineKeyboardMarkup(row_width=1)
+    kb = types.ReplyKeyboardMarkup(resize_keyboard=True, row_width=1)
     for key, s in SUPPLEMENTS_LIST.items():
         is_active = key in active_keys
         is_taken = key in taken_today
         if is_active:
             label = f"{'✅' if is_taken else '⬜'} {s['emoji']} {s['name']} — {s['dose']} ({s['time']})"
-            kb.add(types.InlineKeyboardButton(label, callback_data=f"supp_take:{key}"))
         else:
             label = f"➕ {s['emoji']} {s['name']}"
-            kb.add(types.InlineKeyboardButton(label, callback_data=f"supp_enable:{key}"))
+        kb.add(types.KeyboardButton(label))
+    kb.add(types.KeyboardButton("❌ Закрыть добавки"))
 
     done = len(taken_today)
     total = len(active_keys)
@@ -7991,8 +7999,9 @@ def get_current_cycle_phase(uid):
 def build_cycle_info(uid):
     phase_key, day = get_current_cycle_phase(uid)
     if not phase_key:
-        kb = types.InlineKeyboardMarkup()
-        kb.add(types.InlineKeyboardButton("▶️ Начать отслеживание", callback_data="cycle_start:28"))
+        kb = types.ReplyKeyboardMarkup(resize_keyboard=True, row_width=1)
+        kb.add(types.KeyboardButton("▶️ Начать отслеживание цикла"))
+        kb.add(types.KeyboardButton("❌ Отмена"))
         return ("🌸 *Трекер цикла*\n\nНет данных. Нажми кнопку чтобы начать отслеживание.", kb)
 
     phase = CYCLE_PHASES[phase_key]
@@ -8011,8 +8020,9 @@ def build_cycle_info(uid):
     for w in phase["workout"]:
         lines.append(f"  • {w}")
 
-    kb = types.InlineKeyboardMarkup()
-    kb.add(types.InlineKeyboardButton("🔴 Начался новый цикл", callback_data="cycle_start:28"))
+    kb = types.ReplyKeyboardMarkup(resize_keyboard=True, row_width=1)
+    kb.add(types.KeyboardButton("🔴 Начался новый цикл"))
+    kb.add(types.KeyboardButton("❌ Отмена"))
     return ("\n".join(lines), kb)
 
 # ── Напоминания пить воду ─────────────────────────────────
@@ -8029,13 +8039,14 @@ def build_water_reminder_menu(uid):
     lines.append("")
     lines.append("Выбери интервал:")
 
-    kb = types.InlineKeyboardMarkup(row_width=4)
+    kb = types.ReplyKeyboardMarkup(resize_keyboard=True, row_width=4)
     buttons = []
     for h in [1, 2, 3, 4]:
         label = f"{'✅ ' if interval == h else ''}{h}ч"
-        buttons.append(types.InlineKeyboardButton(label, callback_data=f"water_remind:{h}"))
+        buttons.append(types.KeyboardButton(f"💧 Каждые {label}"))
     kb.add(*buttons)
-    kb.add(types.InlineKeyboardButton("❌ Отключить", callback_data="water_remind:0"))
+    kb.add(types.KeyboardButton("❌ Отключить напоминания"))
+    kb.add(types.KeyboardButton("❌ Отмена"))
     return "\n".join(lines), kb
 
 # ── Индекс здоровья ───────────────────────────────────────
@@ -8293,9 +8304,10 @@ def build_fridge_recipes(uid, ingredients_text):
 MUSCLE_GROUPS_LIST = ["Грудь", "Спина", "Ноги", "Плечи", "Бицепс", "Трицепс", "Пресс", "Ягодицы", "Всё тело"]
 
 def build_ai_workout_generator_menu():
-    kb = types.InlineKeyboardMarkup(row_width=3)
-    for mg in MUSCLE_GROUPS_LIST:
-        kb.add(types.InlineKeyboardButton(mg, callback_data=f"ai_workout:{mg}"))
+    kb = types.ReplyKeyboardMarkup(resize_keyboard=True, row_width=3)
+    for i in range(0, len(MUSCLE_GROUPS_LIST), 3):
+        kb.add(*[types.KeyboardButton(mg) for mg in MUSCLE_GROUPS_LIST[i:i+3]])
+    kb.add(types.KeyboardButton("❌ Отмена"))
     return "🤖 *ИИ-генератор тренировки*\n\nВыбери мышечную группу:", kb
 
 def generate_ai_workout(uid, muscle_group):
@@ -8348,13 +8360,14 @@ def build_soreness_menu(uid):
     conn.close()
 
     level_emoji = {0: "✅", 1: "🟡", 2: "🟠", 3: "🔴"}
-    lines = ["💪 *Трекер крепатуры*", "Отметь уровень болезненности мышц сегодня:", ""]
-    kb = types.InlineKeyboardMarkup(row_width=1)
+    lines = ["💪 *Трекер крепатуры*", "Нажми на мышцу чтобы изменить уровень боли:", ""]
+    kb = types.ReplyKeyboardMarkup(resize_keyboard=True, row_width=1)
     for key, name in MUSCLE_SORENESS_MAP.items():
         lvl = today_data.get(key, 0)
         emoji = level_emoji.get(lvl, "✅")
         label = f"{emoji} {name}: {'нет' if lvl==0 else ['','лёгкая','средняя','сильная'][lvl]}"
-        kb.add(types.InlineKeyboardButton(label, callback_data=f"soreness:{key}"))
+        kb.add(types.KeyboardButton(label))
+    kb.add(types.KeyboardButton("❌ Закрыть крепатуру"))
     return "\n".join(lines), kb
 
 # ── Техника упражнений ────────────────────────────────────
@@ -8464,9 +8477,11 @@ def build_session_notes_recent(uid, limit=5):
     return "\n".join(lines)
 
 def build_session_note_start(uid):
-    kb = types.InlineKeyboardMarkup(row_width=5)
-    kb.add(*[types.InlineKeyboardButton(f"{'😊'*i} {i}", callback_data=f"snote_mood:{i}") for i in range(1, 6)])
-    return "📓 *Дневник сессии*\n\nКак настроение после тренировки?", kb
+    kb = types.ReplyKeyboardMarkup(resize_keyboard=True, row_width=1)
+    for i in range(1, 6):
+        kb.add(types.KeyboardButton(f"{'😊'*i} {i}"))
+    kb.add(types.KeyboardButton("❌ Отмена"))
+    return "📓 *Дневник сессии*\n\nКак настроение после тренировки? (1=плохо, 5=отлично)", kb
 
 # ═══════════════════════════════════════════════════════════
 #  TASK #72 — ТЕЛО: ПМС, ДИНАМИКА ОБХВАТОВ, ИДЕАЛЬНЫЙ ВЕС
@@ -8787,8 +8802,11 @@ def build_mood_menu(uid):
             emoji = mood_emojis.get(round(avg_m), "😐")
             lines.append(f"{d[5:]} {emoji} {avg_m:.1f}")
 
-    kb = types.InlineKeyboardMarkup(row_width=5)
-    kb.add(*[types.InlineKeyboardButton(f"{mood_emojis[i]} {i}", callback_data=f"mood:{i}") for i in range(1, 6)])
+    mood_labels = {1: "😭 Очень плохо", 2: "😔 Плохо", 3: "😐 Норм", 4: "😊 Хорошо", 5: "🤩 Отлично"}
+    kb = types.ReplyKeyboardMarkup(resize_keyboard=True, row_width=1)
+    for i in range(1, 6):
+        kb.add(types.KeyboardButton(f"{i} — {mood_labels[i]}"))
+    kb.add(types.KeyboardButton("❌ Отмена"))
     return "\n".join(lines), kb
 
 BREATHING_EXERCISES = {
@@ -8815,9 +8833,10 @@ BREATHING_EXERCISES = {
 }
 
 def build_breathing_menu():
-    kb = types.InlineKeyboardMarkup(row_width=1)
+    kb = types.ReplyKeyboardMarkup(resize_keyboard=True, row_width=1)
     for key, ex in BREATHING_EXERCISES.items():
-        kb.add(types.InlineKeyboardButton(f"{ex['emoji']} {ex['name']}", callback_data=f"breath:{key}"))
+        kb.add(types.KeyboardButton(f"{ex['emoji']} {ex['name']}"))
+    kb.add(types.KeyboardButton("❌ Отмена"))
     return "🫁 *Дыхательные упражнения*\n\nВыбери технику:", kb
 
 def build_breathing_exercise(key):
@@ -8881,10 +8900,13 @@ def build_blood_tests_menu(uid):
         else:
             lines.append(f"*{m['name']}:* — не введено")
 
-    lines.append("\n_Нажми чтобы ввести анализ:_")
-    kb = types.InlineKeyboardMarkup(row_width=2)
-    for key, m in BLOOD_MARKERS.items():
-        kb.add(types.InlineKeyboardButton(f"➕ {m['name']}", callback_data=f"blood_add:{key}"))
+    lines.append("\n_Выбери показатель для ввода:_")
+    kb = types.ReplyKeyboardMarkup(resize_keyboard=True, row_width=2)
+    keys_list = list(BLOOD_MARKERS.items())
+    for i in range(0, len(keys_list), 2):
+        row = keys_list[i:i+2]
+        kb.add(*[types.KeyboardButton(f"➕ {m['name']}") for _, m in row])
+    kb.add(types.KeyboardButton("❌ Отмена"))
     return "\n".join(lines), kb
 
 # ── Антистресс-протокол ───────────────────────────────────
@@ -8919,8 +8941,9 @@ def build_antistress_protocol(uid):
         lines.append("4. Благодарность: 3 вещи за сегодня")
 
     lines.append("\n🫁 Дыхательные упражнения → кнопка ниже")
-    kb = types.InlineKeyboardMarkup()
-    kb.add(types.InlineKeyboardButton("🫁 Дыхательные упражнения", callback_data="show_breathing"))
+    kb = types.ReplyKeyboardMarkup(resize_keyboard=True, row_width=1)
+    kb.add(types.KeyboardButton("🫁 Дыхательные упражнения"))
+    kb.add(types.KeyboardButton("❌ Отмена"))
     return "\n".join(lines), kb
 
 # ═══════════════════════════════════════════════════════════
@@ -8966,8 +8989,9 @@ def build_referral_info(uid):
         "📤 *Как поделиться:*",
         f"Отправь другу код *{code}* или скопируй текст ниже:"
     ]
-    kb = types.InlineKeyboardMarkup()
-    kb.add(types.InlineKeyboardButton("✏️ Ввести чужой код", callback_data="enter_ref_code"))
+    kb = types.ReplyKeyboardMarkup(resize_keyboard=True, row_width=1)
+    kb.add(types.KeyboardButton("✏️ Ввести чужой реферальный код"))
+    kb.add(types.KeyboardButton("❌ Отмена"))
     return "\n".join(lines), kb
 
 # ── Групповые челленджи ────────────────────────────────────
@@ -14158,8 +14182,12 @@ def router(message):
 
     # ── Оценка качества сна ──
     if state == "rate_sleep_quality":
+        if text == "❌ Отмена":
+            set_state(cid, "idle")
+            bot.send_message(cid, "Отменено.", reply_markup=main_menu(cid))
+            return
         try:
-            quality = int(text); assert 1 <= quality <= 5
+            quality = int(text.strip()[0]); assert 1 <= quality <= 5
             parts      = extra.split("|")
             sleep_time = parts[0] if len(parts) > 0 else "23:00"
             wake_time  = parts[1] if len(parts) > 1 else "07:00"
@@ -15054,41 +15082,66 @@ def router(message):
 
     # ── Настроение: шаг 1 — оценка настроения ──
     if state == "mood_step1":
+        if text == "❌ Отмена":
+            set_state(cid, "idle")
+            bot.send_message(cid, "Отменено.", reply_markup=main_menu(cid))
+            return
+        # Поддержка формата "1 — Очень плохо" и просто "1"
+        import re as _re_mood
+        m_mood = _re_mood.match(r'^(\d)', text.strip())
         try:
-            mood = int(text.strip())
+            mood = int(m_mood.group(1)) if m_mood else int(text.strip())
             assert 1 <= mood <= 5
             set_state(cid, "mood_step2", extra=str(mood))
-            kb = types.ReplyKeyboardMarkup(resize_keyboard=True, row_width=5)
-            kb.add(*[types.KeyboardButton(str(i)) for i in range(1, 6)])
+            kb = types.ReplyKeyboardMarkup(resize_keyboard=True, row_width=1)
+            stress_labels = {1:"😌 Нет стресса", 2:"🙂 Немного", 3:"😐 Умеренно", 4:"😤 Высокий", 5:"😰 Очень высокий"}
+            for i in range(1, 6):
+                kb.add(types.KeyboardButton(f"{i} — {stress_labels[i]}"))
+            kb.add(types.KeyboardButton("❌ Отмена"))
             bot.send_message(cid,
                 f"Настроение: {MOOD_EMOJIS[mood]} *{mood}/5*\n\n"
                 "2️⃣ Оцени *уровень стресса* (1 — нет стресса, 5 — очень высокий):",
                 parse_mode="Markdown", reply_markup=kb)
         except Exception:
-            bot.send_message(cid, "Введи число от 1 до 5.")
+            bot.send_message(cid, "Выбери цифру от 1 до 5.")
         return
 
     # ── Настроение: шаг 2 — стресс ──
     if state == "mood_step2":
+        if text == "❌ Отмена":
+            set_state(cid, "idle")
+            bot.send_message(cid, "Отменено.", reply_markup=main_menu(cid))
+            return
+        import re as _re_m2
+        m2 = _re_m2.match(r'^(\d)', text.strip())
         try:
-            stress = int(text.strip())
+            stress = int(m2.group(1)) if m2 else int(text.strip())
             assert 1 <= stress <= 5
             mood = int(extra)
             set_state(cid, "mood_step3", extra=f"{mood},{stress}")
-            kb = types.ReplyKeyboardMarkup(resize_keyboard=True, row_width=5)
-            kb.add(*[types.KeyboardButton(str(i)) for i in range(1, 6)])
+            kb = types.ReplyKeyboardMarkup(resize_keyboard=True, row_width=1)
+            energy_labels = {1:"😴 Нет сил", 2:"😞 Мало", 3:"😐 Норм", 4:"😊 Бодро", 5:"🚀 На подъёме"}
+            for i in range(1, 6):
+                kb.add(types.KeyboardButton(f"{i} — {energy_labels[i]}"))
+            kb.add(types.KeyboardButton("❌ Отмена"))
             bot.send_message(cid,
                 f"Стресс: {STRESS_EMOJIS[stress]} *{stress}/5*\n\n"
                 "3️⃣ Оцени *уровень энергии* (1 — совсем нет, 5 — максимум):",
                 parse_mode="Markdown", reply_markup=kb)
         except Exception:
-            bot.send_message(cid, "Введи число от 1 до 5.")
+            bot.send_message(cid, "Выбери цифру от 1 до 5.")
         return
 
     # ── Настроение: шаг 3 — энергия ──
     if state == "mood_step3":
+        if text == "❌ Отмена":
+            set_state(cid, "idle")
+            bot.send_message(cid, "Отменено.", reply_markup=main_menu(cid))
+            return
+        import re as _re_m3
+        m3 = _re_m3.match(r'^(\d)', text.strip())
         try:
-            energy = int(text.strip())
+            energy = int(m3.group(1)) if m3 else int(text.strip())
             assert 1 <= energy <= 5
             parts_extra = extra.split(",")
             mood = int(parts_extra[0]); stress = int(parts_extra[1])
@@ -15103,7 +15156,7 @@ def router(message):
                 f"💡 *Советы по питанию:*\n{advice}",
                 parse_mode="Markdown", reply_markup=main_menu(cid))
         except Exception:
-            bot.send_message(cid, "Введи число от 1 до 5.")
+            bot.send_message(cid, "Выбери цифру от 1 до 5.")
         return
 
     if state == "waiting_water":
@@ -15154,6 +15207,29 @@ def router(message):
         return
 
     if state == "waiting_wellbeing_note":
+        if text == "❌ Отмена":
+            set_state(cid, "idle")
+            bot.send_message(cid, "Отменено.", reply_markup=main_menu(cid))
+            return
+        if text == "✅ Сохранить самочувствие":
+            tags = [t for t in (extra or "").split(",") if t]
+            today_wb = now_samara().strftime("%Y-%m-%d")
+            add_wellbeing_note(cid, f"Запись {today_wb}", tags=tags)
+            set_state(cid, "idle")
+            tag_str = ", ".join(tags) if tags else "без тегов"
+            bot.send_message(cid, f"✅ Самочувствие сохранено: _{tag_str}_",
+                parse_mode="Markdown", reply_markup=main_menu(cid))
+            return
+        if text in WELLBEING_TAGS:
+            tags = [t for t in (extra or "").split(",") if t]
+            if text not in tags:
+                tags.append(text)
+            set_state(cid, "waiting_wellbeing_note", extra=",".join(tags))
+            tag_str = ", ".join(tags)
+            bot.send_message(cid,
+                f"✅ Тег *{text}* добавлен.\nВыбранные: _{tag_str}_\n\nДобавь ещё или нажми «✅ Сохранить самочувствие».",
+                parse_mode="Markdown", reply_markup=build_wellbeing_tags_menu())
+            return
         add_wellbeing_note(cid, text.strip())
         bot.send_message(cid, "✅ Запись в дневник самочувствия сохранена!", reply_markup=main_menu(cid))
         set_state(cid, "idle")
@@ -15358,6 +15434,675 @@ def router(message):
                     parse_mode="Markdown", reply_markup=main_menu(cid))
                 return
         bot.send_message(cid, "Выбери кнопку с уровнем голода от 1 до 5.")
+        return
+
+    # ── Привычки — отметка через ReplyKeyboard ──
+    if state == "habits_menu":
+        if text in ("❌ Закрыть привычки", "❌ Отмена"):
+            set_state(cid, "idle")
+            bot.send_message(cid, "Привычки закрыты.", reply_markup=main_menu(cid))
+            return
+        if text == "📊 Статистика привычек":
+            bot.send_message(cid, build_habits_stats(cid), parse_mode="Markdown")
+            return
+        # Ищем нажатую привычку по имени (с/без чекбокса)
+        matched_key = None
+        clean = text.lstrip("✅⬜ ")
+        for name, key in DEFAULT_HABITS:
+            if name == clean or name.lstrip("✅⬜ ") == clean:
+                matched_key = key
+                break
+        if matched_key:
+            toggle_habit(cid, matched_key)
+            done = get_habits_today(cid)
+            # Обновляем клавиатуру с новыми статусами
+            kb_habits = build_habits_keyboard(cid)
+            bot.send_message(cid,
+                f"✔️ Обновлено! Выполнено: *{len(done)}/{len(DEFAULT_HABITS)}*",
+                parse_mode="Markdown", reply_markup=kb_habits)
+        else:
+            bot.send_message(cid, "Выбери привычку из списка.")
+        return
+
+    # ── Интервальное голодание — меню (ReplyKeyboard) ──
+    if state == "fasting_menu":
+        if text in ("❌ Отмена", "❌ Закрыть"):
+            set_state(cid, "idle")
+            bot.send_message(cid, "Закрыто.", reply_markup=main_menu(cid))
+            return
+        if text == "✅ Завершить голодание":
+            stop_fasting(cid)
+            set_state(cid, "idle")
+            bot.send_message(cid, "✅ Голодание завершено! Можно есть. Хорошая работа 💪",
+                reply_markup=main_menu(cid))
+            return
+        if text == "📊 История голодания":
+            bot.send_message(cid, build_fasting_history(cid), parse_mode="Markdown")
+            return
+        # Ищем протокол по label
+        matched_proto = None
+        for k, v in IF_PRESETS.items():
+            if v["label"] == text:
+                matched_proto = k
+                break
+        if matched_proto:
+            start_fasting(cid, matched_proto)
+            set_state(cid, "idle")
+            preset = IF_PRESETS[matched_proto]
+            bot.send_message(cid,
+                f"⏳ *Голодание {matched_proto} начато!*\n\nОкно питания: {preset['eat']}ч\nОкно голодания: {preset['fast']}ч",
+                parse_mode="Markdown", reply_markup=main_menu(cid))
+        else:
+            bot.send_message(cid, "Выбери протокол из списка.")
+        return
+
+    # ── Графики — меню (ReplyKeyboard) ──
+    if state == "charts_menu":
+        if text == "❌ Закрыть графики":
+            set_state(cid, "idle")
+            bot.send_message(cid, "Закрыто.", reply_markup=main_menu(cid))
+            return
+        if text == "🔥 График калорий (14 дней)":
+            ch = build_kcal_ascii_chart(cid)
+            bot.send_message(cid, ch or "🔥 Недостаточно данных по калориям (нужно 3+ дня).", parse_mode="Markdown")
+            return
+        if text == "💧 График воды (14 дней)":
+            ch = build_water_ascii_chart(cid)
+            bot.send_message(cid, ch or "💧 Недостаточно данных по воде (нужно 3+ дня).", parse_mode="Markdown")
+            return
+        if text == "👟 График шагов (14 дней)":
+            ch = build_steps_ascii_chart(cid)
+            bot.send_message(cid, ch or "👟 Недостаточно данных по шагам (нужно 3+ дня).", parse_mode="Markdown")
+            return
+
+    # ── Разминка — выбор группы мышц (ReplyKeyboard) ──
+    if state == "warmup_menu":
+        if text == "❌ Отмена":
+            set_state(cid, "idle"); bot.send_message(cid, "Закрыто.", reply_markup=main_menu(cid)); return
+        for k in WARMUP_BY_MUSCLE:
+            if text.lower() == k.lower():
+                set_state(cid, "idle")
+                bot.send_message(cid, build_warmup_by_muscle(k), parse_mode="Markdown", reply_markup=main_menu(cid))
+                return
+        return
+
+    # ── Суперсеты — выбор группы (ReplyKeyboard) ──
+    if state == "superset_menu":
+        if text == "❌ Отмена":
+            set_state(cid, "idle"); bot.send_message(cid, "Закрыто.", reply_markup=main_menu(cid)); return
+        for name in SUPERSET_TEMPLATES:
+            if text == f"⚡ {name.capitalize()}":
+                set_state(cid, "idle")
+                bot.send_message(cid, build_superset_plan(name), parse_mode="Markdown", reply_markup=main_menu(cid))
+                return
+        return
+
+    # ── Лекарства — меню (ReplyKeyboard) ──
+    if state == "medications_menu":
+        if text == "❌ Отмена":
+            set_state(cid, "idle"); bot.send_message(cid, "Закрыто.", reply_markup=main_menu(cid)); return
+        if text == "➕ Добавить медикамент":
+            set_state(cid, "med_add_name")
+            bot.send_message(cid, "💊 Введи название лекарства:", reply_markup=cancel_menu()); return
+        meds = get_medications(cid)
+        for mid, name, dose, sch in meds:
+            if text == f"✅ Принял {name} {dose}":
+                taken_map = get_medications_taken_today(cid)
+                if mid not in taken_map:
+                    conn = sqlite3.connect("weight_tracker.db"); c = conn.cursor()
+                    from datetime import datetime as _dt_med
+                    c.execute("INSERT INTO medication_log (user_id, med_id, taken_at) VALUES (?,?,?)",
+                              (cid, mid, _dt_med.now().isoformat()))
+                    conn.commit(); conn.close()
+                msg2, kb_meds2 = build_medications_menu(cid)
+                bot.send_message(cid, f"✅ *{name} {dose}* — принято!", parse_mode="Markdown", reply_markup=kb_meds2)
+                return
+        return
+
+    # ── Дыхательные упражнения — выбор (ReplyKeyboard) ──
+    if state == "breathing_menu":
+        if text == "❌ Отмена":
+            set_state(cid, "idle"); bot.send_message(cid, "Закрыто.", reply_markup=main_menu(cid)); return
+        for key, ex in BREATHING_EXERCISES.items():
+            if text == f"{ex['emoji']} {ex['name']}":
+                set_state(cid, "idle")
+                bot.send_message(cid, build_breathing_exercise(key), parse_mode="Markdown", reply_markup=main_menu(cid))
+                return
+        bot.send_message(cid, "Выбери технику из кнопок.")
+        return
+
+    # ── Анализы крови — меню (ReplyKeyboard) ──
+    if state == "blood_menu":
+        if text == "❌ Отмена":
+            set_state(cid, "idle"); bot.send_message(cid, "Закрыто.", reply_markup=main_menu(cid)); return
+        for key, m in BLOOD_MARKERS.items():
+            if text == f"➕ {m['name']}":
+                set_state(cid, "waiting_blood_value", extra=key)
+                bot.send_message(cid, f"🩸 Введи значение *{m['name']}* ({m['unit']}):",
+                    parse_mode="Markdown", reply_markup=cancel_menu())
+                return
+        return
+
+    # ── ИИ-генератор тренировки — выбор группы (ReplyKeyboard) ──
+    if state == "ai_workout_menu":
+        if text == "❌ Отмена":
+            set_state(cid, "idle"); bot.send_message(cid, "Закрыто.", reply_markup=main_menu(cid)); return
+        if text in MUSCLE_GROUPS_LIST:
+            set_state(cid, "idle")
+            bot.send_message(cid, "⏳ Генерирую тренировку через ИИ...", reply_markup=main_menu(cid))
+            result = generate_ai_workout(cid, text)
+            bot.send_message(cid, result, parse_mode="Markdown")
+        return
+
+    # ── Крепатура — выбор мышцы (ReplyKeyboard) ──
+    if state == "soreness_menu":
+        if text == "❌ Закрыть крепатуру":
+            set_state(cid, "idle"); bot.send_message(cid, "Закрыто.", reply_markup=main_menu(cid)); return
+        for key, name in MUSCLE_SORENESS_MAP.items():
+            if name in text:
+                init_soreness_table()
+                conn = get_db(); c = conn.cursor()
+                c.execute("SELECT level FROM soreness_log WHERE uid=? AND date=date('now') AND muscle=?", (cid, key))
+                row = c.fetchone(); conn.close()
+                cur_lvl = row[0] if row else 0
+                new_lvl = (cur_lvl + 1) % 4
+                log_soreness(cid, key, new_lvl)
+                msg_s, kb_s = build_soreness_menu(cid)
+                bot.send_message(cid, msg_s, parse_mode="Markdown", reply_markup=kb_s)
+                return
+        return
+
+    # ── Дневник сессии — настроение (ReplyKeyboard) ──
+    if state == "snote_mood":
+        if text == "❌ Отмена":
+            set_state(cid, "idle"); bot.send_message(cid, "Закрыто.", reply_markup=main_menu(cid)); return
+        import re as _re_snm
+        m_snm = _re_snm.match(r'^(😊+) (\d)', text)
+        if m_snm:
+            mood_val = int(m_snm.group(2))
+            set_state(cid, "snote_energy", extra=str(mood_val))
+            kb_en_sn = types.ReplyKeyboardMarkup(resize_keyboard=True, row_width=1)
+            ENERGY_LABELS_SN = {1: "😴 Разбит", 2: "😞 Устал", 3: "😐 Норм", 4: "😊 Бодр", 5: "🚀 Энергичен"}
+            for i in range(1, 6):
+                kb_en_sn.add(types.KeyboardButton(f"⚡ {i} — {ENERGY_LABELS_SN[i]}"))
+            kb_en_sn.add(types.KeyboardButton("❌ Отмена"))
+            bot.send_message(cid, "⚡ *Уровень энергии после тренировки?*", parse_mode="Markdown", reply_markup=kb_en_sn)
+        return
+
+    # ── Дневник сессии — энергия (ReplyKeyboard) ──
+    if state == "snote_energy":
+        if text == "❌ Отмена":
+            set_state(cid, "idle"); bot.send_message(cid, "Закрыто.", reply_markup=main_menu(cid)); return
+        import re as _re_sne
+        m_sne = _re_sne.match(r'^⚡ (\d)', text)
+        if m_sne:
+            energy_val = int(m_sne.group(1))
+            mood_val = int(extra) if extra and extra.isdigit() else 3
+            set_state(cid, "snote_note", extra=f"{mood_val}:{energy_val}")
+            bot.send_message(cid, "📝 Напиши заметку о тренировке (или нажми Отмена):", reply_markup=cancel_menu())
+        return
+
+    # ── Дневник сессии — заметка (text) ──
+    if state == "snote_note":
+        parts_sn = extra.split(":") if extra else ["3", "3"]
+        mood_v = int(parts_sn[0]) if parts_sn[0].isdigit() else 3
+        energy_v = int(parts_sn[1]) if len(parts_sn) > 1 and parts_sn[1].isdigit() else 3
+        note_text = "" if text == "❌ Отмена" else text.strip()
+        conn2 = get_db(); c2 = conn2.cursor()
+        c2.execute("""CREATE TABLE IF NOT EXISTS workout_sessions (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            uid INTEGER, date TEXT, mood INTEGER, energy INTEGER, note TEXT)""")
+        c2.execute("INSERT INTO workout_sessions (uid, date, mood, energy, note) VALUES (?,date('now'),?,?,?)",
+                   (cid, mood_v, energy_v, note_text))
+        conn2.commit(); conn2.close()
+        set_state(cid, "idle")
+        bot.send_message(cid, f"📓 Запись добавлена!\nНастроение: {'😊'*mood_v} | Энергия: {'⚡'*energy_v}",
+            parse_mode="Markdown", reply_markup=main_menu(cid))
+        return
+
+    # ── Напоминания воды — выбор интервала (ReplyKeyboard) ──
+    if state == "water_remind_menu":
+        if text in ("❌ Отмена", "❌ Отключить напоминания"):
+            if "Отключить" in text:
+                update_profile_field(cid, "water_reminder_hours", 0)
+                bot.send_message(cid, "💧 Напоминания отключены.", reply_markup=main_menu(cid))
+            else:
+                bot.send_message(cid, "Закрыто.", reply_markup=main_menu(cid))
+            set_state(cid, "idle"); return
+        import re as _re_wr
+        m_wr = _re_wr.match(r'💧 Каждые (?:✅ )?(\d+)ч', text)
+        if m_wr:
+            h = int(m_wr.group(1))
+            update_profile_field(cid, "water_reminder_hours", h)
+            set_state(cid, "idle")
+            bot.send_message(cid, f"✅ Напоминание каждые *{h} ч* установлено.", parse_mode="Markdown", reply_markup=main_menu(cid))
+        return
+
+    # ── Трекер цикла — начало (ReplyKeyboard) ──
+    if state == "cycle_menu":
+        if text == "❌ Отмена":
+            set_state(cid, "idle"); bot.send_message(cid, "Закрыто.", reply_markup=main_menu(cid)); return
+        if text in ("▶️ Начать отслеживание цикла", "🔴 Начался новый цикл"):
+            conn_c = get_db(); c_c = conn_c.cursor()
+            c_c.execute("CREATE TABLE IF NOT EXISTS cycle_log (id INTEGER PRIMARY KEY, uid INTEGER, start_date TEXT)")
+            c_c.execute("INSERT INTO cycle_log (uid, start_date) VALUES (?, date('now'))", (cid,))
+            conn_c.commit(); conn_c.close()
+            set_state(cid, "idle")
+            bot.send_message(cid, "🌸 Цикл начат! Дата записана.", reply_markup=main_menu(cid))
+        return
+
+    # ── Антистресс — дыхание (ReplyKeyboard) ──
+    if state == "antistress_menu":
+        if text == "❌ Отмена":
+            set_state(cid, "idle"); bot.send_message(cid, "Закрыто.", reply_markup=main_menu(cid)); return
+        if text == "🫁 Дыхательные упражнения":
+            msg_b2, kb_b2 = build_breathing_menu()
+            set_state(cid, "breathing_menu")
+            bot.send_message(cid, msg_b2, parse_mode="Markdown", reply_markup=kb_b2)
+        return
+
+    # ── Пульсовые зоны — изменить пульс покоя ──
+    if state == "hr_zones_menu":
+        if text == "❌ Отмена":
+            set_state(cid, "idle"); bot.send_message(cid, "Закрыто.", reply_markup=main_menu(cid)); return
+        if text == "⚙️ Изменить пульс покоя":
+            set_state(cid, "waiting_resting_hr")
+            bot.send_message(cid, "❤️ Введи пульс покоя (уд/мин), например: *58*:", parse_mode="Markdown", reply_markup=cancel_menu())
+        return
+
+    # ── Партнёр — меню (ReplyKeyboard) ──
+    if state == "partner_menu":
+        if text == "❌ Отмена":
+            set_state(cid, "idle"); bot.send_message(cid, "Закрыто.", reply_markup=main_menu(cid)); return
+        if text == "🔄 Обновить сравнение":
+            bot.send_message(cid, build_partner_comparison(cid), parse_mode="Markdown"); return
+        if text == "❌ Отвязать партнёра":
+            unlink_partner(cid)
+            set_state(cid, "idle")
+            bot.send_message(cid, "👫 Партнёр отвязан.", reply_markup=main_menu(cid)); return
+        if text == "🔗 Подключить партнёра":
+            set_state(cid, "waiting_partner_code")
+            bot.send_message(cid, "👫 Введи ID партнёра или его реферальный код:", reply_markup=cancel_menu())
+        return
+
+    # ── Челленджи — меню (ReplyKeyboard) ──
+    if state == "challenges_menu":
+        if text == "❌ Отмена":
+            set_state(cid, "idle"); bot.send_message(cid, "Закрыто.", reply_markup=main_menu(cid)); return
+        for ch in WEEKLY_CHALLENGES:
+            if text == f"🏆 {ch['name']} (+{ch['xp']} XP)":
+                start_challenge(cid, ch["id"])
+                add_xp(cid, ch["xp"])
+                set_state(cid, "idle")
+                bot.send_message(cid, f"🏆 Челлендж *{ch['name']}* начат! +{ch['xp']} XP", parse_mode="Markdown", reply_markup=main_menu(cid))
+                return
+        return
+
+    # ── Режим тренировок — зал/дом (ReplyKeyboard) ──
+    if state == "hw_mode_menu":
+        if text == "❌ Отмена":
+            set_state(cid, "idle"); bot.send_message(cid, "Закрыто.", reply_markup=main_menu(cid)); return
+        hw_map = {"🏋️ Только зал": 0, "🏠+🏋️ Зал + дома": 1, "🏠 Только дома": 2}
+        for btn_text, mode_val in hw_map.items():
+            if text.startswith(btn_text.rstrip(" ✅")):
+                update_profile_field(cid, "home_workouts", mode_val)
+                set_state(cid, "idle")
+                modes_names = {0: "🏋️ Только зал", 1: "🏠+🏋️ Зал + домашние", 2: "🏠 Только домашние"}
+                bot.send_message(cid, f"✅ Режим: *{modes_names[mode_val]}*", parse_mode="Markdown", reply_markup=main_menu(cid))
+                return
+        return
+
+    # ── Шаблоны еды (ReplyKeyboard) ──
+    if state == "templates_menu":
+        if text == "❌ Отмена":
+            set_state(cid, "idle"); bot.send_message(cid, "Закрыто.", reply_markup=main_menu(cid)); return
+        if text == "➕ Создать шаблон из дневника":
+            set_state(cid, "waiting_template_name")
+            bot.send_message(cid, "📋 Введи название шаблона:", reply_markup=cancel_menu()); return
+        if text.startswith("▶️ Применить: "):
+            tname = text[len("▶️ Применить: "):].rsplit(" (", 1)[0]
+            apply_meal_template(cid, tname)
+            set_state(cid, "idle")
+            bot.send_message(cid, f"✅ Шаблон *{tname}* применён!", parse_mode="Markdown", reply_markup=main_menu(cid)); return
+        if text.startswith("🗑 Удалить шаблон: "):
+            tname = text[len("🗑 Удалить шаблон: "):]
+            delete_meal_template(cid, tname)
+            templates2 = get_meal_templates(cid)
+            kb_tpl2 = types.ReplyKeyboardMarkup(resize_keyboard=True, row_width=1)
+            for name2, items2 in templates2:
+                total2 = sum(c for _, c in items2)
+                kb_tpl2.add(types.KeyboardButton(f"▶️ Применить: {name2} ({total2}ккал)"))
+                kb_tpl2.add(types.KeyboardButton(f"🗑 Удалить шаблон: {name2}"))
+            kb_tpl2.add(types.KeyboardButton("➕ Создать шаблон из дневника"))
+            kb_tpl2.add(types.KeyboardButton("❌ Отмена"))
+            bot.send_message(cid, f"🗑 Шаблон *{tname}* удалён.", parse_mode="Markdown", reply_markup=kb_tpl2); return
+        return
+
+    # ── Кардио — меню (ReplyKeyboard) ──
+    if state == "cardio_menu":
+        if text == "❌ Отмена":
+            set_state(cid, "idle"); bot.send_message(cid, "Закрыто.", reply_markup=main_menu(cid)); return
+        if text == "▶️ Начать кардио":
+            conn_cc = sqlite3.connect("weight_tracker.db")
+            conn_cc.execute("""CREATE TABLE IF NOT EXISTS cardio_sessions (
+                id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER,
+                start_time TEXT, end_time TEXT, minutes INTEGER)""")
+            from datetime import datetime as _dt_cc
+            conn_cc.execute("INSERT INTO cardio_sessions (user_id, start_time) VALUES (?,?)",
+                           (cid, _dt_cc.now().strftime("%Y-%m-%d %H:%M:%S")))
+            conn_cc.commit(); conn_cc.close()
+            kb_stop = types.ReplyKeyboardMarkup(resize_keyboard=True)
+            kb_stop.add(types.KeyboardButton("⏹ Остановить кардио"))
+            kb_stop.add(types.KeyboardButton("❌ Отмена"))
+            bot.send_message(cid, "🏃 *Кардио начато!* Удачи!\n\nНажми Остановить когда закончишь.", parse_mode="Markdown", reply_markup=kb_stop)
+            return
+        if text == "⏹ Остановить кардио":
+            conn_cc2 = sqlite3.connect("weight_tracker.db")
+            active2 = conn_cc2.execute(
+                "SELECT id, start_time FROM cardio_sessions WHERE user_id=? AND end_time IS NULL", (cid,)).fetchone()
+            if active2:
+                from datetime import datetime as _dt_cc2
+                start_dt2 = datetime.strptime(active2[1], "%Y-%m-%d %H:%M:%S")
+                elapsed2 = round((now_samara() - start_dt2).total_seconds() / 60)
+                conn_cc2.execute("UPDATE cardio_sessions SET end_time=datetime('now'), minutes=? WHERE id=?",
+                               (elapsed2, active2[0]))
+                conn_cc2.commit()
+                kcal_burned = round(elapsed2 * 8)
+                bot.send_message(cid, f"⏹ *Кардио завершено!*\n⏱ {elapsed2} мин.\n🔥 ~{kcal_burned} ккал", parse_mode="Markdown", reply_markup=main_menu(cid))
+            else:
+                bot.send_message(cid, "Нет активного кардио.", reply_markup=main_menu(cid))
+            conn_cc2.close()
+            set_state(cid, "idle"); return
+        return
+
+    # ── Язык — меню (ReplyKeyboard) ──
+    if state == "lang_menu":
+        if text == "❌ Отмена":
+            set_state(cid, "idle"); bot.send_message(cid, "Закрыто.", reply_markup=main_menu(cid)); return
+        if text == "🇷🇺 Русский":
+            update_profile_field(cid, "lang", "ru")
+            set_state(cid, "idle"); bot.send_message(cid, "✅ Язык: Русский", reply_markup=main_menu(cid)); return
+        if text == "🇬🇧 English":
+            update_profile_field(cid, "lang", "en")
+            set_state(cid, "idle"); bot.send_message(cid, "✅ Language: English", reply_markup=main_menu(cid)); return
+        return
+
+    # ── Помощь — разделы (ReplyKeyboard) ──
+    if state == "help_menu":
+        if text == "❌ Отмена":
+            set_state(cid, "idle"); bot.send_message(cid, "Закрыто.", reply_markup=main_menu(cid)); return
+        sections = {
+            "🍽️ Помощь: Питание": "food",
+            "🏋️ Помощь: Тренировки": "workout",
+            "📊 Помощь: Тело": "body",
+            "📈 Помощь: Аналитика": "analytics",
+            "😴 Помощь: Здоровье": "health",
+            "⚡ Помощь: Команды": "commands",
+        }
+        sec = sections.get(text)
+        if sec:
+            set_state(cid, "idle")
+            bot.send_message(cid, build_help_section(sec), parse_mode="Markdown", reply_markup=main_menu(cid))
+        return
+
+    # ── Обхваты — выбор части тела (ReplyKeyboard) ──
+    if state == "measure_menu":
+        if text == "❌ Отмена":
+            set_state(cid, "idle"); bot.send_message(cid, "Закрыто.", reply_markup=main_menu(cid)); return
+        for key, label in MEASUREMENTS_LIST:
+            if text == f"📏 {label}":
+                set_state(cid, "waiting_measurement", extra=key)
+                bot.send_message(cid, f"📏 *{label}*\n\nВведи значение в сантиметрах:",
+                    parse_mode="Markdown", reply_markup=cancel_menu())
+                return
+        return
+
+    # ── Давление — меню (ReplyKeyboard) ──
+    if state == "pressure_menu":
+        if text == "❌ Отмена":
+            set_state(cid, "idle"); bot.send_message(cid, "Закрыто.", reply_markup=main_menu(cid)); return
+        if text == "➕ Записать давление":
+            set_state(cid, "waiting_pressure")
+            bot.send_message(cid, "🩺 Введи давление в формате:\n*120/80* или *120/80/72* (с пульсом)",
+                parse_mode="Markdown", reply_markup=cancel_menu())
+        return
+
+    # ── Авто-бэкап — меню (ReplyKeyboard) ──
+    if state == "backup_menu":
+        if text == "❌ Отмена":
+            set_state(cid, "idle"); bot.send_message(cid, "Закрыто.", reply_markup=main_menu(cid)); return
+        if text == "🔔 Включить авто-бэкап в 8:00":
+            set_auto_backup_enabled(cid, True)
+            set_state(cid, "idle"); bot.send_message(cid, "✅ Авто-бэкап включён — каждый день в 08:00.", reply_markup=main_menu(cid)); return
+        if text == "🔕 Выключить авто-бэкап":
+            set_auto_backup_enabled(cid, False)
+            set_state(cid, "idle"); bot.send_message(cid, "❌ Авто-бэкап выключен.", reply_markup=main_menu(cid)); return
+        if text == "📥 Получить бэкап сейчас":
+            try:
+                with open(DB_PATH, "rb") as f:
+                    bot.send_document(cid, f, caption="📥 Твоя база данных",
+                                      visible_file_name=f"backup_{date.today().isoformat()}.db")
+            except Exception as e:
+                bot.send_message(cid, f"❌ Ошибка: {e}")
+            set_state(cid, "idle"); bot.send_message(cid, "Готово.", reply_markup=main_menu(cid)); return
+        return
+
+    # ── Реферал — меню (ReplyKeyboard) ──
+    if state == "referral_menu":
+        if text == "❌ Отмена":
+            set_state(cid, "idle"); bot.send_message(cid, "Закрыто.", reply_markup=main_menu(cid)); return
+        if text == "✏️ Ввести чужой реферальный код":
+            set_state(cid, "waiting_ref_code")
+            bot.send_message(cid, "✏️ Введи реферальный код друга:", reply_markup=cancel_menu())
+        return
+
+    # ── Заметки — меню (ReplyKeyboard) ──
+    if state == "notes_menu":
+        if text in ("❌ Закрыть заметки", "❌ Отмена"):
+            set_state(cid, "idle"); bot.send_message(cid, "Закрыто.", reply_markup=main_menu(cid)); return
+        if text == "🗑️ Очистить выполненные заметки":
+            conn_n = get_db(); c_n = conn_n.cursor()
+            c_n.execute("UPDATE quick_notes SET is_done=1 WHERE uid=? AND is_done=0", (cid,))
+            conn_n.commit(); conn_n.close()
+            set_state(cid, "idle"); bot.send_message(cid, "🗑️ Выполненные заметки очищены.", reply_markup=main_menu(cid)); return
+        if text.startswith("✅ Выполнено: "):
+            partial = text[len("✅ Выполнено: "):]
+            rows_n = get_quick_notes(cid)
+            for nid_n, note_n, done_n, _ in rows_n:
+                if not done_n and note_n.startswith(partial[:30]):
+                    conn_n2 = get_db(); c_n2 = conn_n2.cursor()
+                    c_n2.execute("UPDATE quick_notes SET is_done=1 WHERE id=?", (nid_n,))
+                    conn_n2.commit(); conn_n2.close()
+                    result_n = build_notes_menu(cid)
+                    if isinstance(result_n, tuple):
+                        txt_n, kb_n = result_n
+                        bot.send_message(cid, f"✅ Выполнено!\n\n{txt_n}", parse_mode="Markdown", reply_markup=kb_n)
+                    else:
+                        bot.send_message(cid, result_n, parse_mode="Markdown", reply_markup=main_menu(cid))
+                        set_state(cid, "idle")
+                    return
+        return
+
+    # ── Профиль — изменить цель/вес (ReplyKeyboard) ──
+    if state == "profile_actions_menu":
+        if text == "❌ Отмена":
+            set_state(cid, "idle"); bot.send_message(cid, "Закрыто.", reply_markup=main_menu(cid)); return
+        if text == "🎯 Изменить цель":
+            set_state(cid, "waiting_target_weight")
+            bot.send_message(cid, "🎯 Введи новый целевой вес (кг):", reply_markup=cancel_menu()); return
+        if text == "⚖️ Изменить текущий вес":
+            set_state(cid, "waiting_curweight")
+            bot.send_message(cid, "⚖️ Введи текущий вес (кг):", reply_markup=cancel_menu()); return
+        return
+
+    # ── Добавки — меню (ReplyKeyboard) ──
+    if state == "supplements_menu":
+        if text == "❌ Закрыть добавки":
+            set_state(cid, "idle")
+            bot.send_message(cid, "Закрыто.", reply_markup=main_menu(cid))
+            return
+        # Ищем нажатую добавку по label
+        matched_key = None
+        is_enable = False
+        for key, s in SUPPLEMENTS_LIST.items():
+            active_keys, taken_today = get_supplements_today(cid)
+            is_active = key in active_keys
+            if is_active:
+                label_active = f"{'✅' if key in taken_today else '⬜'} {s['emoji']} {s['name']} — {s['dose']} ({s['time']})"
+                if text == label_active:
+                    matched_key = key
+                    is_enable = False
+                    break
+            else:
+                label_add = f"➕ {s['emoji']} {s['name']}"
+                if text == label_add:
+                    matched_key = key
+                    is_enable = True
+                    break
+        if matched_key:
+            if is_enable:
+                toggle_user_supplement(cid, matched_key)
+                s = SUPPLEMENTS_LIST.get(matched_key, {})
+                txt, kb_supp = build_supplements_menu(cid)
+                bot.send_message(cid, f"➕ *{s.get('name', matched_key)}* добавлено в список.",
+                    parse_mode="Markdown", reply_markup=kb_supp)
+            else:
+                taken = log_supplement_taken(cid, matched_key)
+                s = SUPPLEMENTS_LIST.get(matched_key, {})
+                name = s.get("name", matched_key)
+                txt, kb_supp = build_supplements_menu(cid)
+                status = f"✅ Принято: {name}" if taken else f"↩️ Снято: {name}"
+                bot.send_message(cid, status, reply_markup=kb_supp)
+        else:
+            bot.send_message(cid, "Выбери добавку из списка.")
+        return
+
+    # ── Алкоголь-трекер — меню (ReplyKeyboard) ──
+    if state == "alcohol_menu":
+        if text == "❌ Отмена":
+            set_state(cid, "idle")
+            bot.send_message(cid, "Закрыто.", reply_markup=main_menu(cid))
+            return
+        if text == "📊 История алкоголя":
+            bot.send_message(cid, build_alcohol_history(cid), parse_mode="Markdown")
+            return
+        matched_key = None
+        for k, v in ALCOHOL_UNITS.items():
+            if v["label"] == text:
+                matched_key = k
+                break
+        if matched_key:
+            info = ALCOHOL_UNITS[matched_key]
+            log_alcohol(cid, matched_key)
+            today_u, today_kcal = get_alcohol_today(cid)
+            set_state(cid, "idle")
+            warn = "\n\n⚠️ Превышена дневная норма (4 ед.)!" if today_u >= 4 else ""
+            bot.send_message(cid,
+                f"✅ *{info['label']}* добавлено (+{info['units']} ед., {info['kcal']} ккал)\n"
+                f"Сегодня: *{today_u:.1f} ед.* / {today_kcal} ккал{warn}",
+                parse_mode="Markdown", reply_markup=main_menu(cid))
+        else:
+            bot.send_message(cid, "Выбери напиток из кнопок.")
+        return
+
+    # ── Прогноз «Что если» — меню (ReplyKeyboard) ──
+    if state == "scenario_menu":
+        if text == "❌ Отмена":
+            set_state(cid, "idle")
+            bot.send_message(cid, "Закрыто.", reply_markup=main_menu(cid))
+            return
+        scenarios = {
+            "❌ Пропущу 3 тренировки": "пропущу 3 тренировки",
+            "🍕 Съем лишние 500 ккал/день": "съем лишние 500 ккал",
+            "✅ Буду тренироваться каждый день": "буду тренироваться каждый день",
+        }
+        scenario = scenarios.get(text)
+        if scenario:
+            set_state(cid, "idle")
+            # Используем существующую логику прогноза
+            profile = get_profile(cid)
+            w_hist = get_weights(cid, limit=14)
+            if not w_hist or not profile:
+                bot.send_message(cid, "Недостаточно данных для прогноза. Вноси вес регулярно.", reply_markup=main_menu(cid))
+                return
+            current_w = profile.get("current_weight") or w_hist[0][0]
+            target_w = profile.get("target_weight") or (current_w - 10)
+            cal_norm = profile.get("kcal_goal") or 2000
+            if "пропущу 3 тренировки" in scenario:
+                extra_cal = 3 * 300
+                new_w = round(current_w + extra_cal / 7700, 2)
+                msg = (f"🔮 *Если пропустишь 3 тренировки:*\n\n"
+                       f"Дефицит калорий снизится на ~{300} ккал/день\n"
+                       f"Вес через неделю: *~{new_w} кг* (+{round(new_w-current_w,2)} кг)\n\n"
+                       f"💡 Лучше сделать 1 из 3, чем ни одной.")
+            elif "500 ккал" in scenario:
+                extra_w = round(500 * 7 / 7700, 2)
+                new_w = round(current_w + extra_w, 2)
+                msg = (f"🔮 *Если съешь +500 ккал/день:*\n\n"
+                       f"Суточный рацион: {cal_norm} → {cal_norm+500} ккал\n"
+                       f"Прибавка за неделю: *+{extra_w} кг*\n"
+                       f"Вес через неделю: *~{new_w} кг*\n\n"
+                       f"💡 Даже 1 лишний перекус = -1 день прогресса.")
+            else:
+                loss_w = round(300 * 7 / 7700, 2)
+                new_w = round(current_w - loss_w, 2)
+                msg = (f"🔮 *Если будешь тренироваться каждый день:*\n\n"
+                       f"Дополнительный расход: ~300 ккал/день\n"
+                       f"Похудение за неделю: *-{loss_w} кг*\n"
+                       f"Вес через неделю: *~{new_w} кг*\n\n"
+                       f"💪 Через месяц ты будешь на *-{round(loss_w*4,1)} кг* легче!")
+            bot.send_message(cid, msg, parse_mode="Markdown", reply_markup=main_menu(cid))
+        else:
+            bot.send_message(cid, "Выбери сценарий из кнопок.")
+        return
+
+    # ── Кофеин — выбор напитка (ReplyKeyboard) ──
+    if state == "caffeine_menu":
+        if text == "❌ Отмена":
+            set_state(cid, "idle")
+            bot.send_message(cid, "Отменено.", reply_markup=main_menu(cid))
+            return
+        # Ищем кнопку по label
+        matched_key = None
+        for k, v in CAFFEINE_ITEMS.items():
+            if v["label"] == text:
+                matched_key = k
+                break
+        if matched_key:
+            log_caffeine(cid, matched_key)
+            mg = CAFFEINE_ITEMS[matched_key]["mg"]
+            total, _ = get_caffeine_today(cid)
+            set_state(cid, "idle")
+            warn = "\n\n⚠️ Превышен дневной лимит ВОЗ (400 мг)!" if total > 400 else ""
+            bot.send_message(cid,
+                f"✅ *{CAFFEINE_ITEMS[matched_key]['label']}* добавлен (+{mg} мг)\n"
+                f"☕ Всего сегодня: *{total} мг*{warn}",
+                parse_mode="Markdown", reply_markup=main_menu(cid))
+        else:
+            bot.send_message(cid, "Выбери напиток из кнопок.")
+        return
+
+    # ── Энергия — выбор уровня (ReplyKeyboard) ──
+    if state == "energy_menu":
+        if text == "❌ Отмена":
+            set_state(cid, "idle")
+            bot.send_message(cid, "Отменено.", reply_markup=main_menu(cid))
+            return
+        import re as _re_en
+        m_en = _re_en.match(r'^(🌅|🌙) (\d) —', text)
+        if m_en:
+            period_emoji = m_en.group(1)
+            level = int(m_en.group(2))
+            period = "morning" if period_emoji == "🌅" else "evening"
+            period_name = "утром" if period == "morning" else "вечером"
+            log_energy(cid, level, period)
+            ENERGY_LABELS = {1: "😴 Разбит", 2: "😞 Устал", 3: "😐 Норм", 4: "😊 Бодр", 5: "🚀 Энергичен"}
+            set_state(cid, "idle")
+            bot.send_message(cid,
+                f"⚡ Энергия *{period_name}*: {ENERGY_LABELS.get(level, '')} ({level}/5) сохранена.",
+                parse_mode="Markdown", reply_markup=main_menu(cid))
+        else:
+            bot.send_message(cid, "Выбери уровень энергии из кнопок.")
         return
 
     # ── Стресс (заметка после оценки) ──
@@ -15823,13 +16568,13 @@ def router(message):
         chart=build_weight_chart(cid)
         if not chart:
             bot.send_message(cid,"Нужно минимум 2 взвешивания для графика."); return
-        kb_charts = types.InlineKeyboardMarkup(row_width=1)
-        kb_charts.add(
-            types.InlineKeyboardButton("🔥 График калорий (14 дней)", callback_data="chart_show:kcal"),
-            types.InlineKeyboardButton("💧 График воды (14 дней)", callback_data="chart_show:water"),
-            types.InlineKeyboardButton("👟 График шагов (14 дней)", callback_data="chart_show:steps"),
-        )
-        bot.send_message(cid,f"📊 *График веса (последние взвешивания):*\n\n```\n{chart}\n```",
+        kb_charts = types.ReplyKeyboardMarkup(resize_keyboard=True, row_width=1)
+        kb_charts.add(types.KeyboardButton("🔥 График калорий (14 дней)"))
+        kb_charts.add(types.KeyboardButton("💧 График воды (14 дней)"))
+        kb_charts.add(types.KeyboardButton("👟 График шагов (14 дней)"))
+        kb_charts.add(types.KeyboardButton("❌ Закрыть графики"))
+        set_state(cid, "charts_menu")
+        bot.send_message(cid, f"📊 *График веса (последние взвешивания):*\n\n```\n{chart}\n```",
                          parse_mode="Markdown", reply_markup=kb_charts)
 
     # Шаги история
@@ -15973,32 +16718,30 @@ def router(message):
 
     # ── Давление: запись ──
     elif text == "🩺 Давление/пульс":
-        bot.send_message(cid, build_pressure_history_text(cid), parse_mode="Markdown",
-            reply_markup=types.InlineKeyboardMarkup().add(
-                types.InlineKeyboardButton("➕ Записать", callback_data="pressure_add")))
+        kb_pressure = types.ReplyKeyboardMarkup(resize_keyboard=True, row_width=1)
+        kb_pressure.add(types.KeyboardButton("➕ Записать давление"))
+        kb_pressure.add(types.KeyboardButton("❌ Отмена"))
+        set_state(cid, "pressure_menu")
+        bot.send_message(cid, build_pressure_history_text(cid), parse_mode="Markdown", reply_markup=kb_pressure)
 
     # ── Лекарства ──
     elif text == "💊 Лекарства":
-        msg = build_medications_today(cid)
-        meds = get_medications(cid)
-        kb2 = types.InlineKeyboardMarkup(row_width=2)
-        for mid, name, dose, tpd in meds:
-            taken = get_medications_taken_today(cid).get(mid, 0)
-            if taken < tpd:
-                kb2.add(types.InlineKeyboardButton(f"✅ {name}", callback_data=f"med_take:{mid}"))
-        kb2.add(types.InlineKeyboardButton("➕ Добавить лекарство", callback_data="med_add"))
-        bot.send_message(cid, msg, parse_mode="Markdown", reply_markup=kb2)
+        msg, kb_meds = build_medications_menu(cid)
+        set_state(cid, "medications_menu")
+        bot.send_message(cid, msg, parse_mode="Markdown", reply_markup=kb_meds)
 
     # ── Авто-бэкап ──
     elif text == "🗄 Авто-бэкап":
         enabled = get_auto_backup_enabled(cid)
         status = "✅ включён" if enabled else "❌ выключен"
-        kb_ab = types.InlineKeyboardMarkup(row_width=1)
+        kb_ab = types.ReplyKeyboardMarkup(resize_keyboard=True, row_width=1)
         if enabled:
-            kb_ab.add(types.InlineKeyboardButton("🔕 Выключить авто-бэкап", callback_data="auto_backup:off"))
+            kb_ab.add(types.KeyboardButton("🔕 Выключить авто-бэкап"))
         else:
-            kb_ab.add(types.InlineKeyboardButton("🔔 Включить авто-бэкап в 8:00", callback_data="auto_backup:on"))
-        kb_ab.add(types.InlineKeyboardButton("📥 Получить бэкап сейчас", callback_data="auto_backup:now"))
+            kb_ab.add(types.KeyboardButton("🔔 Включить авто-бэкап в 8:00"))
+        kb_ab.add(types.KeyboardButton("📥 Получить бэкап сейчас"))
+        kb_ab.add(types.KeyboardButton("❌ Отмена"))
+        set_state(cid, "backup_menu")
         bot.send_message(cid,
             f"🗄 *Авто-бэкап базы данных*\n\n"
             f"Статус: {status}\n\n"
@@ -16054,8 +16797,11 @@ def router(message):
     # ── Обхваты ──
     elif text == "📏 Обхваты":
         summary = build_measurements_summary(cid)
-        kb2 = types.InlineKeyboardMarkup().add(
-            types.InlineKeyboardButton("➕ Внести обхваты", callback_data="measure_add"))
+        kb2 = types.ReplyKeyboardMarkup(resize_keyboard=True, row_width=2)
+        for key, label in MEASUREMENTS_LIST:
+            kb2.add(types.KeyboardButton(f"📏 {label}"))
+        kb2.add(types.KeyboardButton("❌ Отмена"))
+        set_state(cid, "measure_menu")
         bot.send_message(cid, summary, parse_mode="Markdown", reply_markup=kb2)
 
     # ── Инфографика прогресса ──
@@ -16116,14 +16862,14 @@ def router(message):
     # ── Шаблоны еды ──
     elif text == "📋 Шаблоны еды":
         templates = get_meal_templates(cid)
-        kb_tpl = types.InlineKeyboardMarkup()
+        kb_tpl = types.ReplyKeyboardMarkup(resize_keyboard=True, row_width=1)
         for name, items in templates:
             total = sum(c for _, c in items)
-            kb_tpl.add(
-                types.InlineKeyboardButton(f"▶️ {name} ({total}ккал)", callback_data=f"tpl_apply:{name}"),
-                types.InlineKeyboardButton("🗑", callback_data=f"tpl_del:{name}")
-            )
-        kb_tpl.add(types.InlineKeyboardButton("➕ Создать шаблон из дневника", callback_data="tpl_create"))
+            kb_tpl.add(types.KeyboardButton(f"▶️ Применить: {name} ({total}ккал)"))
+            kb_tpl.add(types.KeyboardButton(f"🗑 Удалить шаблон: {name}"))
+        kb_tpl.add(types.KeyboardButton("➕ Создать шаблон из дневника"))
+        kb_tpl.add(types.KeyboardButton("❌ Отмена"))
+        set_state(cid, "templates_menu")
         bot.send_message(cid, build_templates_menu(cid), parse_mode="Markdown", reply_markup=kb_tpl)
 
     # ── Кардио таймер ──
@@ -16134,17 +16880,20 @@ def router(message):
             "SELECT id, start_time FROM cardio_sessions WHERE user_id=? AND end_time IS NULL",
             (cid,)).fetchone()
         conn.close()
-        kb_cardio = types.InlineKeyboardMarkup()
+        kb_cardio = types.ReplyKeyboardMarkup(resize_keyboard=True, row_width=1)
+        set_state(cid, "cardio_menu")
         if active:
             start_str = active[1]
             start_dt = datetime.strptime(start_str, "%Y-%m-%d %H:%M:%S")
             elapsed = round((now_samara() - start_dt).total_seconds() / 60)
-            kb_cardio.add(types.InlineKeyboardButton("⏹ Остановить", callback_data="cardio_stop"))
+            kb_cardio.add(types.KeyboardButton("⏹ Остановить кардио"))
+            kb_cardio.add(types.KeyboardButton("❌ Отмена"))
             bot.send_message(cid,
                 f"🏃 *Кардио идёт!* ⏱ {elapsed} мин.\n\nНажми Остановить когда закончишь.",
                 parse_mode="Markdown", reply_markup=kb_cardio)
         else:
-            kb_cardio.add(types.InlineKeyboardButton("▶️ Начать кардио", callback_data="cardio_start"))
+            kb_cardio.add(types.KeyboardButton("▶️ Начать кардио"))
+            kb_cardio.add(types.KeyboardButton("❌ Отмена"))
             bot.send_message(cid,
                 "🏃 *Кардио таймер*\n\nНажми кнопку когда начнёшь тренировку.\n"
                 "Бот автоматически посчитает время и примерные ккал.",
@@ -16157,12 +16906,14 @@ def router(message):
     # ── Партнёр ──
     elif text == "👫 Партнёр":
         partner_id = get_partner(cid)
-        kb_pair = types.InlineKeyboardMarkup()
+        kb_pair = types.ReplyKeyboardMarkup(resize_keyboard=True, row_width=1)
         if partner_id:
-            kb_pair.add(types.InlineKeyboardButton("🔄 Обновить сравнение", callback_data="partner_refresh"))
-            kb_pair.add(types.InlineKeyboardButton("❌ Отвязать партнёра", callback_data="partner_unlink"))
+            kb_pair.add(types.KeyboardButton("🔄 Обновить сравнение"))
+            kb_pair.add(types.KeyboardButton("❌ Отвязать партнёра"))
         else:
-            kb_pair.add(types.InlineKeyboardButton("🔗 Подключить партнёра", callback_data="partner_link"))
+            kb_pair.add(types.KeyboardButton("🔗 Подключить партнёра"))
+        kb_pair.add(types.KeyboardButton("❌ Отмена"))
+        set_state(cid, "partner_menu")
         bot.send_message(cid, build_partner_comparison(cid), parse_mode="Markdown", reply_markup=kb_pair)
 
     # ── XP и уровень ──
@@ -16171,28 +16922,24 @@ def router(message):
 
     # ── Челленджи ──
     elif text == "🏆 Челленджи":
-        kb_ch = types.InlineKeyboardMarkup()
+        kb_ch = types.ReplyKeyboardMarkup(resize_keyboard=True, row_width=1)
         for ch in WEEKLY_CHALLENGES:
-            kb_ch.add(types.InlineKeyboardButton(ch["name"] + f" (+{ch['xp']} XP)",
-                callback_data=f"challenge_start:{ch['id']}"))
+            kb_ch.add(types.KeyboardButton(f"🏆 {ch['name']} (+{ch['xp']} XP)"))
+        kb_ch.add(types.KeyboardButton("❌ Отмена"))
+        set_state(cid, "challenges_menu")
         bot.send_message(cid, build_challenges_menu(cid), parse_mode="Markdown", reply_markup=kb_ch)
 
     # ── Домашние тренировки — переключатель ──
     elif text == "🏠 Домашние тренировки":
         profile = get_profile(cid)
         current = int(profile.get("home_workouts") or 0) if profile else 0
-        kb_hw = types.InlineKeyboardMarkup()
-        kb_hw.add(
-            types.InlineKeyboardButton("🏋️ Только зал" + (" ✅" if current == 0 else ""),
-                callback_data="hw_mode:0"),
-            types.InlineKeyboardButton("🏠+🏋️ Зал + дома" + (" ✅" if current == 1 else ""),
-                callback_data="hw_mode:1"),
-        )
-        kb_hw.add(
-            types.InlineKeyboardButton("🏠 Только дома" + (" ✅" if current == 2 else ""),
-                callback_data="hw_mode:2"),
-        )
         modes = {0: "🏋️ Только зал", 1: "🏠+🏋️ Зал + домашние", 2: "🏠 Только домашние"}
+        kb_hw = types.ReplyKeyboardMarkup(resize_keyboard=True, row_width=1)
+        kb_hw.add(types.KeyboardButton("🏋️ Только зал" + (" ✅" if current == 0 else "")))
+        kb_hw.add(types.KeyboardButton("🏠+🏋️ Зал + дома" + (" ✅" if current == 1 else "")))
+        kb_hw.add(types.KeyboardButton("🏠 Только дома" + (" ✅" if current == 2 else "")))
+        kb_hw.add(types.KeyboardButton("❌ Отмена"))
+        set_state(cid, "hw_mode_menu")
         bot.send_message(cid,
             f"🏠 *Режим тренировок*\n\n"
             f"Сейчас: *{modes[current]}*\n\n"
@@ -16308,6 +17055,9 @@ def router(message):
         source_note = ""
         if plan.get("bmr_source") == "InBody":
             source_note = "\n📋 _Калораж и белок рассчитаны по данным InBody (точнее формулы)_"
+        kb_profile = types.ReplyKeyboardMarkup(resize_keyboard=True, row_width=2)
+        kb_profile.add(types.KeyboardButton("🎯 Изменить цель"), types.KeyboardButton("⚖️ Изменить текущий вес"))
+        kb_profile.add(types.KeyboardButton("❌ Отмена"))
         bot.send_message(cid,
             f"👤 *МОЙ ПРОФИЛЬ*\n\n"
             f"⚖️ Стартовый: *{profile['current_weight']} кг* | Текущий: *{curr_w} кг* (−{loss} кг)\n"
@@ -16324,11 +17074,7 @@ def router(message):
             f"{health_line}\n"
             f"🚗 Профиль: *{'Водитель (сидячая работа)' if profile.get('is_driver') else 'Обычная активность'}*\n"
             f"💧 Вода сегодня: *{water}/8* стаканов",
-            parse_mode="Markdown",
-            reply_markup=types.InlineKeyboardMarkup().add(
-                types.InlineKeyboardButton("🎯 Изменить цель", callback_data="change_target"),
-                types.InlineKeyboardButton("⚖️ Изменить вес", callback_data="change_curweight"),
-            ))
+            parse_mode="Markdown", reply_markup=kb_profile)
 
     elif text=="⚙️ Изменить профиль":
         start_onboarding(cid,edit=True)
@@ -17180,12 +17926,12 @@ def router(message):
 
     # ── Прогноз «что будет если» ──
     elif text == "🔮 Прогноз «Что если»":
-        kb_scenario = types.InlineKeyboardMarkup(row_width=1)
-        kb_scenario.add(
-            types.InlineKeyboardButton("❌ Пропущу 3 тренировки", callback_data="scenario:пропущу 3 тренировки"),
-            types.InlineKeyboardButton("🍕 Съем лишние 500 ккал/день", callback_data="scenario:съем лишние 500 ккал"),
-            types.InlineKeyboardButton("✅ Буду тренироваться каждый день", callback_data="scenario:буду тренироваться каждый день"),
-        )
+        kb_scenario = types.ReplyKeyboardMarkup(resize_keyboard=True, row_width=1)
+        kb_scenario.add(types.KeyboardButton("❌ Пропущу 3 тренировки"))
+        kb_scenario.add(types.KeyboardButton("🍕 Съем лишние 500 ккал/день"))
+        kb_scenario.add(types.KeyboardButton("✅ Буду тренироваться каждый день"))
+        kb_scenario.add(types.KeyboardButton("❌ Отмена"))
+        set_state(cid, "scenario_menu")
         bot.send_message(cid, "🔮 *Прогноз «Что будет если...»*\n\nВыбери сценарий:",
                          parse_mode="Markdown", reply_markup=kb_scenario)
 
@@ -17208,6 +17954,7 @@ def router(message):
     # ── Интервальное голодание ──
     elif text == "⏳ Интервальное голодание":
         msg, kb_if = build_fasting_status(cid)
+        set_state(cid, "fasting_menu")
         bot.send_message(cid, msg, parse_mode="Markdown", reply_markup=kb_if)
 
     # ── Сравнение дней КБЖУ ──
@@ -17217,6 +17964,7 @@ def router(message):
     # ── Алкоголь-трекер ──
     elif text == "🍺 Алкоголь-трекер":
         msg, kb_alc = build_alcohol_menu(cid)
+        set_state(cid, "alcohol_menu")
         bot.send_message(cid, msg, parse_mode="Markdown", reply_markup=kb_alc)
 
     # ── Избранные блюда ──
@@ -17242,6 +17990,7 @@ def router(message):
     # ── Разминка по мышцам ──
     elif text == "🤸 Разминка по мышцам":
         msg, kb_warmup = build_warmup_menu()
+        set_state(cid, "warmup_menu")
         bot.send_message(cid, msg, parse_mode="Markdown", reply_markup=kb_warmup)
 
     # ── Пульсовые зоны ──
@@ -17290,11 +18039,13 @@ def router(message):
     # ── Кофеин-трекер ──
     elif text == "☕ Кофеин":
         msg, kb_caf = build_caffeine_menu(cid)
+        set_state(cid, "caffeine_menu")
         bot.send_message(cid, msg, parse_mode="Markdown", reply_markup=kb_caf)
 
     # ── Энергия дня ──
     elif text == "⚡ Энергия дня":
         msg, kb_en = build_energy_menu(cid)
+        set_state(cid, "energy_menu")
         bot.send_message(cid, msg, parse_mode="Markdown", reply_markup=kb_en)
 
     # ── Дневник самочувствия ──
@@ -17306,10 +18057,10 @@ def router(message):
 
     # ── Язык ──
     elif text == "🌐 Язык / Language":
-        kb_lang = types.InlineKeyboardMarkup(row_width=2)
-        kb_lang.add(
-            types.InlineKeyboardButton("🇷🇺 Русский", callback_data="set_lang:ru"),
-            types.InlineKeyboardButton("🇬🇧 English", callback_data="set_lang:en"))
+        kb_lang = types.ReplyKeyboardMarkup(resize_keyboard=True, row_width=2)
+        kb_lang.add(types.KeyboardButton("🇷🇺 Русский"), types.KeyboardButton("🇬🇧 English"))
+        kb_lang.add(types.KeyboardButton("❌ Отмена"))
+        set_state(cid, "lang_menu")
         bot.send_message(cid, "🌐 *Выбери язык / Choose language:*", parse_mode="Markdown",
                          reply_markup=kb_lang)
 
@@ -17352,6 +18103,7 @@ def router(message):
     # ── Task #64: Трекер добавок ──
     elif text == "💊 Мои добавки (трекер)":
         txt, kb_supp = build_supplements_menu(cid)
+        set_state(cid, "supplements_menu")
         bot.send_message(cid, txt, parse_mode="Markdown", reply_markup=kb_supp)
 
     # ── Task #65: Ввод тренировки текстом ──
@@ -17534,23 +18286,21 @@ def router(message):
             parse_mode="Markdown", reply_markup=cancel_menu())
 
     elif text == "❓ Помощь / команды":
-        kb_help = types.InlineKeyboardMarkup(row_width=2)
-        kb_help.add(
-            types.InlineKeyboardButton("🍽️ Питание", callback_data="help_section:food"),
-            types.InlineKeyboardButton("🏋️ Тренировки", callback_data="help_section:workout"),
-            types.InlineKeyboardButton("📊 Тело", callback_data="help_section:body"),
-            types.InlineKeyboardButton("📈 Аналитика", callback_data="help_section:analytics"),
-            types.InlineKeyboardButton("😴 Здоровье", callback_data="help_section:health"),
-            types.InlineKeyboardButton("⚡ Команды", callback_data="help_section:commands"),
-        )
+        kb_help = types.ReplyKeyboardMarkup(resize_keyboard=True, row_width=2)
+        kb_help.add(types.KeyboardButton("🍽️ Помощь: Питание"), types.KeyboardButton("🏋️ Помощь: Тренировки"))
+        kb_help.add(types.KeyboardButton("📊 Помощь: Тело"), types.KeyboardButton("📈 Помощь: Аналитика"))
+        kb_help.add(types.KeyboardButton("😴 Помощь: Здоровье"), types.KeyboardButton("⚡ Помощь: Команды"))
+        kb_help.add(types.KeyboardButton("❌ Отмена"))
+        set_state(cid, "help_menu")
         bot.send_message(cid, build_help_message(), parse_mode="Markdown", reply_markup=kb_help)
 
     # ── Счётчик привычек ──
     elif text == "✔️ Привычки":
         kb_habits = build_habits_keyboard(cid)
         done = get_habits_today(cid)
+        set_state(cid, "habits_menu")
         bot.send_message(cid,
-            f"✔️ *Трекер привычек — сегодня*\n\nВыполнено: *{len(done)}/{len(DEFAULT_HABITS)}*\n\nНажми чтобы отметить:",
+            f"✔️ *Трекер привычек — сегодня*\n\nВыполнено: *{len(done)}/{len(DEFAULT_HABITS)}*\n\nНажми на привычку чтобы отметить:",
             parse_mode="Markdown", reply_markup=kb_habits)
 
     # ── Заметки ──
